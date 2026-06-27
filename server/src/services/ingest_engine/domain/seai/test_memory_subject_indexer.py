@@ -74,7 +74,11 @@ class TestMemorySubjectIndexer(unittest.TestCase):
 
         result = MemorySubjectIndexer(repo, chain, FakeIdFactory()).index("UnmessIt needs broader recall.", [EPISODE], [ATOM])
 
-        self.assertEqual(result, {"subjects": 1, "links": 1})
+        self.assertEqual(result["subjects"], 1)
+        self.assertEqual(result["links"], 1)
+        self.assertEqual(result["draft_subjects"], 1)
+        self.assertEqual(result["draft_links"], 1)
+        self.assertEqual(result["rejected_links"], 0)
         self.assertEqual(repo.saved_subjects[0]["name"], "UnmessIt recall")
         self.assertEqual(repo.saved_links[0]["atom_id"], "atom_1")
 
@@ -116,7 +120,12 @@ class TestMemorySubjectIndexer(unittest.TestCase):
 
         result = MemorySubjectIndexer(repo, chain, FakeIdFactory()).index("UnmessIt needs broader recall.", [EPISODE], [ATOM])
 
-        self.assertEqual(result, {"subjects": 0, "links": 0})
+        self.assertEqual(result["subjects"], 0)
+        self.assertEqual(result["links"], 0)
+        self.assertEqual(result["draft_subjects"], 1)
+        self.assertEqual(result["draft_links"], 2)
+        self.assertEqual(result["rejected_links"], 2)
+        self.assertEqual(result["rejected_subjects"], 1)
         self.assertEqual(repo.saved_subjects, [])
         self.assertEqual(repo.saved_links, [])
 

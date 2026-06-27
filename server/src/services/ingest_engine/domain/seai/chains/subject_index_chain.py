@@ -37,6 +37,7 @@ class SubjectIndexChain(SEAIChain):
             "Allowed link relations: mentions, problem, decision, event, question, change, plan, evidence, status, other.\n"
             "Rules:\n"
             "- Return at most 6 subjects and 18 links.\n"
+            "- If the evidence has any clear central subject, return at least one subject and one link even on first mention.\n"
             "- Use moderate granularity: central or recurring subjects only.\n"
             "- Link only to episode_id and atom_id values provided below.\n"
             "- Prefer episode-level links; use atom_id only when an atom is the best evidence.\n"

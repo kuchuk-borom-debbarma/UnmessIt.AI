@@ -33,10 +33,27 @@ class MemorySubjectIndexer:
         ])
         candidates = self.repository.find_candidate_subjects(terms, limit=12)
         data = self.chain.run("", episodes, atoms, candidates)
-        subjects, links = self._normalize(data, episodes, atoms, candidates)
+        subjects, links, analysis = self._normalize(data, episodes, atoms, candidates)
         self.repository.save_subject_index(subjects, links)
-        logger.info("memory_subject_indexed subject_count=%s link_count=%s", len(subjects), len(links))
-        return {"subjects": len(subjects), "links": len(links)}
+        analysis.update({
+            "subjects": len(subjects),
+            "links": len(links),
+            "candidate_subjects": len(candidates),
+            "episode_count": len(episodes),
+            "atom_count": len(atoms),
+        })
+        logger.info(
+            "memory_subject_indexed draft_subject_count=%s draft_link_count=%s subject_count=%s link_count=%s "
+            "rejected_subject_count=%s rejected_link_count=%s candidate_subject_count=%s",
+            analysis["draft_subjects"],
+            analysis["draft_links"],
+            analysis["subjects"],
+            analysis["links"],
+            analysis["rejected_subjects"],
+            analysis["rejected_links"],
+            analysis["candidate_subjects"],
+        )
+        return analysis
 
     def _normalize(
         self,
@@ -44,19 +61,24 @@ class MemorySubjectIndexer:
         episodes: list[dict[str, Any]],
         atoms: list[dict[str, Any]],
         candidates: list[dict[str, Any]],
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
         valid_episode_ids = {episode["id"] for episode in episodes}
         atom_by_id = {atom["id"]: atom for atom in atoms}
         candidate_by_id = {subject["id"]: subject for subject in candidates}
         subject_by_ref: dict[str, dict[str, Any]] = {}
         subjects = []
+        draft_subjects = _as_list(data.get("subjects"))
+        draft_links = _as_list(data.get("links"))
+        rejected_subjects = 0
+        rejected_links = 0
 
-        for draft in _as_list(data.get("subjects"))[:6]:
+        for draft in draft_subjects[:6]:
             ref = str(draft.get("ref") or "").strip()
             name = str(draft.get("name") or "").strip()
             existing_id = str(draft.get("existing_subject_id") or "").strip()
             existing = candidate_by_id.get(existing_id)
             if not ref or (not name and not existing):
+                rejected_subjects += 1
                 continue
 
             subject = {
@@ -73,18 +95,21 @@ class MemorySubjectIndexer:
 
         links = []
         seen_links = set()
-        for draft in _as_list(data.get("links"))[:18]:
+        for draft in draft_links[:18]:
             subject = subject_by_ref.get(str(draft.get("subject_ref") or "").strip())
             episode_id = str(draft.get("episode_id") or "").strip()
             atom_id = str(draft.get("atom_id") or "").strip() or None
             if not subject or episode_id not in valid_episode_ids:
+                rejected_links += 1
                 continue
             if atom_id:
                 atom = atom_by_id.get(atom_id)
                 if not atom or atom.get("episode_id") != episode_id:
+                    rejected_links += 1
                     continue
             key = (subject["id"], episode_id, atom_id)
             if key in seen_links:
+                rejected_links += 1
                 continue
             seen_links.add(key)
             links.append({
@@ -101,8 +126,15 @@ class MemorySubjectIndexer:
             })
 
         linked_subject_ids = {link["subject_id"] for link in links}
+        rejected_subjects += sum(1 for subject in subjects if subject["id"] not in linked_subject_ids)
         subjects = [subject for subject in subjects if subject["id"] in linked_subject_ids]
-        return subjects, links
+        analysis = {
+            "draft_subjects": len(draft_subjects),
+            "draft_links": len(draft_links),
+            "rejected_subjects": rejected_subjects,
+            "rejected_links": rejected_links,
+        }
+        return subjects, links, analysis
 
 
 def _important_terms(values: list[str]) -> list[str]:

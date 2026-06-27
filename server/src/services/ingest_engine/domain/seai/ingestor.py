@@ -58,27 +58,41 @@ class SEAIIngestor(Ingestor):
             episode, fallback_atoms = self._fallback_episode(data, raw_input_id, job_id)
             episodes.append(episode)
             atoms.extend(fallback_atoms)
+        rejected_episode_count = max(0, getattr(self, "_episode_draft_rejected_count", 0))
 
         logger.info("seai_save_start job_id=%s episode_count=%s atom_count=%s", job_id, len(episodes), len(atoms))
         self.repository.save_seai(episodes, atoms)
         logger.info("seai_save_complete job_id=%s episode_count=%s atom_count=%s", job_id, len(episodes), len(atoms))
 
+        subject_result = {"subjects": 0, "links": 0}
         if self.memory_subject_indexer:
             try:
-                result = self.memory_subject_indexer.index(data, episodes, atoms)
+                subject_result = self.memory_subject_indexer.index(data, episodes, atoms)
                 logger.info(
                     "seai_subject_index_complete job_id=%s subject_count=%s link_count=%s",
                     job_id,
-                    result.get("subjects", 0),
-                    result.get("links", 0),
+                    subject_result.get("subjects", 0),
+                    subject_result.get("links", 0),
                 )
             except Exception as exc:
                 logger.warning("seai_subject_index_failed job_id=%s error=%s", job_id, exc)
+                subject_result = {"subjects": 0, "links": 0, "failed": True}
 
         if self.vector_indexer:
             self.vector_indexer.add(episodes, atoms)
         logger.info("seai_ingest_complete job_id=%s episode_count=%s atom_count=%s", job_id, len(episodes), len(atoms))
-        return {"raw_input_id": raw_input_id, "episodes": episodes, "atoms": atoms}
+        return {
+            "raw_input_id": raw_input_id,
+            "episodes": episodes,
+            "atoms": atoms,
+            "analysis": {
+                "raw_chars": len(data),
+                "episode_count": len(episodes),
+                "atom_count": len(atoms),
+                "rejected_episode_count": rejected_episode_count,
+                "subject_index": subject_result,
+            },
+        }
 
     @property
     def preprocessor(self):
@@ -97,6 +111,7 @@ class SEAIIngestor(Ingestor):
 
     def _build_index(self, raw_text: str, raw_input_id: str, job_id: str) -> tuple[list[Episode], list[Atom]]:
         episodes, atoms = [], []
+        self._episode_draft_rejected_count = 0
         # Windowing keeps local models alive and gives each splitter call small context.
         windows = self.chains.window.run(raw_text)
         logger.info("seai_windows_created job_id=%s window_count=%s", job_id, len(windows))
@@ -146,6 +161,7 @@ class SEAIIngestor(Ingestor):
     def _episode_from_draft(self, raw_text: str, raw_input_id: str, draft: EpisodeDraft, window: SourceWindow) -> Episode | None:
         spans = self.evidence.episode_spans(raw_text, draft, window)
         if not spans:
+            self._episode_draft_rejected_count = getattr(self, "_episode_draft_rejected_count", 0) + 1
             logger.warning("seai_episode_draft_rejected reason=no_spans window_start=%s window_end=%s", window["start_idx"], window["end_idx"])
             return None
 
