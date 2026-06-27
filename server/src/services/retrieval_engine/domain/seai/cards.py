@@ -55,6 +55,30 @@ class EvidenceCardBuilder:
         cards.extend(episode_card(episode, None) for episode in episode_by_id.values())
         return cards
 
+    def from_subject_links(self, subject_links: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        atom_ids = unique([link.get("atom_id") for link in subject_links])
+        episode_ids = unique([link.get("episode_id") for link in subject_links])
+        atoms = self.retrieval_repo.get_atoms_by_ids(atom_ids)
+        episodes = self.retrieval_repo.get_episodes_by_ids(unique([
+            *episode_ids,
+            *[atom["episode_id"] for atom in atoms],
+        ]))
+        episode_by_id = {episode["id"]: episode for episode in episodes}
+        atom_by_id = {atom["id"]: atom for atom in atoms}
+        link_by_atom = {link["atom_id"]: link for link in subject_links if link.get("atom_id")}
+        link_by_episode = {link["episode_id"]: link for link in subject_links if not link.get("atom_id")}
+
+        cards = []
+        for atom_id, link in link_by_atom.items():
+            atom = atom_by_id.get(atom_id)
+            if atom:
+                cards.append(subject_card(atom_card(atom, episode_by_id.get(atom["episode_id"]), None), link))
+        for episode_id, link in link_by_episode.items():
+            episode = episode_by_id.get(episode_id)
+            if episode:
+                cards.append(subject_card(episode_card(episode, None), link))
+        return cards
+
 
 def atom_card(atom: dict[str, Any], episode: dict[str, Any] | None, distance: float | None) -> dict[str, Any]:
     return {
@@ -89,6 +113,17 @@ def episode_card(episode: dict[str, Any], distance: float | None) -> dict[str, A
         "distance": distance,
         "_object": episode,
     }
+
+
+def subject_card(card: dict[str, Any], link: dict[str, Any]) -> dict[str, Any]:
+    card["subject_id"] = link.get("subject_id")
+    card["subject_name"] = link.get("subject_name")
+    card["subject_kind"] = link.get("subject_kind")
+    card["subject_relation"] = link.get("relation")
+    card["subject_reason"] = link.get("reason")
+    card["event_time"] = link.get("event_time")
+    card["time_label"] = link.get("time_label")
+    return card
 
 
 def important_terms(values: list[str]) -> list[str]:

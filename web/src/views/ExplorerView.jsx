@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
-import { ChevronDown, ChevronRight, Database, FileText, Hash, Layers, RefreshCw, ShieldCheck } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, Database, FileText, Hash, Layers, RefreshCw, ShieldCheck, Tags } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8000';
 
@@ -120,10 +120,44 @@ const EpisodeNode = ({ raw, episode, selected, setSelected }) => {
   );
 };
 
+const SubjectNode = ({ subject, selected, setSelected }) => {
+  const [expanded, setExpanded] = useState(true);
+  const isActive = selected?.kind === 'subject' && selected.subject.id === subject.id;
+
+  return (
+    <div>
+      <TreeRow
+        active={isActive}
+        expandable={subject.links.length > 0}
+        expanded={expanded}
+        onToggle={() => setExpanded(!expanded)}
+        onClick={() => setSelected({ kind: 'subject', subject })}
+        icon={<Tags size={15} />}
+        title={subject.name}
+        meta={`${subject.link_count} links`}
+      />
+      {expanded && subject.links.map((link) => (
+        <TreeRow
+          key={link.id}
+          depth={1}
+          active={selected?.kind === 'subject_link' && selected.link.id === link.id}
+          onClick={() => setSelected({ kind: 'subject_link', subject, link })}
+          icon={<Clock size={14} />}
+          title={link.atom_content || link.episode_summary || link.reason || link.relation}
+          meta={link.relation}
+        />
+      ))}
+    </div>
+  );
+};
+
 export default function ExplorerView() {
   const [rawInputs, setRawInputs] = useState([]);
+  const [subjects, setSubjects] = useState([]);
   const [totals, setTotals] = useState({ episodes: 0, atoms: 0 });
+  const [subjectTotals, setSubjectTotals] = useState({ subjects: 0, links: 0 });
   const [selected, setSelected] = useState(null);
+  const [mode, setMode] = useState('seai');
   const [tab, setTab] = useState('summary');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -140,10 +174,19 @@ export default function ExplorerView() {
   const fetchSEAI = async () => {
     setLoading(true);
     try {
-      const res = await axios.get(`${API_BASE}/dev/seai`);
+      const [res, subjectRes] = await Promise.all([
+        axios.get(`${API_BASE}/dev/seai`),
+        axios.get(`${API_BASE}/dev/subjects`),
+      ]);
       const data = res.data.data || [];
+      const subjectData = subjectRes.data.data || [];
       setRawInputs(data);
+      setSubjects(subjectData);
       setTotals({ episodes: res.data.total_episodes || 0, atoms: res.data.total_atoms || 0 });
+      setSubjectTotals({
+        subjects: subjectRes.data.total_subjects || 0,
+        links: subjectRes.data.total_links || 0,
+      });
       setSelected((current) => current || (data[0] ? { kind: 'raw', raw: data[0] } : null));
       setError('');
     } catch (err) {
@@ -165,6 +208,51 @@ export default function ExplorerView() {
           <DetailHeader title="Raw Input" pills={[`${selected.raw.episodes.length} episodes`, selected.raw.id]} />
           <div className="detail-body">
             <div className="evidence-text">{selected.raw.content}</div>
+          </div>
+        </>
+      );
+    }
+
+    if (selected.kind === 'subject') {
+      const { subject } = selected;
+      return (
+        <>
+          <DetailHeader title="Memory Subject" pills={[subject.kind, `${subject.link_count} links`, subject.id]} />
+          <div className="detail-body">
+            <h3 className="detail-heading">Summary</h3>
+            <div className="evidence-text">{subject.summary || 'No summary.'}</div>
+            <div className="detail-meta">
+              {subject.aliases.map((alias) => <Pill key={alias} tone="blue">{alias}</Pill>)}
+              {subject.latest_link_time && <Pill><Clock size={12} /> {subject.latest_link_time}</Pill>}
+            </div>
+            <h3 className="detail-heading" style={{ marginTop: 18 }}>Timeline Links</h3>
+            <SubjectLinkList links={subject.links} />
+          </div>
+        </>
+      );
+    }
+
+    if (selected.kind === 'subject_link') {
+      const { subject, link } = selected;
+      return (
+        <>
+          <DetailHeader title="Subject Link" pills={[subject.name, link.relation, link.id]} />
+          <div className="detail-body">
+            <h3 className="detail-heading">Evidence Hint</h3>
+            <div className="evidence-text">{link.atom_content || link.episode_summary || link.reason}</div>
+            <h3 className="detail-heading">Reason</h3>
+            <div className="evidence-text">{link.reason || 'No reason.'}</div>
+            <Metadata rows={[
+              ['subject_id', link.subject_id],
+              ['raw_input_id', link.raw_input_id],
+              ['episode_id', link.episode_id],
+              ['atom_id', link.atom_id || ''],
+              ['relation', link.relation],
+              ['confidence', String(link.confidence)],
+              ['event_time', link.event_time || ''],
+              ['time_label', link.time_label || ''],
+              ['created_at', link.created_at],
+            ]} />
           </div>
         </>
       );
@@ -252,25 +340,46 @@ export default function ExplorerView() {
     <div className="view-container explorer-layout" style={{ display: 'flex', gap: '24px', height: '100%' }}>
       <div className="glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div className="panel-header">
-          <h2><Database size={20} className="text-blue" /> SEAI Index</h2>
+          <h2><Database size={20} className="text-blue" /> Explorer</h2>
           <div className="detail-meta">
-            <Pill>{totals.episodes} episodes</Pill>
-            <Pill>{totals.atoms} atoms</Pill>
+            {mode === 'seai' ? (
+              <>
+                <Pill>{totals.episodes} episodes</Pill>
+                <Pill>{totals.atoms} atoms</Pill>
+              </>
+            ) : (
+              <>
+                <Pill>{subjectTotals.subjects} subjects</Pill>
+                <Pill>{subjectTotals.links} links</Pill>
+              </>
+            )}
             <button className="icon-btn" onClick={fetchSEAI} title="Refresh SEAI index">
               <RefreshCw size={16} />
             </button>
           </div>
         </div>
+        <Tabs tabs={['seai', 'subjects']} tab={mode} setTab={(nextMode) => {
+          setMode(nextMode);
+          setSelected(nextMode === 'seai'
+            ? (rawInputs[0] ? { kind: 'raw', raw: rawInputs[0] } : null)
+            : (subjects[0] ? { kind: 'subject', subject: subjects[0] } : null));
+        }} />
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
           {loading ? (
             <div className="empty-state">Loading SEAI index...</div>
           ) : error ? (
             <div className="empty-state" style={{ color: '#ef4444' }}>{error}</div>
-          ) : rawInputs.length === 0 ? (
+          ) : mode === 'seai' && rawInputs.length === 0 ? (
             <div className="empty-state">No SEAI memories indexed yet.</div>
-          ) : (
+          ) : mode === 'subjects' && subjects.length === 0 ? (
+            <div className="empty-state">No memory subjects indexed yet.</div>
+          ) : mode === 'seai' ? (
             rawInputs.map((raw) => (
               <RawNode key={raw.id} raw={raw} selected={selected} setSelected={select} />
+            ))
+          ) : (
+            subjects.map((subject) => (
+              <SubjectNode key={subject.id} subject={subject} selected={selected} setSelected={select} />
             ))
           )}
         </div>
@@ -324,6 +433,23 @@ const AtomList = ({ rawText, atoms }) => (
         </div>
         <div className="evidence-text" style={{ color: 'var(--text-primary)' }}>{atom.content}</div>
         <div className="evidence-text">{spanText(rawText, atom.evidence_spans)}</div>
+      </div>
+    ))}
+  </div>
+);
+
+const SubjectLinkList = ({ links }) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    {links.map((link) => (
+      <div key={link.id} className="span-card">
+        <div className="detail-meta">
+          <Pill tone="green">{link.relation}</Pill>
+          <Pill>{Math.round(link.confidence * 100)}%</Pill>
+          {(link.event_time || link.time_label) && <Pill>{link.event_time || link.time_label}</Pill>}
+        </div>
+        <div className="evidence-text" style={{ color: 'var(--text-primary)' }}>
+          {link.atom_content || link.episode_summary || link.reason}
+        </div>
       </div>
     ))}
   </div>

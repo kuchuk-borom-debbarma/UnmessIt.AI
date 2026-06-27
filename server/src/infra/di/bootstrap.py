@@ -7,7 +7,9 @@ from src.infra.vector.chroma_vector_store import ChromaVectorStoreImpl
 from src.infra.vector.seai_vector_index import ChromaSEAIVectorIndex
 from src.repositories.sqlite_dev_repository import SqliteDevRepository
 from src.repositories.sqlite_ingest_repository import SqliteIngestRepository
+from src.repositories.sqlite_memory_subject_repository import SqliteMemorySubjectRepository
 from src.repositories.sqlite_retrieval_repository import SqliteRetrievalRepositoryImpl
+from src.repositories.ports.memory_subject_repository import MemorySubjectRepository
 from src.services.ingest_engine.ports.inbound.ingestor import Ingestor
 from src.services.ingest_engine.domain.seai.chains.atom_code_verify_chain import AtomCodeVerifyChain
 from src.services.ingest_engine.domain.seai.chains.atom_extract_chain import LLMAtomExtractor
@@ -17,7 +19,9 @@ from src.services.ingest_engine.domain.seai.chains.episode_summary_chain import 
 from src.services.ingest_engine.domain.seai.chains.episode_verify_chain import LLMEpisodeVerifier
 from src.services.ingest_engine.domain.seai.chains.source_window_chain import SourceWindowChain
 from src.services.ingest_engine.domain.seai.chains.strict_fastcoref_chain import NoopPreprocessor, StrictFastcorefPreprocessor
+from src.services.ingest_engine.domain.seai.chains.subject_index_chain import SubjectIndexChain
 from src.services.ingest_engine.domain.seai.ingestor import SEAIChains, SEAIIngestor
+from src.services.ingest_engine.domain.seai.memory_subject_indexer import MemorySubjectIndexer
 from src.services.ingest_engine.domain.seai.models import SEAIConfig
 from src.services.ingest_engine.domain.seai.utils.evidence import EvidenceResolver
 from src.services.retrieval_engine.domain.DeterministicRetrievalService import DeterministicRetrievalService
@@ -37,6 +41,7 @@ def setup_di(settings: Settings):
     # Register outbound adapters.
     di.factories[VectorStoreContract] = lambda di: ChromaVectorStoreImpl(settings=di[Settings])
     di.factories[RetrievalRepositoryContract] = lambda di: SqliteRetrievalRepositoryImpl()
+    di.factories[MemorySubjectRepository] = lambda di: SqliteMemorySubjectRepository()
     di.factories[SqliteIngestRepository] = lambda di: SqliteIngestRepository()
     di.factories[SqliteDevRepository] = lambda di: SqliteDevRepository()
     
@@ -45,6 +50,7 @@ def setup_di(settings: Settings):
     di.factories[RetrievalServiceContract] = lambda di: DeterministicRetrievalService(
         vector_store=di[VectorStoreContract],
         retrieval_repo=di[RetrievalRepositoryContract],
+        memory_subject_repo=di[MemorySubjectRepository],
         query_planner=QueryPlanner(LLMJsonClient(max_tokens=2048)),
         evidence_reranker=EvidenceReranker(LLMJsonClient(max_tokens=2048)),
         answer_generator=StrictAnswerGenerator(LLMJsonClient(max_tokens=2048)),
@@ -73,4 +79,9 @@ def _seai_ingestor(di) -> SEAIIngestor:
         chains=chains,
         id_factory=id_factory,
         evidence_resolver=EvidenceResolver(),
+        memory_subject_indexer=MemorySubjectIndexer(
+            repository=di[MemorySubjectRepository],
+            chain=SubjectIndexChain(json_client),
+            id_factory=id_factory,
+        ),
     )

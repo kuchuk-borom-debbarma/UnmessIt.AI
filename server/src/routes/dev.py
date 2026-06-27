@@ -47,6 +47,18 @@ def get_raw_input(input_id: str):
         "data": raw_input,
     }
 
+@router.get("/subjects")
+def get_subjects():
+    """
+    Developer endpoint to inspect memory subjects and temporal evidence links.
+    """
+    subjects = di[SqliteDevRepository].get_subjects()
+
+    return {
+        "status": "success",
+        **subjects,
+    }
+
 @router.delete("/facts")
 def delete_all_facts():
     """

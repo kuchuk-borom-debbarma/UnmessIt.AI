@@ -1,172 +1,165 @@
-# SEAI_RETRIEVAL_FLOW
+# SEAI Retrieval Flow
 
-SEAI retrieval turns a user question into a compact, cited answer using the source-bound index created by `SEAI_INDEXING_FLOW.md`.
+SEAI retrieval answers questions from source-backed evidence created by `SEAI_INDEXING_FLOW.md`. Temporal memory subjects add a subject-first path for broad accumulated-context questions while keeping final answers cited to raw source spans.
 
-Indexing stays source-bound and local: raw input, episodes, atoms. Retrieval is allowed to be multi-pass because query needs vary. A "why" question may need relation atoms, a "what happened" question may need episode context, and a broad question may need several related memories.
-
-## V1 Loop
+Retrieval flow:
 
 ```txt
-question
--> normalize query
--> query planner
--> vector search atoms + episodes
--> broad query lexical sweep when needed
+query
+-> broad/narrow detection
+-> subject resolution when useful
+-> linked evidence fetch
+-> vector and lexical search
 -> evidence cards
--> LLM reranker
--> optional follow-up search
--> quote-bank final context
+-> rerank
+-> quote bank
 -> cited answer
 -> citation validation
 ```
 
-The loop is capped at 3 rounds. It stops early when the reranker says the evidence is enough and no aspects are missing, when there are no new follow-up queries, or when no new evidence appears.
+## Retrieval Modes
 
-Incoming UI numbering is stripped before retrieval, so `21. What caused the outage?` is searched as `What caused the outage?`.
+Narrow questions can usually be answered from direct vector or lexical matches over atoms and episodes.
 
-## Query Planner JSON
+Broad questions may need evidence that is distributed across many inputs. For these, retrieval should first try to resolve likely memory subjects, then fetch a capped set of linked evidence before merging that with normal search results.
 
-The planner reads the user question and returns:
+Examples of broad intent include:
 
-```json
-{
-  "intent": "why_question",
-  "answer_style": "concise",
-  "search_queries": ["why Amy punched the man", "Amy man behaved badly"],
-  "must_find": ["cause of Amy punching the man"],
-  "constraints": ["use only source evidence"]
-}
-```
-
-Planner output is not trusted as evidence. It only guides search.
-
-Planner JSON is normalized before validation. If a local model returns a string or object where V1 expects a list, the server coerces it into list strings instead of discarding the whole plan.
+- Asking what is happening with a recurring subject.
+- Asking for development, status, patterns, or open questions.
+- Asking about a subject that appears across several inputs.
+- Asking for a timeline or current state.
 
 ## Broad Retrieval
 
-Some questions are broad even when they look simple. Examples: worldview, development, relationship, overall, explain, tell me, or what was. For these, vector search alone can be too narrow.
+Broad Retrieval is the subject-aware path for accumulated-context questions. It can use subject resolution, linked evidence fetch, vector search, and lexical/entity sweep before reranking evidence into the quote bank.
 
-Broad retrieval adds a cheap lexical/entity sweep over SEAI episodes and atoms using important query terms and planner terms. This is not evidence synthesis; it only adds candidate evidence cards. The reranker still chooses, and the answer still cites raw spans.
+## Subject Resolution
 
-This keeps V1 deterministic and avoids LangGraph for now. LangGraph becomes useful later if retrieval needs real tool routing such as `vector_search`, `sql_entity_sweep`, `fetch_neighbors`, `compress_quotes`, and `answer_retry`.
+Subject resolution maps a query to likely memory subjects by using subject names, aliases, summaries, recent activity, and existing search terms. It is a retrieval aid, not evidence.
+
+If no useful subject is found, retrieval falls back to the normal SEAI path:
+
+```txt
+query -> planner -> vector/lexical search -> rerank -> quote bank -> cited answer
+```
+
+If subjects are found, retrieval fetches linked episodes and atoms for those subjects, then ranks and caps them before answer generation.
+
+## Query Planner JSON
+
+The query planner still returns structured JSON for search intent, answer style, search queries, must-find items, and constraints. Planner output guides subject resolution, vector search, lexical/entity sweep, and follow-up search. It is not evidence.
+
+## Linked Evidence Fetch
+
+Subject links narrow the search space. They must not cause retrieval to load every memory attached to a subject.
+
+For each resolved subject, fetch a limited set of evidence using:
+
+- recent links by `created_at`
+- clear `event_time` matches when the query asks about a time period
+- high-confidence links
+- useful relation labels such as `decision`, `problem`, `status`, `event`, `question`, or `change`
+- older milestone links when they give important context
+
+The default broad-answer shape is recent state plus important milestones. Strict chronological output should be used when the query asks for a timeline or history.
 
 ## Evidence Cards
 
-Retrieval searches both atoms and episodes. Results become compact evidence cards.
+Retrieval uses compact evidence cards for atoms and episodes.
 
-Atom card:
+Atom cards carry:
 
-```json
-{
-  "evidence_id": "atom:<atom_id>",
-  "object_type": "atom",
-  "atom_role": "relation",
-  "content": "The man's bad behavior caused Amy to punch him.",
-  "episode_summary": "Amy punched a man because he behaved badly.",
-  "evidence": "Amy punched a man because he behaved badly",
-  "spans": [{"start": 0, "end": 42}]
-}
-```
+- atom id
+- episode id
+- raw input id
+- atom role
+- annotations
+- source evidence text
+- spans
+- optional subject-link metadata
 
-Episode card:
+Episode cards carry:
 
-```json
-{
-  "evidence_id": "episode:<episode_id>",
-  "object_type": "episode",
-  "summary": "Amy punched a man because he behaved badly.",
-  "source_span_snippets": "SPAN 0-43:\nAmy punched a man because he behaved badly."
-}
-```
+- episode id
+- raw input id
+- neutral summary
+- source span snippets
+- optional subject-link metadata
 
-Atoms are used for precise statements. Relation atoms are boosted by the reranker for why/how questions. Episodes provide story context and broad recall.
+Subject summaries may be included only as non-citable hints. They are never enough to support a final factual claim.
 
 ## Reranker JSON
 
-The LLM reranker receives the question, planner output, and evidence cards. It returns:
+The reranker receives the question, planner output, and evidence cards. It returns selected evidence ids, scores, missing aspects, optional follow-up queries, and whether there is enough evidence. Unknown or duplicate evidence ids are ignored.
 
-```json
-{
-  "selected_evidence_ids": ["atom:abc", "episode:def"],
-  "scores": [
-    {"evidence_id": "atom:abc", "score": 0.93, "reason": "directly explains cause"}
-  ],
-  "missing_aspects": [],
-  "follow_up_queries": [],
-  "enough_evidence": true
-}
-```
+## Ranking And Context Budget
 
-Unknown evidence IDs are ignored. Duplicate selections are deduped.
+The final answer context must stay compact. Retrieval should combine subject-linked evidence with vector and lexical candidates, dedupe them, rerank them, and pack only the strongest quote-bank evidence.
 
-## Quote Bank And Context Budget
+Ranking should prefer:
 
-The final answer context is capped around 9000 characters.
+- direct relevance to the query
+- source-backed atoms over broad summaries
+- recent evidence for current-state questions
+- milestone evidence for broad status questions
+- relation atoms for why/how questions
+- diverse raw inputs when a subject has many repeated links
 
-Rules:
+## Quote Bank
 
-- Start with reranker-selected evidence.
-- For broad questions or missing aspects, add only query-matching nearby/broad episode evidence before answering.
-- Pack final context as a quote bank: evidence id, object type, non-citable hint, exact citable quote.
-- Prefer exact atom evidence quotes over full episodes.
-- For huge episodes, include only selected source span snippets.
-- Episode summaries are allowed as hints but are marked non-citable.
-- Citable text must come from atom evidence spans or episode source spans.
+The answer generator receives a quote bank, not the whole database.
+
+Quote-bank rules:
+
+- Every citable block must come from an atom evidence span or episode span.
+- Subject names, aliases, summaries, and link reasons are hints only.
+- The answer model must cite quote ids and copy exact quote text.
+- Context should fit the configured budget instead of expanding with subject size.
 
 ## Citation Validation
 
-The answer model must return JSON with:
+The answer response keeps the public shape:
 
 ```json
 {
-  "answer_text": "...",
-  "citations": [
-    {
-      "statement_id": "<atom_or_episode_uuid>",
-      "source_input_id": "<raw_input_uuid>",
-      "start_char": 0,
-      "end_char": 43,
-      "exact_quote": "Amy punched a man because he behaved badly."
-    }
-  ]
+  "answer": "...",
+  "citations": [],
+  "retrieval_trace": {}
 }
 ```
 
-The server validates every citation against raw source spans. If citation validation fails, the answer step retries once with quote-bank-only strict context. If it still fails, the system returns no sourced answer.
+Every citation must validate against raw source text through the selected atom or episode spans. If validation fails, retrieval may retry with stricter quote-bank context. If citations still fail, the system should return no sourced answer rather than invent support.
+
+## Trace Expectations
+
+`retrieval_trace` should make broad retrieval inspectable without exposing full raw prompts or full source text. Useful trace fields include:
+
+- normalized query
+- broad query flag
+- resolved subject ids
+- subject evidence counts
+- selected evidence ids
+- quote bank ids
+- context character count
+- answer retry flag
+
+## Scale Behavior
+
+Memory subjects are indexes, not answer context. A subject with many links should be searched and sampled, not fully loaded.
+
+The scale rule is:
+
+```txt
+find likely subjects -> fetch capped linked evidence -> rerank -> cite raw spans
+```
+
+This keeps broad retrieval useful as the knowledge base grows.
 
 ## Partial Or Conflicting Evidence
 
-SEAI retrieval should answer what the evidence supports and name gaps or uncertainty. It should not invent missing facts, resolve contradictions globally, or infer personality patterns.
+Retrieval should answer only what the cited evidence supports. If evidence is incomplete, stale, or conflicting, the answer should say so plainly. This enhancement does not require global contradiction resolution.
 
-## Example
+## Not Implemented
 
-Question:
-
-```txt
-Why did Amy punch the man?
-```
-
-Likely selected evidence:
-
-```txt
-[ATOM relation]
-CONTENT (not citable): The man's bad behavior caused Amy to punch him.
-EVIDENCE:
-Amy punched a man because he behaved badly.
-```
-
-Answer:
-
-```txt
-Amy punched the man because he behaved badly.
-```
-
-Citation quote:
-
-```txt
-Amy punched a man because he behaved badly.
-```
-
-## Not In V1
-
-V1 retrieval does not do graph traversal, atom links, global memory synthesis, contradiction resolution, rolling summaries, or long-term personality inference.
+The current system does not include full graph traversal, rolling summaries, autonomous tool routing, durable retrieval workflows, or a contradiction engine.

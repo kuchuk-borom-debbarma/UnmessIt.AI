@@ -1,112 +1,97 @@
-# SEAI_INDEXING_FLOW
+# SEAI Indexing Flow
 
-SEAI means **Source-bound Episode Atom Indexing**. It is the V1 indexing flow for UnmessIt.AI:
+SEAI means **Source-bound Episode Atom Indexing**. It turns evolving user input into source-backed retrieval material while preserving the original text as the authority.
+
+SEAI includes a derived temporal memory subject layer:
 
 ```txt
-raw input -> episode -> atom
+raw input
+-> source windows
+-> episodes
+-> atoms
+-> memory subjects and temporal links
+-> vector index
 ```
 
-Raw input is the source of truth. The original text is stored unchanged before any LLM step. Episodes and atoms only point back to source spans; they never replace the raw text.
+Raw input remains the source of truth. Episodes, atoms, memory subjects, and links are indexes over that source. They help retrieval find and organize evidence; they do not replace the original text.
 
 ## Objects
 
-**Raw input** is the exact user submission.
+**Raw input** is the exact user submission. It is saved before LLM work so all later spans point back to durable source text.
 
-**Episode** is one meaningful topic, event, scene, thought, or note inside the raw input. Most short inputs create one episode. Messy inputs may create many episodes. One episode can have multiple source spans when the user starts a topic, changes topic, then returns to it later.
+**Source window** is a bounded slice of raw input used to keep episode splitting practical for local and cloud models.
 
-**Atom** is the smallest useful standalone memory statement inside an episode. V1 supports only:
+**Episode** is one meaningful unit inside a raw input. It can describe any kind of user-provided material: a fact, event, question, plan, observation, scene, concern, preference, or partial thought. One episode may point to multiple raw spans when the same subject appears in separate parts of one input.
+
+**Atom** is a small standalone claim extracted from an episode. Atoms must stay source-supported and understandable without rereading the whole episode.
+
+Atom roles:
 
 - `direct`: directly expressed facts, events, states, preferences, plans, claims, or uncertainty.
 - `relation`: local relationships inside the same episode, such as cause, contrast, sequence, dependency, example, or result.
 
-Relation atoms replace atom links in V1. Instead of storing `atom A caused atom B`, SEAI stores a source-bound relation atom such as `The man's bad behavior explains why Amy punched him.`
+**Memory subject** is a lightweight derived node for a recurring thing the knowledge base needs to remember. A subject can be a concept, person, place, project, theme, question, decision, problem, event, story, research topic, or another user-specific subject. Subjects are domain-neutral by design.
 
-Atoms should be complete standalone claims, not short labels. For example, prefer `The team believes the outage was caused by the database migration and plans to roll it back.` over `Database migration issue.`
+**Memory subject link** connects a subject to source-backed evidence: an episode and, when useful, a specific atom. Links may carry relation and time metadata so retrieval can build a useful view without loading every linked memory.
 
-Atom annotations should include useful generic retrieval themes when supported by the source, such as `topic`, `entity`, `time`, `place`, `event`, `action`, `belief`, `preference`, `goal`, `motivation`, `cause`, `consequence`, `contrast`, `relationship`, `status`, `uncertainty`, `plan`, `problem`, `decision`, and `evidence`.
+## Temporal Links
 
-## What V1 Does Not Add
+Every subject link has `created_at`, the reliable time when the evidence was ingested.
 
-SEAI V1 intentionally avoids atom links, entity tables, rolling summaries, contradiction tracking, global graph traversal, timeline indexes, and personality inference. These are useful later, but they make the first durable memory flow too complex.
+Links may also have:
 
-Late chunking is not a good fit here. It can work for fixed documents, but UnmessIt.AI often receives small facts or messy incremental notes. Rechunking or re-embedding a larger document around every tiny insert would repeat expensive work.
+- `event_time`: a normalized time from the source text when the text clearly mentions one.
+- `time_label`: the original time phrase when useful, such as `next month`, `June 2026`, or `yesterday`.
 
-Graph-only indexing is also not enough. Graphs get messy and expensive, and many memories are not naturally graph-shaped. Some are feelings, partial beliefs, notes, or source-grounded explanations.
-
-A full hybrid system is attractive but too complex for V1. SEAI is the current balance: episode embeddings for broad context, atom embeddings for precise facts, relation atoms for local reasoning, and raw spans for evidence.
-
-Future context engineering can reduce prompt size for huge episodes by passing only relevant spans and atoms to retrieval-time reasoning.
+Mentioned times are best-effort metadata. Ingest time is always available and should be used as the fallback timeline order.
 
 ## Indexing Flow
 
 1. Receive raw text.
 2. Save raw input unchanged.
-3. Split into source-bound episodes. Episodes may contain multiple raw spans.
-4. Summarize each episode neutrally.
-5. Extract direct and relation atoms from each episode.
-6. Run an LLM verifier to reject unsupported, over-broad, uncertainty-dropping, or personality-inference atoms.
-7. Run code checks: valid role, confidence threshold, complete standalone content, and exact evidence quote found in episode spans.
-8. Save episodes and atoms.
-9. Embed episodes and atoms.
+3. Split the input into source windows.
+4. Split windows into source-bound episodes.
+5. Summarize each episode neutrally.
+6. Extract direct and relation atoms from each episode.
+7. Verify atoms against episode text.
+8. Run code checks for valid role, confidence threshold, standalone content, and exact evidence spans.
+9. Save episodes and atoms.
+10. Extract or match memory subjects for the new evidence.
+11. Save subject links with relation and temporal metadata.
+12. Embed episodes and atoms for vector search.
 
-## Retrieval Expectations
+Subject extraction is a derived-index step. If it fails, the raw input, episodes, atoms, and vector index should still remain usable.
 
-Retrieval embeds the question, searches atom and episode vectors, fetches matched atoms with their episodes and raw source spans, then asks the answer LLM to cite exact source quotes. Summaries help retrieval but are not citable evidence.
+## Subject Matching
 
-The full retrieval loop is documented in `SEAI_RETRIEVAL_FLOW.md`.
+Subject matching should prefer reuse when a new note clearly refers to an existing subject by name, alias, summary, or recent linked evidence. If no appropriate subject exists and the concept is central to the input, create a new subject.
 
-## Example
+V1 should use moderate granularity:
 
-Input:
+- Create subjects for central or recurring concepts.
+- Do not create a subject for every noun.
+- Keep subject kinds broad and neutral.
+- Update only simple subject metadata such as aliases, summary, and `updated_at`.
 
-```txt
-Amy punched a man because he was being an asshole. Later she apologized and left quietly.
-```
+Subject summaries are orientation hints, not citable evidence.
 
-Expected episode:
+## Source-Bound Rules
 
-```txt
-Text:
-Amy punched a man because he was being an asshole. Later she apologized and left quietly.
+- Raw input is the authority.
+- Episodes and atoms must point to raw spans.
+- Atoms must preserve uncertainty from the source.
+- Relation atoms describe local relationships only.
+- Memory subjects and subject summaries must not introduce unsupported facts.
+- Final answers cite raw episode or atom evidence, not subject metadata.
 
-Summary:
-Amy punched a man after he behaved badly, then apologized and left quietly.
-```
+## Relationship To Retrieval
 
-Expected atoms:
+Broad Retrieval can use subjects to narrow the search space before evidence ranking. For example, a broad query may resolve to a small set of likely subjects, fetch a capped set of linked atoms and episodes, then combine that evidence with vector and lexical search.
 
-```txt
-1. Amy punched a man.
-   role: direct
-   evidence: Amy punched a man
-   annotations: event, action
+The retrieval path may still use a lexical/entity sweep and a quote bank. The indexing job is to create complete standalone claims and source-bound episode evidence so retrieval can stay compact and cited.
 
-2. The man behaved badly.
-   role: direct
-   evidence: he was being an asshole
-   annotations: behavior, claim
+The full retrieval design is documented in `SEAI_RETRIEVAL_FLOW.md`.
 
-3. The man's bad behavior explains why Amy punched him.
-   role: relation
-   evidence: because he was being an asshole
-   annotations: cause, explanation
+## Not In This Enhancement
 
-4. Amy apologized later.
-   role: direct
-   evidence: Later she apologized
-   annotations: event, action
-
-5. Amy left quietly.
-   role: direct
-   evidence: left quietly
-   annotations: event, action
-```
-
-Do not create unsupported global/personality inferences:
-
-```txt
-Amy is violent.
-Amy has anger issues.
-Amy is protective.
-Amy always reacts aggressively.
-```
+This design does not require full graph traversal, contradiction resolution, durable job queues, production multi-user storage, or global summary engines. Those can be added later if the subject-link layer proves insufficient.

@@ -56,12 +56,14 @@ def pack_evidence_context(cards: list[dict[str, Any]], char_budget: int = 9000, 
 
     for card in cards:
         quote = card.get("citable_text") or ""
+        subject_hint = subject_hint_line(card)
         if card["object_type"] == "atom":
             block = (
                 f"[QUOTE {card['object_id']}]\n"
                 f"TYPE: atom\n"
                 f"SOURCE: {card.get('raw_input_id')}\n"
                 f"EPISODE: {card.get('episode_id')}\n"
+                f"{subject_hint}"
                 f"ROLE: {card.get('atom_role')} CONFIDENCE: {card.get('confidence')}\n"
                 f"ANNOTATIONS: {', '.join(card.get('annotations') or [])}\n"
                 f"HINT (not citable): {card.get('content') or ''}\n"
@@ -72,6 +74,7 @@ def pack_evidence_context(cards: list[dict[str, Any]], char_budget: int = 9000, 
                 f"[QUOTE {card['object_id']}]\n"
                 f"TYPE: episode\n"
                 f"SOURCE: {card.get('raw_input_id')}\n"
+                f"{subject_hint}"
                 f"HINT (not citable): {card.get('episode_summary') or ''}\n"
                 f"QUOTE:\n{quote}\n"
             )
@@ -87,6 +90,19 @@ def pack_evidence_context(cards: list[dict[str, Any]], char_budget: int = 9000, 
         used += len(block)
 
     return "\n---\n".join(blocks)
+
+
+def subject_hint_line(card: dict[str, Any]) -> str:
+    if not card.get("subject_name"):
+        return ""
+    parts = [f"SUBJECT: {card.get('subject_name')}"]
+    if card.get("subject_kind"):
+        parts.append(f"KIND: {card.get('subject_kind')}")
+    if card.get("subject_relation"):
+        parts.append(f"RELATION: {card.get('subject_relation')}")
+    if card.get("event_time") or card.get("time_label"):
+        parts.append(f"TIME: {card.get('event_time') or card.get('time_label')}")
+    return " ".join(parts) + "\n"
 
 
 def pack_legacy_context(chunks: list[dict[str, Any]], char_budget: int = 12000) -> str:

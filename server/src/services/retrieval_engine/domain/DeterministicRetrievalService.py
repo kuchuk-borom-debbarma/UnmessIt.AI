@@ -5,7 +5,7 @@ from typing import Any
 from kink import inject
 
 from src.services.retrieval_engine.domain.seai.answer_generator import StrictAnswerGenerator
-from src.services.retrieval_engine.domain.seai.cards import EvidenceCardBuilder, unique
+from src.services.retrieval_engine.domain.seai.cards import EvidenceCardBuilder, important_terms, unique
 from src.services.retrieval_engine.domain.seai.citations import validated_legacy_response, validated_seai_response
 from src.services.retrieval_engine.domain.seai.context import (
     broaden_context_cards,
@@ -37,12 +37,14 @@ class DeterministicRetrievalService(RetrievalServiceContract):
         self,
         vector_store: VectorStoreContract,
         retrieval_repo: RetrievalRepositoryContract,
+        memory_subject_repo=None,
         query_planner=None,
         evidence_reranker=None,
         answer_generator=None,
     ):
         self.vector_store = vector_store
         self.retrieval_repo = retrieval_repo
+        self.memory_subject_repo = memory_subject_repo
         self.query_planner = query_planner
         self.evidence_reranker = evidence_reranker
         self.answer_generator = answer_generator
@@ -55,7 +57,7 @@ class DeterministicRetrievalService(RetrievalServiceContract):
             hit for hit in vector_hits
             if hit.get("metadata", {}).get("object_type") in {"atom", "episode"}
         ]
-        if seai_hits:
+        if seai_hits or (is_broad_query(normalized_text) and self.memory_subject_repo):
             return self._query_seai(normalized_text, seai_hits)
         return self._query_legacy_chunks(normalized_text, vector_hits)
 
@@ -73,9 +75,27 @@ class DeterministicRetrievalService(RetrievalServiceContract):
             "selected_evidence_ids": [],
             "quote_bank_ids": [],
             "lexical_sweep_count": 0,
+            "resolved_subject_ids": [],
+            "subject_evidence_count": 0,
+            "subject_card_count": 0,
             "context_char_count": 0,
             "answer_retry": False,
         }
+
+        if broad_query and self.memory_subject_repo:
+            terms = important_terms([
+                text,
+                *plan.search_queries,
+                *plan.must_find,
+                *plan.constraints,
+            ])
+            subjects = self.memory_subject_repo.find_candidate_subjects(terms, limit=5)
+            trace["resolved_subject_ids"] = [subject["id"] for subject in subjects]
+            subject_links = self.memory_subject_repo.get_subject_links(trace["resolved_subject_ids"], limit=24)
+            trace["subject_evidence_count"] = len(subject_links)
+            for card in self.card_builder.from_subject_links(subject_links):
+                cards_by_id.setdefault(card["evidence_id"], card)
+            trace["subject_card_count"] = len(cards_by_id)
 
         for round_no in range(1, 4):
             round_hits = vector_hits if round_no == 1 else []

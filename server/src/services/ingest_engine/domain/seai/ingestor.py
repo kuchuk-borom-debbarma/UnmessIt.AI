@@ -33,6 +33,7 @@ class SEAIIngestor(Ingestor):
         chains: SEAIChains,
         id_factory,
         evidence_resolver: EvidenceResolver | None = None,
+        memory_subject_indexer=None,
     ):
         self.config = config
         self.repository = repository
@@ -40,6 +41,7 @@ class SEAIIngestor(Ingestor):
         self.chains = chains
         self.id_factory = id_factory
         self.evidence = evidence_resolver or EvidenceResolver()
+        self.memory_subject_indexer = memory_subject_indexer
 
     def ingest(self, data: str, job_id: str = None):
         job_id = job_id or self.id_factory.new_id()
@@ -60,6 +62,18 @@ class SEAIIngestor(Ingestor):
         logger.info("seai_save_start job_id=%s episode_count=%s atom_count=%s", job_id, len(episodes), len(atoms))
         self.repository.save_seai(episodes, atoms)
         logger.info("seai_save_complete job_id=%s episode_count=%s atom_count=%s", job_id, len(episodes), len(atoms))
+
+        if self.memory_subject_indexer:
+            try:
+                result = self.memory_subject_indexer.index(data, episodes, atoms)
+                logger.info(
+                    "seai_subject_index_complete job_id=%s subject_count=%s link_count=%s",
+                    job_id,
+                    result.get("subjects", 0),
+                    result.get("links", 0),
+                )
+            except Exception as exc:
+                logger.warning("seai_subject_index_failed job_id=%s error=%s", job_id, exc)
 
         if self.vector_indexer:
             self.vector_indexer.add(episodes, atoms)

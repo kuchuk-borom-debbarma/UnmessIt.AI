@@ -83,6 +83,7 @@ def make_ingestor(**overrides):
         chains=chains,
         id_factory=id_factory,
         evidence_resolver=EvidenceResolver(),
+        memory_subject_indexer=overrides.get("memory_subject_indexer"),
     )
 
 
@@ -138,6 +139,19 @@ class TestSEAIIngestor(unittest.TestCase):
 
         self.assertEqual(len(result["episodes"]), 1)
         self.assertEqual(result["atoms"], [])
+
+    def test_subject_index_failure_does_not_kill_job(self):
+        class FailingSubjectIndexer:
+            def index(self, raw_text, episodes, atoms):
+                raise RuntimeError("bad subject json")
+
+        result = make_ingestor(memory_subject_indexer=FailingSubjectIndexer()).ingest(
+            "Amy likes coffee. Amy bought beans.",
+            job_id="job_subject",
+        )
+
+        self.assertEqual(len(result["episodes"]), 1)
+        self.assertEqual(len(result["atoms"]), 1)
 
     def test_large_inputs_are_windowed_with_overlap_context(self):
         class EchoSplitter:

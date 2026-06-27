@@ -104,6 +104,19 @@ class FakeReranker:
         return self.decisions[min(round_no - 1, len(self.decisions) - 1)]
 
 
+class FakeSubjectRepo:
+    def __init__(self, subjects, links):
+        self.subjects = subjects
+        self.links = links
+
+    def find_candidate_subjects(self, terms, limit=5):
+        self.terms = terms
+        return self.subjects[:limit]
+
+    def get_subject_links(self, subject_ids, limit=24):
+        return [link for link in self.links if link["subject_id"] in subject_ids][:limit]
+
+
 class FakeAnswerGenerator:
     def __init__(self, answers):
         self.answers = list(answers)
@@ -381,6 +394,67 @@ class TestSEAIRetrievalLoop(unittest.TestCase):
 
         self.assertGreater(result["retrieval_trace"]["lexical_sweep_count"], 0)
         self.assertIn("[QUOTE episode_eren]", answerer.contexts[0])
+
+    def test_broad_query_uses_subject_linked_evidence_without_vector_hit(self):
+        raw = "UnmessIt needs broader recall across accumulated notes."
+        episode = {
+            **EPISODE,
+            "id": "episode_subject",
+            "raw_input_id": "raw_subject",
+            "summary": "UnmessIt needs broader recall.",
+            "text": raw,
+            "raw_text": raw,
+            "spans": [{"start": 0, "end": len(raw)}],
+        }
+        atom = {
+            **ATOM,
+            "id": "atom_subject",
+            "raw_input_id": "raw_subject",
+            "episode_id": "episode_subject",
+            "content": "UnmessIt needs broader recall across accumulated notes.",
+            "evidence_spans": [{"start": 0, "end": len(raw)}],
+            "evidence_text": raw,
+            "raw_text": raw,
+        }
+        subject_repo = FakeSubjectRepo(
+            subjects=[{"id": "subject_1", "name": "UnmessIt", "kind": "project"}],
+            links=[{
+                "id": "link_1",
+                "subject_id": "subject_1",
+                "subject_name": "UnmessIt",
+                "subject_kind": "project",
+                "raw_input_id": "raw_subject",
+                "episode_id": "episode_subject",
+                "atom_id": "atom_subject",
+                "relation": "problem",
+                "confidence": 0.9,
+                "reason": "The atom names the recall problem.",
+                "event_time": None,
+                "time_label": None,
+            }],
+        )
+        answerer = FakeAnswerGenerator([
+            CitedAnswer(
+                answer_text="UnmessIt needs broader recall across accumulated notes.",
+                citations=[Citation(statement_id="atom_subject", exact_quote=raw)],
+            )
+        ])
+        service = DeterministicRetrievalService(
+            FakeVectorStore({}),
+            FakeRepo(episodes=[episode], atoms=[atom]),
+            memory_subject_repo=subject_repo,
+            query_planner=FakePlanner(["UnmessIt recall"]),
+            evidence_reranker=FakeReranker([
+                RerankDecision(selected_evidence_ids=["atom:atom_subject"], enough_evidence=True)
+            ]),
+            answer_generator=answerer,
+        )
+
+        result = service.query("What is going on with UnmessIt?")
+
+        self.assertEqual(result["answer"], "UnmessIt needs broader recall across accumulated notes.")
+        self.assertEqual(result["retrieval_trace"]["resolved_subject_ids"], ["subject_1"])
+        self.assertIn("[QUOTE atom_subject]", answerer.contexts[0])
 
     def test_retrieval_docs_cover_core_contract(self):
         root = Path(__file__).resolve().parents[4]
