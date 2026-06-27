@@ -307,6 +307,53 @@ class TestSEAIRetrievalLoop(unittest.TestCase):
         self.assertEqual(result["answer"], "Amy punched a man because he behaved badly.")
         self.assertEqual(len(answerer.contexts), 2)
 
+    def test_valid_citation_survives_extra_bad_citation(self):
+        answerer = FakeAnswerGenerator([
+            CitedAnswer(
+                answer_text="Amy punched a man because he behaved badly.",
+                citations=[
+                    Citation(statement_id="atom_1", exact_quote=RAW),
+                    Citation(statement_id="missing", exact_quote="not in source"),
+                ],
+            )
+        ])
+        service = DeterministicRetrievalService(
+            FakeVectorStore({"*": [atom_hit()]}),
+            FakeRepo(),
+            query_planner=FakePlanner(),
+            evidence_reranker=FakeReranker([
+                RerankDecision(selected_evidence_ids=["atom:atom_1"], enough_evidence=True)
+            ]),
+            answer_generator=answerer,
+        )
+
+        result = service.query("Why did Amy punch the man?")
+
+        self.assertEqual(result["answer"], "Amy punched a man because he behaved badly.")
+        self.assertEqual(len(result["citations"]), 1)
+
+    def test_span_label_is_not_part_of_episode_quote(self):
+        answerer = FakeAnswerGenerator([
+            CitedAnswer(
+                answer_text="Amy punched a man because he behaved badly.",
+                citations=[Citation(statement_id="episode:episode_1", exact_quote=f"SPAN 0-{len(RAW)}:\n{RAW}")],
+            )
+        ])
+        service = DeterministicRetrievalService(
+            FakeVectorStore({"*": [episode_hit()]}),
+            FakeRepo(),
+            query_planner=FakePlanner(),
+            evidence_reranker=FakeReranker([
+                RerankDecision(selected_evidence_ids=["episode:episode_1"], enough_evidence=True)
+            ]),
+            answer_generator=answerer,
+        )
+
+        result = service.query("Why did Amy punch the man?")
+
+        self.assertEqual(result["answer"], "Amy punched a man because he behaved badly.")
+        self.assertEqual(result["citations"][0]["exact_quote"], RAW)
+
     def test_broad_query_adds_extra_episode_context(self):
         early = {
             **EPISODE,

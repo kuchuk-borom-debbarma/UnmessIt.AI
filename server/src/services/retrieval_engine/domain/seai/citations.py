@@ -1,4 +1,5 @@
 from typing import Optional
+import re
 
 from src.services.retrieval_engine.domain.seai.models import CitedAnswer
 
@@ -38,8 +39,9 @@ def validated_seai_response(answer: CitedAnswer, episodes: list[dict], atoms: li
     citations = []
 
     for citation in answer.citations:
-        quote = citation.exact_quote.strip()
-        entry = objects.get(citation.statement_id)
+        quote = clean_quote(citation.exact_quote)
+        statement_id = citation.statement_id.split(":", 1)[-1]
+        entry = objects.get(statement_id)
         match = None
         if entry:
             object_type, obj = entry
@@ -55,12 +57,12 @@ def validated_seai_response(answer: CitedAnswer, episodes: list[dict], atoms: li
                     break
 
         if not obj:
-            return {"answer": "No sourced answer found.", "citations": []}
+            continue
 
         spans = obj.get("evidence_spans") if object_type == "atom" else obj.get("spans")
         match = match or find_quote_in_spans(obj.get("raw_text") or "", spans or [], quote)
         if not quote or not match:
-            return {"answer": "No sourced answer found.", "citations": []}
+            continue
 
         citations.append({
             "statement_id": obj["id"],
@@ -78,6 +80,11 @@ def validated_seai_response(answer: CitedAnswer, episodes: list[dict], atoms: li
         return {"answer": "No sourced answer found.", "citations": []}
 
     return {"answer": answer.answer_text, "citations": citations}
+
+
+def clean_quote(quote: str) -> str:
+    quote = quote.strip()
+    return re.sub(r"^SPAN \d+-\d+:\s*", "", quote)
 
 
 def find_quote_in_spans(raw_text: str, spans: list[dict[str, int]], quote: str) -> Optional[dict[str, int]]:

@@ -147,7 +147,7 @@ def episode_snippets(episode: dict[str, Any], per_span_budget: int = 900) -> str
         text = raw_text[span["start"]:span["end"]]
         if len(text) > per_span_budget:
             text = f"{text[:per_span_budget]}..."
-        snippets.append(f"SPAN {span['start']}-{span['end']}:\n{text}")
+        snippets.append(text)
     return "\n...\n".join(snippets)
 
 
