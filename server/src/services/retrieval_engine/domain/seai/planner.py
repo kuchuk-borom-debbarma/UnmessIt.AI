@@ -12,8 +12,10 @@ class QueryPlanner:
 
     def plan(self, query: str) -> RetrievalPlan:
         system = (
-            "Plan SEAI retrieval. Return only JSON with keys intent, answer_style, search_queries, "
-            "must_find, constraints. Use short search queries optimized for vector search over atoms and episodes."
+            "Plan SEAI retrieval. Return only valid JSON with keys intent, answer_style, search_queries, must_find, constraints. "
+            "Use short search queries optimized for atoms, episodes, and memory subjects. "
+            "Respect scope words in the question such as early, current, recent, before, after, timeline, why, or how. "
+            "Do not broaden a scoped question unless needed for contrast."
         )
         human = f"QUESTION:\n{query}"
         try:

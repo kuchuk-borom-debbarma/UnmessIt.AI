@@ -22,7 +22,8 @@ class SubjectIndexChain(SEAIChain):
         system = (
             "Create a neutral memory subject index for new source-backed evidence. "
             "Subjects are recurring or central concepts, not every noun. Reuse an existing subject id when it clearly matches. "
-            "Subjects and links are retrieval hints only, not factual authority. Return compact valid JSON only."
+            "Subjects and links are retrieval hints only, not factual authority. Preserve uncertainty and avoid hidden motives or global conclusions. "
+            "Return compact valid JSON only. No markdown."
         )
         human = (
             "Return JSON with this shape:\n"

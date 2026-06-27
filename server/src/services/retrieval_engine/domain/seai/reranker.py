@@ -35,8 +35,13 @@ class EvidenceReranker:
         ]
         system = (
             "Rerank SEAI evidence for answering the question. Select only source-grounded evidence. "
+            "Respect entity, subject, and temporal scope in the question. For early/initial/before/after/current/recent questions, "
+            "prefer evidence from that scope and reject out-of-scope evidence unless it directly explains contrast. "
+            "Prefer direct atom evidence for precise claims, relation atoms for why/how questions, and episodes for necessary context. "
+            "Select complementary evidence, not duplicates. "
             "Return only JSON with keys selected_evidence_ids, scores, missing_aspects, "
-            "follow_up_queries, enough_evidence. scores items have evidence_id, score, reason."
+            "follow_up_queries, enough_evidence. scores items have evidence_id, score, reason. "
+            "Use at most 12 selected_evidence_ids and at most 3 follow_up_queries."
         )
         human = json.dumps({
             "question": query,
