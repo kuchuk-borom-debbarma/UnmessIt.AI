@@ -33,3 +33,6 @@ DEFAULT_BASE_URL = os.getenv("INGEST_MODEL_BASE_URL")
 
 # API key for the provider (required for OpenAI, OpenRouter, etc.)
 DEFAULT_API_KEY = os.getenv("INGEST_MODEL_API_KEY", "")
+
+# 0 disables app-side throttling.
+LLM_RATE_LIMIT_PER_MINUTE = int(os.getenv("LLM_RATE_LIMIT_PER_MINUTE", "0"))

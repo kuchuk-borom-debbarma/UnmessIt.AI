@@ -6,6 +6,7 @@ from typing import List, Dict, Any
 
 from src.infra.settings import Settings
 from src.infra.sqlite import BASE_DIR
+from src.infra.rate_limit import PerMinuteRateLimiter, RateLimitedEmbeddingFunction
 from src.services.retrieval_engine.ports.outbound.VectorStoreContract import VectorStoreContract
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,12 @@ class ChromaVectorStoreImpl(VectorStoreContract):
             )
         else:
             raise ValueError(f"Unsupported embedding provider: {settings.embedding_provider}")
+
+        if settings.embedding_rate_limit_per_minute > 0:
+            self.embedding_function = RateLimitedEmbeddingFunction(
+                self.embedding_function,
+                PerMinuteRateLimiter(settings.embedding_rate_limit_per_minute),
+            )
 
         # Initialize ChromaDB client (persistent)
         # Store in the server/data directory to sit alongside SQLite

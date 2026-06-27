@@ -13,3 +13,4 @@ class Settings:
         self.embedding_model = os.getenv("EMBEDDING_MODEL_NAME", "nomic-embed-text")
         self.embedding_base_url = os.getenv("EMBEDDING_MODEL_BASE_URL", "")
         self.embedding_api_key = os.getenv("EMBEDDING_MODEL_API_KEY", "")
+        self.embedding_rate_limit_per_minute = int(os.getenv("EMBEDDING_RATE_LIMIT_PER_MINUTE", "0"))

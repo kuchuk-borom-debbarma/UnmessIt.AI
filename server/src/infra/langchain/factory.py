@@ -8,7 +8,9 @@ from src.infra.langchain.config import (
     DEFAULT_PROVIDER,
     DEFAULT_BASE_URL,
     DEFAULT_API_KEY,
+    LLM_RATE_LIMIT_PER_MINUTE,
 )
+from src.infra.rate_limit import PerMinuteRateLimiter, RateLimitedModel
 
 from typing import Any, List, Optional
 from langchain_core.language_models.llms import LLM
@@ -37,6 +39,14 @@ def _json_response_format(base_url: str) -> dict:
         }
     return {"type": "json_object"}
 
+
+_llm_rate_limiter = PerMinuteRateLimiter(LLM_RATE_LIMIT_PER_MINUTE)
+
+
+def _rate_limited(model):
+    return RateLimitedModel(model, _llm_rate_limiter) if LLM_RATE_LIMIT_PER_MINUTE > 0 else model
+
+
 def get_llm(model_name: str = None, temperature: float = None, format: str = None):
     """
     Returns a standard completion LLM client based on the central provider configuration.
@@ -49,7 +59,7 @@ def get_llm(model_name: str = None, temperature: float = None, format: str = Non
         from langchain_ollama import OllamaLLM
         base_url = DEFAULT_BASE_URL or os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
         ollama_format = "json" if format == "json" else ""
-        return OllamaLLM(model=model, base_url=base_url, temperature=temp, format=ollama_format)
+        return _rate_limited(OllamaLLM(model=model, base_url=base_url, temperature=temp, format=ollama_format))
     else:
         # OpenAI or OpenAI-compatible Chat models wrapped as a completion LLM
         # to ensure compatibility with modern hosts (OpenRouter, LM Studio)
@@ -80,7 +90,7 @@ def get_llm(model_name: str = None, temperature: float = None, format: str = Non
             max_tokens=1024,
             **kwargs
         )
-        return ChatOpenAIAsLLM(chat_model=chat_model)
+        return ChatOpenAIAsLLM(chat_model=_rate_limited(chat_model))
 
 
 def get_chat_llm(model_name: str = None, temperature: float = None, format: str = None, max_tokens: int = 1024):
@@ -95,7 +105,7 @@ def get_chat_llm(model_name: str = None, temperature: float = None, format: str 
         from langchain_ollama import ChatOllama
         base_url = DEFAULT_BASE_URL or os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
         kwargs = {"format": "json"} if format == "json" else {}
-        return ChatOllama(model=model, base_url=base_url, temperature=temp, **kwargs)
+        return _rate_limited(ChatOllama(model=model, base_url=base_url, temperature=temp, **kwargs))
     else:
         # OpenAI or OpenAI-compatible Chat models (LM Studio, OpenRouter, etc.)
         try:
@@ -117,11 +127,11 @@ def get_chat_llm(model_name: str = None, temperature: float = None, format: str 
         if format == "json":
             kwargs["model_kwargs"] = {"response_format": _json_response_format(base_url)}
 
-        return ChatOpenAI(
+        return _rate_limited(ChatOpenAI(
             model=model,
             base_url=base_url,
             api_key=api_key,
             temperature=temp,
             max_tokens=max_tokens,
             **kwargs
-        )
+        ))
