@@ -32,7 +32,7 @@ class MemorySubjectIndexer:
             *[atom.get("content", "") for atom in atoms],
         ])
         candidates = self.repository.find_candidate_subjects(terms, limit=12)
-        data = self.chain.run(raw_text[:1800], episodes, atoms, candidates)
+        data = self.chain.run("", episodes, atoms, candidates)
         subjects, links = self._normalize(data, episodes, atoms, candidates)
         self.repository.save_subject_index(subjects, links)
         logger.info("memory_subject_indexed subject_count=%s link_count=%s", len(subjects), len(links))
@@ -51,7 +51,7 @@ class MemorySubjectIndexer:
         subject_by_ref: dict[str, dict[str, Any]] = {}
         subjects = []
 
-        for draft in _as_list(data.get("subjects"))[:8]:
+        for draft in _as_list(data.get("subjects"))[:6]:
             ref = str(draft.get("ref") or "").strip()
             name = str(draft.get("name") or "").strip()
             existing_id = str(draft.get("existing_subject_id") or "").strip()
@@ -64,7 +64,7 @@ class MemorySubjectIndexer:
                 "name": name or existing["name"],
                 "kind": _kind(draft.get("kind"), existing),
                 "aliases": _clean_aliases(draft.get("aliases")),
-                "summary": str(draft.get("summary") or (existing or {}).get("summary") or "").strip(),
+                "summary": str(draft.get("summary") or (existing or {}).get("summary") or "").strip()[:240],
             }
             if existing:
                 subject["aliases"] = _merge_aliases(existing.get("aliases", []), subject["aliases"])
@@ -73,7 +73,7 @@ class MemorySubjectIndexer:
 
         links = []
         seen_links = set()
-        for draft in _as_list(data.get("links"))[:32]:
+        for draft in _as_list(data.get("links"))[:18]:
             subject = subject_by_ref.get(str(draft.get("subject_ref") or "").strip())
             episode_id = str(draft.get("episode_id") or "").strip()
             atom_id = str(draft.get("atom_id") or "").strip() or None
@@ -95,7 +95,7 @@ class MemorySubjectIndexer:
                 "atom_id": atom_id,
                 "relation": _allowed(draft.get("relation"), LINK_RELATIONS),
                 "confidence": _confidence(draft.get("confidence")),
-                "reason": str(draft.get("reason") or "").strip()[:500],
+                "reason": str(draft.get("reason") or "").strip()[:240],
                 "event_time": _optional_str(draft.get("event_time")),
                 "time_label": _optional_str(draft.get("time_label")),
             })
