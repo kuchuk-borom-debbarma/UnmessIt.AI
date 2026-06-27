@@ -1,0 +1,169 @@
+[
+  {
+    "sentence": "Yesterday I woke up.",
+    "relationships": []
+  },
+  {
+    "sentence": "My kitchen was a swimming pool.",
+    "relationships": []
+  },
+  {
+    "sentence": "The sink decided to explode.",
+    "relationships": []
+  },
+  {
+    "sentence": "My friend Sarah came over.",
+    "relationships": []
+  },
+  {
+    "sentence": "She said she knew how.",
+    "relationships": []
+  },
+  {
+    "sentence": "My friend Sarah's dad is a plumber.",
+    "relationships": []
+  },
+  {
+    "sentence": "She grabbed a giant wrench from my toolbox.",
+    "relationships": [
+      {
+        "head": "She",
+        "type": "grab",
+        "tail": "wrench",
+        "source": "spacy"
+      },
+      {
+        "head": "She",
+        "type": "grab",
+        "tail": "toolbox",
+        "source": "spacy"
+      }
+    ]
+  },
+  {
+    "sentence": "She crawled under the sink while I was trying to mop up the floor with fifty towels.",
+    "relationships": [
+      {
+        "head": "She",
+        "type": "crawl",
+        "tail": "sink",
+        "source": "spacy"
+      }
+    ]
+  },
+  {
+    "sentence": "My friend Sarah told me to turn off the",
+    "relationships": [
+      {
+        "head": "friend",
+        "type": "tell",
+        "tail": "me",
+        "source": "spacy"
+      }
+    ]
+  },
+  {
+    "sentence": "The user couldn't find the water valve.",
+    "relationships": [
+      {
+        "head": "user",
+        "type": "find",
+        "tail": "valve",
+        "source": "spacy"
+      }
+    ]
+  },
+  {
+    "sentence": "She had to get out from under the sink and do it herself.",
+    "relationships": []
+  },
+  {
+    "sentence": "The pipe was completely cracked.",
+    "relationships": []
+  },
+  {
+    "sentence": "We needed to go to the hardware store to get a new one.",
+    "relationships": []
+  },
+  {
+    "sentence": "We drove there in my friend Sarah's car.",
+    "relationships": [
+      {
+        "head": "We",
+        "type": "drive",
+        "tail": "friend",
+        "source": "spacy"
+      }
+    ]
+  },
+  {
+    "sentence": "The guy at the store gave us a PVC pipe.",
+    "relationships": [
+      {
+        "head": "guy",
+        "type": "give",
+        "tail": "pipe",
+        "source": "spacy"
+      }
+    ]
+  },
+  {
+    "sentence": "We brought it back.",
+    "relationships": [
+      {
+        "head": "We",
+        "type": "bring",
+        "tail": "it",
+        "source": "spacy"
+      }
+    ]
+  },
+  {
+    "sentence": "She installed it in ten minutes.",
+    "relationships": [
+      {
+        "head": "She",
+        "type": "instal",
+        "tail": "it",
+        "source": "spacy"
+      },
+      {
+        "head": "She",
+        "type": "instal",
+        "tail": "minutes",
+        "source": "spacy"
+      }
+    ]
+  },
+  {
+    "sentence": "She turned the water back on.",
+    "relationships": [
+      {
+        "head": "She",
+        "type": "turn",
+        "tail": "water",
+        "source": "spacy"
+      }
+    ]
+  },
+  {
+    "sentence": "It didn't leak.",
+    "relationships": []
+  },
+  {
+    "sentence": "I tried to pay her for helping.",
+    "relationships": []
+  },
+  {
+    "sentence": "But she...",
+    "relationships": []
+  },
+  {
+    "sentence": "She said not to worry about it.",
+    "relationships": []
+  },
+  {
+    "sentence": "I didn't have to call a real plumber.",
+    "relationships": []
+  }
+]

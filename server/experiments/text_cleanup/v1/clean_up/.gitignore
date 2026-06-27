@@ -1,0 +1,13 @@
+# Ignore model weights
+*.th
+
+# Ignore pipeline cache and outputs
+.cache_pipeline/
+outputs/
+pipe*_output.txt
+
+# Ignore virtual environments
+.venv/
+
+# Ignore pycache
+__pycache__/

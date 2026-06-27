@@ -1,0 +1,38 @@
+.idea
+*.iml
+
+# Frontend
+node_modules/
+dist/
+build/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+
+# Local environment and data
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+chroma/
+.chroma/
+chroma_db/
+data/chroma_db/
+server/data/chroma_db/
+roberta_1_gector.th
