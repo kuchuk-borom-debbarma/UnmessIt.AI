@@ -87,3 +87,8 @@ def test_event_bus_is_resolved_through_di():
             if "event_bus.instance" in path.read_text():
                 offenders.append(str(path.relative_to(ROOT)))
     assert offenders == []
+
+
+def test_retrieval_llm_uses_env_token_budget():
+    bootstrap = (ROOT / "infra/di/bootstrap.py").read_text()
+    assert "LLMJsonClient(max_tokens=2048)" not in bootstrap

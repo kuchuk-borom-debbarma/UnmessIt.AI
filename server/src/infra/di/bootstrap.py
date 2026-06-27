@@ -51,9 +51,9 @@ def setup_di(settings: Settings):
         vector_store=di[VectorStoreContract],
         retrieval_repo=di[RetrievalRepositoryContract],
         memory_subject_repo=di[MemorySubjectRepository],
-        query_planner=QueryPlanner(LLMJsonClient(max_tokens=2048)),
-        evidence_reranker=EvidenceReranker(LLMJsonClient(max_tokens=2048)),
-        answer_generator=StrictAnswerGenerator(LLMJsonClient(max_tokens=2048)),
+        query_planner=QueryPlanner(LLMJsonClient()),
+        evidence_reranker=EvidenceReranker(LLMJsonClient()),
+        answer_generator=StrictAnswerGenerator(LLMJsonClient()),
     )
 
 
