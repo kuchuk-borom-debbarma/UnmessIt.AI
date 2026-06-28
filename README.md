@@ -1,94 +1,48 @@
 # UnmessIt.AI
 
-UnmessIt.AI is an AI RAG-powered knowledge base for information that keeps growing.
+UnmessIt.AI is an AI knowledge base for information that keeps growing.
 
-Users can paste notes, stories, research, logs, plans, decisions, or messy thoughts into the app over time. Later, they can ask AI about that evolving knowledge base and get answers grounded in the original stored source text.
+Add notes, documents, research, logs, plans, decisions, story material, or messy thoughts over time. Later, ask AI questions and get answers grounded in what you saved.
 
-Traditional RAG is usually built around a mostly static document set. This project is aimed at **living data**: new inputs keep arriving, old topics get updated, and the app needs to connect related evidence across multiple ingests.
+## Why It Exists
 
-## What Users Can Do
+Most knowledge tools treat information like a static folder of files. Real work is messier: ideas change, new details arrive, decisions evolve, and related notes may be spread across many inputs.
 
-- Add arbitrary text whenever they want.
-- Keep the original input as the source of truth.
-- Ask factual questions about saved information.
-- Ask broader questions that need multiple source chunks.
-- Ask connection-style or timeline-style questions where related evidence matters.
-- Inspect the source chunks, recall keys, recall links, citations, retrieval trace, and ingest jobs behind the answer.
-- Use local or hosted model endpoints through environment configuration.
+UnmessIt.AI is built for that kind of living knowledge base.
 
-## Current Product Shape
+## What You Can Do
 
-The app has four main screens:
+- Save text whenever you want.
+- Ask questions about saved information.
+- Get answers with source-backed citations.
+- Inspect the original source behind an answer.
+- Browse saved memory, related topics, and ingestion jobs.
+- Use local or hosted AI model providers.
 
-- **Ingest Notes**: submit text and receive a durable background job id.
-- **Memory Explorer**: inspect raw inputs, source chunks, recall keys, recall links, and durable ingest jobs.
-- **Ask AI**: query saved knowledge and inspect citations, source chunks, and retrieval trace.
-- **Database Controls**: wipe local SQLite memory, durability rows, lookup indexes, and Chroma vectors.
+## App Screens
 
-## How Memory Works
+- **Ingest Journal**: paste text into the knowledge base.
+- **Memory Explorer**: browse saved sources and related memory links.
+- **Ask AI**: ask questions and inspect citations.
+- **Database**: clear local development data when needed.
 
-The active memory model is intentionally small:
+## Source-Grounded Answers
 
-```txt
-raw input
--> source chunks
--> recall keys
--> recall links
--> vector indexes
-```
+The app keeps your original input as the source of truth. AI-generated summaries and links help find relevant information, but answers are grounded in saved source text.
 
-**Raw input** is the exact user submission and remains the authority.
+That means you can inspect where an answer came from instead of trusting a disconnected response.
 
-**Source chunks** are citable slices of that original input. They preserve full source text and raw spans, while the LLM only writes summaries.
+## Model Providers
 
-**Recall keys** are reusable handles for things the user may ask about later: people, topics, events, tasks, questions, projects, places, or anything else in the user's data.
+UnmessIt.AI can work with local or hosted model endpoints. Provider settings are currently configured through environment variables.
 
-**Recall links** connect recall keys back to source chunks and may include relation and time hints.
+User-facing provider configuration is planned for a future version.
 
-Recall keys, summaries, aliases, and link reasons are navigation metadata. Final answers must be grounded in source chunks.
+## Project Status
 
-## How Retrieval Works
+This is an active early-stage project. The current version focuses on reliable ingestion, source-backed retrieval, and inspection tools.
 
-When a user asks a question, retrieval uses several small search paths:
+For engineering details, see:
 
-```txt
-query
--> source chunk vector search
--> source chunk lexical search
--> recall key search
--> linked source chunk expansion
--> rank source chunks
--> context-pack focused snippets
--> cited answer
-```
-
-The answer prompt receives source chunk summaries plus focused snippets to save context. The API still returns full source chunks so the UI can inspect the evidence.
-
-## Why This Branch Changed Direction
-
-This branch started as temporal memory work. While exploring the codebase, the larger problem became clear: the previous ingest/retrieval split was too complex and too lossy for reliable temporal reasoning.
-
-The branch now lays the foundation temporal memory needs:
-
-- source chunks are lossless and span-backed
-- recall links can store `event_time` and `time_label`
-- retrieval can combine direct source search with recall-link expansion
-- durable jobs make long ingestion resumable
-- dev UI exposes the saved evidence and job state
-
-Dedicated temporal ordering is still future work. The current branch builds the simpler source-backed memory engine that temporal reasoning should sit on top of.
-
-## Tech Stack
-
-- Backend: Python, FastAPI, SQLite, LangChain, LangGraph, Chroma.
-- Frontend: React, Vite, React Router, Axios, lucide-react.
-- Models: OpenAI-compatible or Ollama-compatible chat and embedding providers through environment variables.
-
-## Key Docs
-
-- Current engineering state: `current-state.md`
-- Indexing flow: `server/docs/SEAI_INDEXING_FLOW.md`
-- Retrieval flow: `server/docs/SEAI_RETRIEVAL_FLOW.md`
-- Durable ingestion: `server/docs/RAG_DURABILITY.md`
-- Server rules: `server/docs/rules/codebase_rules.md`
-- Prompt rules: `server/docs/rules/prompt_rules.md`
+- `current-state.md`
+- `server/docs/`
