@@ -1,112 +1,128 @@
-# SEAI_INDEXING_FLOW
+# SEAI Indexing Flow
 
-SEAI means **Source-bound Episode Atom Indexing**. It is the V1 indexing flow for UnmessIt.AI:
+SEAI now means **Source Evidence And Indexing** for this codebase. The active memory ingestion flow is deliberately small:
 
 ```txt
-raw input -> episode -> atom
+raw input
+-> source windows
+-> source chunks
+-> recall keys and recall links
+-> vector index
 ```
 
-Raw input is the source of truth. The original text is stored unchanged before any LLM step. Episodes and atoms only point back to source spans; they never replace the raw text.
+Raw input remains the source of truth. Source chunks, recall keys, and recall links are indexes over that source. They help retrieval find and organize evidence; they do not replace the original text.
 
 ## Objects
 
-**Raw input** is the exact user submission.
+**Raw input** is the exact user submission. It is saved before LLM work so all later spans point back to durable source text.
 
-**Episode** is one meaningful topic, event, scene, thought, or note inside the raw input. Most short inputs create one episode. Messy inputs may create many episodes. One episode can have multiple source spans when the user starts a topic, changes topic, then returns to it later.
+**Source window** is a bounded slice of raw input used to keep source chunk splitting practical for local and cloud models.
 
-**Atom** is the smallest useful standalone memory statement inside an episode. V1 supports only:
+**Source chunk** is one citable unit inside a raw input. Code chooses it by source position so ingestion preserves every part of the input; the LLM summarizes the chunk but does not choose what text survives.
 
-- `direct`: directly expressed facts, events, states, preferences, plans, claims, or uncertainty.
-- `relation`: local relationships inside the same episode, such as cause, contrast, sequence, dependency, example, or result.
+**Recall key** is a lightweight derived handle for something the knowledge base may need to recall. It can be an entity, topic, event, task, question, or another user-specific thing.
 
-Relation atoms replace atom links in V1. Instead of storing `atom A caused atom B`, SEAI stores a source-bound relation atom such as `The man's bad behavior explains why Amy punched him.`
+**Recall link** connects a recall key to a source chunk. A link can carry relation and time metadata so retrieval can build useful views without loading everything.
 
-Atoms should be complete standalone claims, not short labels. For example, prefer `The team believes the outage was caused by the database migration and plans to roll it back.` over `Database migration issue.`
+This branch originally targeted temporal memory. The active indexing work became the smaller foundation temporal memory needs: source-backed chunks, recall links, and optional time hints. Dedicated temporal ordering is not implemented in this document yet.
 
-Atom annotations should include useful generic retrieval themes when supported by the source, such as `topic`, `entity`, `time`, `place`, `event`, `action`, `belief`, `preference`, `goal`, `motivation`, `cause`, `consequence`, `contrast`, `relationship`, `status`, `uncertainty`, `plan`, `problem`, `decision`, and `evidence`.
+## Recall Key Fields
 
-## What V1 Does Not Add
+Recall keys use coarse normalized fields plus source-grounded hints:
 
-SEAI V1 intentionally avoids atom links, entity tables, rolling summaries, contradiction tracking, global graph traversal, timeline indexes, and personality inference. These are useful later, but they make the first durable memory flow too complex.
+- `kind`: `entity`, `topic`, `event`, `task`, `question`, or `other`.
+- `kind_label`: optional natural label from the source.
+- `aliases`: conservative alternate names only.
+- `summary`: short orientation hint, not citable evidence.
+- `metadata`: small source-grounded extras.
 
-Late chunking is not a good fit here. It can work for fixed documents, but UnmessIt.AI often receives small facts or messy incremental notes. Rechunking or re-embedding a larger document around every tiny insert would repeat expensive work.
+Unknown LLM kinds normalize to `other`; the original value is preserved in metadata.
 
-Graph-only indexing is also not enough. Graphs get messy and expensive, and many memories are not naturally graph-shaped. Some are feelings, partial beliefs, notes, or source-grounded explanations.
+## Recall Link Fields
 
-A full hybrid system is attractive but too complex for V1. SEAI is the current balance: episode embeddings for broad context, atom embeddings for precise facts, relation atoms for local reasoning, and raw spans for evidence.
+Recall links use:
 
-Future context engineering can reduce prompt size for huge episodes by passing only relevant spans and atoms to retrieval-time reasoning.
+- `relation`: `mentions`, `about`, `updates`, `contradicts`, `supports`, or `other`.
+- `relation_label`: optional natural source-grounded phrase.
+- `event_time`: optional normalized time from source text.
+- `time_label`: optional original time phrase.
+- `metadata`: small source-grounded extras.
+
+Unknown LLM relations normalize to `other`; the original value is preserved in metadata.
+
+Temporal fields are hints, not truth:
+
+- `event_time` should be a normalized date, year, or comparable value only when the source clearly supports it.
+- `time_label` should preserve source phrases such as "before the time skip", "later", or "after the decision".
+- Missing time fields are acceptable. The system should prefer partial temporal evidence over invented precision.
 
 ## Indexing Flow
 
 1. Receive raw text.
-2. Save raw input unchanged.
-3. Split into source-bound episodes. Episodes may contain multiple raw spans.
-4. Summarize each episode neutrally.
-5. Extract direct and relation atoms from each episode.
-6. Run an LLM verifier to reject unsupported, over-broad, uncertainty-dropping, or personality-inference atoms.
-7. Run code checks: valid role, confidence threshold, complete standalone content, and exact evidence quote found in episode spans.
-8. Save episodes and atoms.
-9. Embed episodes and atoms.
+2. Preprocess text if configured.
+3. Save raw input unchanged.
+4. Split input into source windows.
+5. Save each source window as a source chunk.
+6. Summarize each source chunk neutrally.
+7. Extract or match recall keys for the new chunks.
+8. Save recall keys and append recall links.
+9. Embed source chunks and recall keys for vector search.
 
-## Retrieval Expectations
+If recall indexing fails, raw input, source chunks, and vector index should still remain usable.
 
-Retrieval embeds the question, searches atom and episode vectors, fetches matched atoms with their episodes and raw source spans, then asks the answer LLM to cite exact source quotes. Summaries help retrieval but are not citable evidence.
+The implementation lives under `server/src/services/rag/`. The public ingest route submits a durable job through `RagService.ingest(...)` and returns immediately.
 
-The full retrieval loop is documented in `SEAI_RETRIEVAL_FLOW.md`.
+Durable job details live in `server/docs/RAG_DURABILITY.md`.
 
-## Example
+## Recall Matching
 
-Input:
+Recall matching should prefer reuse when a new chunk clearly refers to an existing key by name, alias, summary, or candidate match.
 
-```txt
-Amy punched a man because he was being an asshole. Later she apologized and left quietly.
-```
-
-Expected episode:
+Recall indexing is coordinated by a small LangGraph subgraph:
 
 ```txt
-Text:
-Amy punched a man because he was being an asshole. Later she apologized and left quietly.
-
-Summary:
-Amy punched a man after he behaved badly, then apologized and left quietly.
+find_candidates
+-> draft
+-> normalize
+   -> retry once if validation failed
+   -> done
 ```
 
-Expected atoms:
+The subgraph is only orchestration. Existing chains still do candidate lookup,
+LLM drafting, and code normalization.
 
-```txt
-1. Amy punched a man.
-   role: direct
-   evidence: Amy punched a man
-   annotations: event, action
+Candidate lookup is bounded before the LLM sees it:
 
-2. The man behaved badly.
-   role: direct
-   evidence: he was being an asshole
-   annotations: behavior, claim
+1. Exact saved name/alias matches.
+2. SQLite FTS keyword matches over saved recall keys.
+3. Chroma semantic recall-key matches, only when at least one recall key exists.
+4. Merge and cap candidates before prompting the LLM.
 
-3. The man's bad behavior explains why Amy punched him.
-   role: relation
-   evidence: because he was being an asshole
-   annotations: cause, explanation
+The semantic lookup is skipped when there are no saved recall keys yet. That avoids embedding calls during first-ingest recall retries where there is nothing to semantically match.
 
-4. Amy apologized later.
-   role: direct
-   evidence: Later she apologized
-   annotations: event, action
+Safe recall key updates:
 
-5. Amy left quietly.
-   role: direct
-   evidence: left quietly
-   annotations: event, action
-```
+- Merge conservative aliases.
+- Update summary as a broad merged orientation hint when new evidence improves it.
+- Update `kind_label` when clearer.
+- Update coarse `kind` only when the existing value is `other`.
+- Shallow-merge safe metadata.
+- Update `updated_at`.
 
-Do not create unsupported global/personality inferences:
+Existing recall key names stay stable. New source chunks may enrich the key's
+summary, aliases, label, or metadata, but they should not narrow the key to only
+the latest chunk.
 
-```txt
-Amy is violent.
-Amy has anger issues.
-Amy is protective.
-Amy always reacts aggressively.
-```
+Normal ingest appends links. It does not delete old links or rewrite old chunks.
+
+## Source-Bound Rules
+
+- Raw input is the authority.
+- Source chunks must point to raw spans and should not be lossy.
+- Recall keys and summaries must not introduce unsupported facts.
+- Labels, reasons, and metadata are hints, not citable evidence.
+- Final answers should cite source chunk spans, not recall metadata.
+
+## Not In This Enhancement
+
+This design does not include atom extraction, full graph traversal, contradiction resolution, production multi-user storage, recursive summary engines, or dedicated temporal ordering. Temporal retrieval should build on `event_time`, `time_label`, source spans, and recall links in a later pass.

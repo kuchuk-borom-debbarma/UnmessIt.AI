@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 
 from src.infra.settings import Settings

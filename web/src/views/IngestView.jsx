@@ -26,7 +26,7 @@ export default function IngestView() {
     <div className="view-container">
       <div className="view-header">
         <h2>Ingest Notes</h2>
-        <p>Save notes as source-bound episodes and atoms with citations.</p>
+        <p>Save notes as source chunks with recall keys and links.</p>
       </div>
 
       <div className="glass-panel" style={{ padding: '24px' }}>

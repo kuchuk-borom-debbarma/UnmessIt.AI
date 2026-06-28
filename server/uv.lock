@@ -1194,18 +1194,6 @@ wheels = [
 ]
 
 [[package]]
-name = "kink"
-version = "0.9.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/bc/9b/71623fd68aabf7ee785e2a4032dbccc5121d7e27db0d72125739d1ce602b/kink-0.9.0.tar.gz", hash = "sha256:febe96b17f5e071858595ed536cc046fd0377596db296137773e4eeaa344800e", size = 13269, upload-time = "2026-03-19T08:26:54.794Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/72/c4/1c8fa2e8480c846bd9df3b39c53f987ae85575604acf8cd9373a5c860ae4/kink-0.9.0-py3-none-any.whl", hash = "sha256:ae4a7f644ed94ecaf94517d3c95b0f31332e11b9941e90a3f72898067020a494", size = 11627, upload-time = "2026-03-19T08:26:55.837Z" },
-]
-
-[[package]]
 name = "kubernetes"
 version = "36.0.2"
 source = { registry = "https://pypi.org/simple" }
@@ -3354,7 +3342,6 @@ dependencies = [
     { name = "chromadb" },
     { name = "fastapi" },
     { name = "fastcoref" },
-    { name = "kink" },
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langchain-experimental" },
@@ -3378,7 +3365,6 @@ requires-dist = [
     { name = "chromadb", specifier = ">=1.5.9" },
     { name = "fastapi", specifier = ">=0.137.2" },
     { name = "fastcoref", specifier = ">=2.1.6" },
-    { name = "kink", specifier = ">=0.9.0" },
     { name = "langchain", specifier = ">=1.3.10" },
     { name = "langchain-core", specifier = ">=1.4.8" },
     { name = "langchain-experimental", specifier = ">=0.4.2" },

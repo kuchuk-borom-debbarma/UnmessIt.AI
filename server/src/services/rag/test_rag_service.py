@@ -1,0 +1,619 @@
+from __future__ import annotations
+
+import hashlib
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+from src.repositories import dev, raw_inputs, recall, recall_key_vectors, source_chunk_vectors, source_chunks
+from src.services.rag.private.chains.recall.candidates import RecallCandidateChain
+from src.services.rag.private.chains.recall.index import RecallIndexChain
+from src.services.rag.private.chains.recall.normalizer import RecallNormalizerChain
+from src.services.rag.private.chains.query import QueryEvidenceChain
+from src.services.rag.private.chains.source_chunk_assembler import SourceChunkAssemblerChain
+from src.services.rag.private.chains.source_chunk_drafts import SourceChunkDraftChain
+from src.services.rag.private.chains.source_windows import SourceWindowChain
+from src.services.rag.private.durability import DurableIngest
+from src.services.rag.private.durability import repository as durability_repo
+from src.services.rag.private.durability.models import STAGE_SOURCE_CHUNKS, STATUS_ABORTED, STATUS_FAILED, STATUS_QUEUED, STATUS_WAITING_RETRY
+from src.services.rag.private.durability.runner import DurableIngestRunner
+from src.services.rag.private.rag_service_impl import RagServiceImpl
+
+
+class FakeJson:
+    def __init__(self, fail_recall: bool = False) -> None:
+        self.fail_recall = fail_recall
+
+    def invoke_json(self, system: str, human: str) -> dict:
+        if "Summarize one source chunk" in system:
+            return {"summary": "summary", "source_time": None, "metadata": {}}
+        if self.fail_recall:
+            raise RuntimeError("bad recall")
+        return {
+            "recall_keys": [{"ref": "k1", "name": "Grisha", "kind": "entity", "aliases": [], "summary": ""}],
+            "recall_links": [{"recall_key_ref": "k1", "source_chunk_id": "chunk-1", "relation": "about", "confidence": 1}],
+        }
+
+
+def test_ingest_submits_durable_job():
+    service = RagServiceImpl(FakeJson())
+    service.durability.submit = lambda text, job_id: {
+        "id": job_id,
+        "status": "queued",
+        "raw_input_id": "raw-1",
+        "stage": "source_chunks",
+        "attempt_count": 0,
+        "metadata": {},
+    }
+    result = service.ingest("  Grisha inherited the Attack Titan.  ", job_id="job-1")
+
+    assert result["job_id"] == "job-1"
+    assert result["status"] == "queued"
+    assert result["raw_input_id"] == "raw-1"
+
+
+def test_source_chunk_steps_preserve_source_bound_spans():
+    raw_text = "Before the walls, Grisha inherited the Attack Titan. Kruger watched."
+    windows = SourceWindowChain().run(raw_text)
+    drafts = SourceChunkDraftChain(FakeJson()).run(windows[0])
+    chunks = SourceChunkAssemblerChain().run("raw-1", raw_text, drafts)
+
+    assert chunks[0]["text"] == raw_text
+    assert chunks[0]["spans"] == [{"start": 0, "end": len(raw_text)}]
+
+
+def test_source_chunk_llm_failure_is_retryable():
+    class BrokenJson:
+        def invoke_json(self, system: str, human: str) -> dict:
+            raise RuntimeError("provider forbidden")
+
+    with pytest.raises(RuntimeError, match="provider forbidden"):
+        SourceChunkDraftChain(BrokenJson()).run({"text": "hello", "start": 0, "end": 5})
+
+
+def test_recall_index_chain_retries_once_after_invalid_output(monkeypatch):
+    class RetryJson:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.prompts = []
+            self.systems = []
+
+        def invoke_json(self, system: str, human: str) -> dict:
+            self.calls += 1
+            self.systems.append(system)
+            self.prompts.append(human)
+            if self.calls == 1:
+                return {"recall_keys": [{"ref": "k1", "name": "Grisha", "kind": "entity"}], "recall_links": []}
+            return {
+                "recall_keys": [{"ref": "k1", "name": "Grisha", "kind": "entity"}],
+                "recall_links": [{"recall_key_ref": "k1", "source_chunk_id": "chunk-1", "relation": "about"}],
+            }
+
+    monkeypatch.setattr(recall, "find_candidate_keys", lambda terms, limit=20: [])
+    monkeypatch.setattr(recall, "find_exact_term_matches", lambda terms, limit=3: [])
+    monkeypatch.setattr(recall, "has_keys", lambda: False)
+    monkeypatch.setattr(recall_key_vectors, "search", lambda text, top_k=20: [])
+
+    json_client = RetryJson()
+    index = RecallIndexChain(json_client).run("Grisha inherited the Attack Titan.", [_source_chunk("chunk-1", "Grisha inherited the Attack Titan.")])
+
+    assert json_client.calls == 2
+    assert "previous response failed validation" in json_client.prompts[1]
+    assert "recall_key_ref" in json_client.prompts[0]
+    assert "source_chunk_id" in json_client.prompts[0]
+    assert "stable merged orientation" in json_client.systems[0]
+    assert "Avoid tiny phrase-specific topic keys" in json_client.systems[0]
+    assert index["analysis"]["validation_errors"] == 0
+    assert index["recall_links"][0]["source_chunk_id"] == "chunk-1"
+
+
+def test_candidate_lookup_merges_ranks_filters_and_caps(monkeypatch):
+    source_chunks_data = [_source_chunk("chunk-1", "Grisha inherited the Attack Titan.")]
+    sqlite_candidates = [
+        _candidate("exact-1", "Grisha Yeager", "exact"),
+        _candidate("keyword-1", "Attack Titan", "keyword"),
+    ]
+    vector_keys = [_candidate("vector-1", "Founding Titan", "vector"), _candidate("keyword-1", "Attack Titan", "vector")]
+    extra = [_candidate(f"extra-{index}", f"Extra {index}", "keyword") for index in range(25)]
+
+    monkeypatch.setattr(recall, "find_candidate_keys", lambda terms, limit=20: [*sqlite_candidates, *extra])
+    monkeypatch.setattr(recall, "has_keys", lambda: True)
+    monkeypatch.setattr(recall_key_vectors, "search", lambda text, top_k=20: [
+        {"object_id": "vector-1", "object_type": "recall_key", "distance": 0.2},
+        {"object_id": "ignored-source", "object_type": "source_chunk", "distance": 0.1},
+        {"object_id": "keyword-1", "object_type": "recall_key", "distance": 0.3},
+    ])
+    monkeypatch.setattr(recall, "find_keys_by_ids", lambda ids: [key for key in vector_keys if key["id"] in ids])
+
+    candidates = RecallCandidateChain().run("Grisha and the Founding Titan", source_chunks_data)
+
+    assert len(candidates) == 20
+    assert [candidate["id"] for candidate in candidates[:3]] == ["exact-1", "keyword-1", "extra-0"]
+    assert "ignored-source" not in {candidate["id"] for candidate in candidates}
+    assert "semantic vector match" in " ".join(candidates[1]["match_notes"])
+
+
+def test_candidate_lookup_skips_vector_search_when_no_recall_keys(monkeypatch):
+    monkeypatch.setattr(recall, "find_candidate_keys", lambda terms, limit=20: [])
+    monkeypatch.setattr(recall, "has_keys", lambda: False)
+    monkeypatch.setattr(recall_key_vectors, "search", lambda text, top_k=20: pytest.fail("vector search should be skipped"))
+
+    candidates = RecallCandidateChain().run("Eren wants freedom", [_source_chunk("chunk-1", "Eren wants freedom.")])
+
+    assert candidates == []
+
+
+def test_query_uses_source_search_and_recall_expansion(monkeypatch):
+    chunk_1 = {**_source_chunk("chunk-1", "Grisha inherited the Attack Titan. Unrelated training details continue for a while."), "summary": "Grisha Titan evidence"}
+    chunk_2 = {**_source_chunk("chunk-2", "Eren later used inherited Titan powers. Unrelated tail should not be sent."), "summary": "Eren Titan evidence"}
+
+    monkeypatch.setattr(source_chunk_vectors, "search", lambda query, top_k=8: [{"object_id": "chunk-1", "object_type": "source_chunk"}])
+    monkeypatch.setattr(source_chunks, "get_by_ids", lambda ids: [chunk for chunk in [chunk_1, chunk_2] if chunk["id"] in ids])
+    monkeypatch.setattr(source_chunks, "search", lambda query, limit=8: [])
+    monkeypatch.setattr(recall, "find_candidate_keys", lambda terms, limit=8: [_candidate("key-1", "Grisha Yeager", "keyword")])
+    monkeypatch.setattr(recall, "has_keys", lambda: False)
+    monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda key_ids, limit=12: ["chunk-2"])
+
+    class QueryJson:
+        def invoke_json(self, system: str, human: str) -> dict:
+            assert "SOURCE_CHUNKS" in human
+            assert "snippets" in human
+            assert "Unrelated tail should not be sent" not in human
+            return {"answer": "Grisha's power later connects to Eren.", "citation_ids": ["chunk-2"]}
+
+    result = RagServiceImpl(QueryJson()).query("Grisha to Eren")
+
+    assert result["answer"] == "Grisha's power later connects to Eren."
+    assert [chunk["id"] for chunk in result["source_chunks"]] == ["chunk-1", "chunk-2"]
+    assert result["citations"][0]["source_chunk_id"] == "chunk-2"
+    assert result["retrieval_trace"]["recall_key_count"] == 1
+    assert result["retrieval_trace"]["context_chars_saved"] > 0
+    assert result["source_chunks"][1]["text"] == chunk_2["text"]
+
+
+def test_query_context_packer_ranks_and_falls_back(monkeypatch):
+    vector = {**_source_chunk("vector", "Attack Titan matters here. A different sentence."), "summary": "vector summary"}
+    lexical = {**_source_chunk("lexical", "No direct overlap in text."), "summary": "fallback summary"}
+    linked = {**_source_chunk("linked", "Attack Titan is also linked through recall."), "summary": "linked summary"}
+
+    monkeypatch.setattr(source_chunk_vectors, "search", lambda query, top_k=8: [{"object_id": "vector", "object_type": "source_chunk"}])
+    monkeypatch.setattr(source_chunks, "get_by_ids", lambda ids: [chunk for chunk in [vector, lexical, linked] if chunk["id"] in ids])
+    monkeypatch.setattr(source_chunks, "search", lambda query, limit=8: [lexical])
+    monkeypatch.setattr(recall, "find_candidate_keys", lambda terms, limit=8: [_candidate("key-1", "Attack Titan", "keyword")])
+    monkeypatch.setattr(recall, "has_keys", lambda: False)
+    monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda key_ids, limit=12: ["linked"])
+
+    chunks, trace = QueryEvidenceChain().run("Attack Titan")
+
+    assert [chunk["id"] for chunk in chunks] == ["vector", "lexical", "linked"]
+    assert trace["selected_snippet_counts"] == {"vector": 1, "lexical": 1, "linked": 1}
+    assert chunks[1]["_snippets"] == ["fallback summary"]
+    assert trace["chunk_score_reasons"]["vector"] == ["vector", "query_terms:2"]
+
+
+def test_normalizer_reuses_single_exact_name_or_alias_match(monkeypatch):
+    existing = _candidate("key-1", "Grisha Yeager", "exact")
+    monkeypatch.setattr(recall, "find_exact_term_matches", lambda terms, limit=3: [existing])
+
+    index, errors = RecallNormalizerChain().run(
+        {
+            "recall_keys": [{"ref": "k1", "name": "Grisha", "kind": "entity", "aliases": ["Grisha Yeager"]}],
+            "recall_links": [{"recall_key_ref": "k1", "source_chunk_id": "chunk-1", "relation": "about"}],
+        },
+        [_source_chunk("chunk-1", "Grisha inherited the Attack Titan.")],
+        [],
+    )
+
+    assert errors == []
+    assert index["recall_keys"][0]["id"] == "key-1"
+    assert index["recall_links"][0]["recall_key_id"] == "key-1"
+
+
+def test_normalizer_reused_candidate_preserves_identity_and_merges_aliases():
+    existing = {
+        **_candidate("key-1", "Eren Yeager", "exact"),
+        "kind": "entity",
+        "kind_label": "character",
+        "aliases": ["Eren"],
+        "summary": "Broad protagonist summary",
+        "metadata": {"old": True},
+    }
+
+    index, errors = RecallNormalizerChain().run(
+        {
+            "recall_keys": [{
+                "ref": "k1",
+                "existing_recall_key_id": "key-1",
+                "name": "Eren Rumbling Arc",
+                "kind": "topic",
+                "kind_label": "main character",
+                "aliases": ["Attack Titan holder"],
+                "summary": "Broad protagonist summary updated with later evidence",
+                "metadata": {"new": True},
+            }],
+            "recall_links": [{"recall_key_ref": "k1", "source_chunk_id": "chunk-1", "relation": "about"}],
+        },
+        [_source_chunk("chunk-1", "Eren activates the Rumbling.")],
+        [existing],
+    )
+
+    key = index["recall_keys"][0]
+    assert errors == []
+    assert key["id"] == "key-1"
+    assert key["name"] == "Eren Yeager"
+    assert key["kind"] == "entity"
+    assert key["kind_label"] == "main character"
+    assert key["aliases"] == ["Eren", "Attack Titan holder"]
+    assert key["summary"] == "Broad protagonist summary updated with later evidence"
+    assert key["metadata"] == {"old": True, "new": True}
+
+
+def test_normalizer_does_not_auto_merge_ambiguous_exact_match(monkeypatch):
+    monkeypatch.setattr(recall, "find_exact_term_matches", lambda terms, limit=3: [
+        _candidate("key-1", "Alex", "exact"),
+        _candidate("key-2", "Alex", "exact"),
+    ])
+
+    index, errors = RecallNormalizerChain().run(
+        {
+            "recall_keys": [{"ref": "k1", "name": "Alex", "kind": "entity", "aliases": []}],
+            "recall_links": [{"recall_key_ref": "k1", "source_chunk_id": "chunk-1", "relation": "mentions"}],
+        },
+        [_source_chunk("chunk-1", "Alex joined the project.")],
+        [],
+    )
+
+    assert "new recall key exact match is ambiguous" in errors
+    assert index["recall_keys"][0]["id"] not in {"key-1", "key-2"}
+
+
+def test_recall_repository_terms_fts_and_duplicate_links(monkeypatch):
+    conn = _memory_db()
+    monkeypatch.setattr(recall, "get_connection", lambda: conn)
+    conn.execute("INSERT INTO raw_inputs (id, job_id, content) VALUES ('raw-1', 'job-1', 'text')")
+    conn.execute(
+        "INSERT INTO source_chunks (id, raw_input_id, text, summary, spans, metadata) VALUES (?, ?, ?, ?, ?, ?)",
+        ("chunk-1", "raw-1", "Grisha text", "summary", "[]", "{}"),
+    )
+
+    index = {
+        "recall_keys": [{
+            "id": "key-1",
+            "name": "Grisha Yeager",
+            "kind": "entity",
+            "kind_label": "person",
+            "aliases": ["Grisha"],
+            "summary": "Attack Titan inheritor",
+            "metadata": {},
+        }],
+        "recall_links": [{
+            "id": "link-1",
+            "recall_key_id": "key-1",
+            "source_chunk_id": "chunk-1",
+            "relation": "about",
+            "relation_label": "",
+            "confidence": 1,
+            "reason": "mentioned",
+            "metadata": {},
+        }],
+        "analysis": {},
+    }
+
+    assert recall.save_index(index) == 1
+    index["recall_links"][0]["id"] = "link-2"
+    assert recall.save_index(index) == 0
+    assert recall.find_exact_term_matches(["grisha"])[0]["id"] == "key-1"
+    assert recall.find_fts_matches(["Attack Titan"])[0]["id"] == "key-1"
+    assert recall.linked_source_chunk_ids(["key-1"]) == ["chunk-1"]
+    link = recall.get_view()["data"][0]["links"][0]
+    assert link["raw_input_id"] == "raw-1"
+    assert link["source_chunk_text"] == "Grisha text"
+    assert link["source_chunk_spans"] == []
+
+
+def test_source_chunk_lexical_search_handles_punctuation(monkeypatch):
+    conn = _memory_db()
+    monkeypatch.setattr(source_chunks, "get_connection", lambda: conn)
+    conn.execute("INSERT INTO raw_inputs (id, job_id, content) VALUES ('raw-1', 'job-1', 'text')")
+    conn.execute(
+        "INSERT INTO source_chunks (id, raw_input_id, text, summary, spans, metadata) VALUES (?, ?, ?, ?, ?, ?)",
+        ("chunk-1", "raw-1", "Grisha inherited the Attack Titan.", "summary", "[]", "{}"),
+    )
+
+    rows = source_chunks.search("Grisha's Titan?", limit=5)
+
+    assert [row["id"] for row in rows] == ["chunk-1"]
+
+
+def test_recall_repository_reused_key_preserves_name_and_updates_summary(monkeypatch):
+    conn = _memory_db()
+    monkeypatch.setattr(recall, "get_connection", lambda: conn)
+    conn.execute("INSERT INTO raw_inputs (id, job_id, content) VALUES ('raw-1', 'job-1', 'text')")
+    conn.execute(
+        "INSERT INTO source_chunks (id, raw_input_id, text, summary, spans, metadata) VALUES ('chunk-1', 'raw-1', 'Eren text', 'summary', '[]', '{}')"
+    )
+
+    recall.save_index({
+        "recall_keys": [{
+            "id": "key-1",
+            "name": "Eren Yeager",
+            "kind": "entity",
+            "kind_label": "character",
+            "aliases": ["Eren"],
+            "summary": "Broad protagonist summary",
+            "metadata": {"old": True},
+        }],
+        "recall_links": [],
+        "analysis": {},
+    })
+    recall.save_index({
+        "recall_keys": [{
+            "id": "key-1",
+            "name": "Eren Rumbling Arc",
+            "kind": "topic",
+            "kind_label": "main character",
+            "aliases": ["Attack Titan holder"],
+            "summary": "Broad protagonist summary updated with later evidence",
+            "metadata": {"old": True, "new": True},
+        }],
+        "recall_links": [{
+            "id": "link-1",
+            "recall_key_id": "key-1",
+            "source_chunk_id": "chunk-1",
+            "relation": "about",
+            "relation_label": "",
+            "confidence": 1,
+            "reason": "test",
+            "metadata": {},
+        }],
+        "analysis": {},
+    })
+
+    key = recall.find_keys_by_ids(["key-1"])[0]
+    assert key["name"] == "Eren Yeager"
+    assert key["kind"] == "entity"
+    assert key["kind_label"] == "main character"
+    assert key["summary"] == "Broad protagonist summary updated with later evidence"
+    assert key["metadata"] == {"old": True, "new": True}
+
+
+def test_recall_repository_reused_key_keeps_summary_when_new_summary_empty(monkeypatch):
+    conn = _memory_db()
+    monkeypatch.setattr(recall, "get_connection", lambda: conn)
+
+    recall.save_index({
+        "recall_keys": [{
+            "id": "key-1",
+            "name": "Eren Yeager",
+            "kind": "other",
+            "kind_label": None,
+            "aliases": [],
+            "summary": "Existing broad summary",
+            "metadata": {},
+        }],
+        "recall_links": [],
+        "analysis": {},
+    })
+    recall.save_index({
+        "recall_keys": [{
+            "id": "key-1",
+            "name": "Eren",
+            "kind": "entity",
+            "kind_label": None,
+            "aliases": [],
+            "summary": "",
+            "metadata": {},
+        }],
+        "recall_links": [],
+        "analysis": {},
+    })
+
+    key = recall.find_keys_by_ids(["key-1"])[0]
+    assert key["name"] == "Eren Yeager"
+    assert key["kind"] == "entity"
+    assert key["summary"] == "Existing broad summary"
+
+
+def test_dev_wipe_clears_durability_sqlite_lookup_and_vectors(monkeypatch):
+    conn = _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(dev, "get_connection", lambda: conn)
+    monkeypatch.setattr(source_chunk_vectors, "reset", lambda: conn.execute("CREATE TABLE IF NOT EXISTS vector_reset_called (ok INTEGER)"))
+    conn.execute("INSERT INTO raw_inputs (id, job_id, content) VALUES ('raw-1', 'job-1', 'text')")
+    conn.execute("INSERT INTO ingest_jobs (id, content_hash, raw_input_id, status, stage) VALUES ('job-1', 'hash-1', 'raw-1', 'queued', 'raw_input')")
+    conn.execute("INSERT INTO ingest_checkpoints (job_id, stage, unit_key, status) VALUES ('job-1', 'raw_input', 'raw_input:raw-1', 'complete')")
+    conn.execute(
+        "INSERT INTO source_chunks (id, raw_input_id, text, summary, spans, metadata) VALUES ('chunk-1', 'raw-1', 'Grisha text', 'summary', '[]', '{}')"
+    )
+    recall.save_index({
+        "recall_keys": [{"id": "key-1", "name": "Grisha", "kind": "entity", "kind_label": None, "aliases": ["Grisha Yeager"], "summary": "", "metadata": {}}],
+        "recall_links": [{"id": "link-1", "recall_key_id": "key-1", "source_chunk_id": "chunk-1", "relation": "about", "relation_label": "", "confidence": 1, "reason": "", "metadata": {}}],
+        "analysis": {},
+    })
+
+    dev.wipe_all()
+
+    for table in ("ingest_checkpoints", "ingest_jobs", "recall_links", "recall_key_terms", "recall_keys_fts", "recall_keys", "source_chunks", "raw_inputs"):
+        assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+    assert conn.execute("SELECT name FROM sqlite_master WHERE name = 'vector_reset_called'").fetchone()
+
+
+def test_durable_submit_reuses_same_text_job(monkeypatch):
+    _patch_memory_db(monkeypatch)
+
+    durable = DurableIngest(NoopPreprocess(), FakeWindows(), FakeDrafts(), SourceChunkAssemblerChain(), FakeRecallIndex())
+    durable.scheduler.schedule = lambda job_id: None
+
+    first = durable.submit("same text", "job-1")
+    second = durable.submit("same text", "job-2")
+
+    assert first["id"] == "job-1"
+    assert second["id"] == "job-1"
+    assert len(durability_repo.list_jobs()) == 1
+
+
+def test_durable_submit_requeues_aborted_same_text_job(monkeypatch):
+    _patch_memory_db(monkeypatch)
+
+    content_hash = hashlib.sha256("same text".encode("utf-8")).hexdigest()
+    raw_id = raw_inputs.save_or_reuse("job-1", "same text", content_hash)
+    durability_repo.create_or_reuse_job("job-1", content_hash, raw_id)
+    durability_repo.abort("job-1", "raw input missing")
+
+    durable = DurableIngest(NoopPreprocess(), FakeWindows(), FakeDrafts(), SourceChunkAssemblerChain(), FakeRecallIndex())
+    durable.scheduler.schedule = lambda job_id: None
+    job = durable.submit("same text", "job-2")
+
+    assert job["id"] == "job-1"
+    assert job["status"] == STATUS_QUEUED
+    assert job["error"] is None
+
+
+def test_durable_runner_aborts_job_missing_raw_input(monkeypatch):
+    conn = _patch_memory_db(monkeypatch)
+    conn.execute(
+        "INSERT INTO ingest_jobs (id, content_hash, raw_input_id, status, stage) VALUES ('job-1', 'hash-1', NULL, 'queued', 'raw_input')"
+    )
+    durability_repo.complete_checkpoint("job-1", STAGE_SOURCE_CHUNKS, "source_piece:done", "chunk-1")
+    runner = DurableIngestRunner(FakeWindows(), FakeDrafts(), SourceChunkAssemblerChain(), FakeRecallIndex())
+
+    runner.run_once("job-1")
+
+    job = durability_repo.get("job-1")
+    assert job["status"] == STATUS_ABORTED
+    assert job["stage"] == STATUS_ABORTED
+    assert "raw input missing" in job["error"]
+    assert conn.execute("SELECT COUNT(*) FROM ingest_checkpoints WHERE job_id = 'job-1'").fetchone()[0] == 0
+
+
+def test_durable_source_chunks_resume_from_next_unfinished_piece(monkeypatch):
+    _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(recall_key_vectors, "exists", lambda key_id: True)
+    monkeypatch.setattr(source_chunk_vectors, "exists", lambda chunk_id: True)
+
+    raw_id = raw_inputs.save_or_reuse("job-1", "one two", "hash-1")
+    job = durability_repo.create_or_reuse_job("job-1", "hash-1", raw_id)
+    drafts = FakeDrafts(fail_on="two")
+    runner = DurableIngestRunner(FakeWindows(), drafts, SourceChunkAssemblerChain(), FakeRecallIndex())
+
+    with pytest.raises(RuntimeError):
+        runner.run_once(job["id"])
+    assert durability_repo.get(job["id"])["status"] == STATUS_WAITING_RETRY
+    assert drafts.calls == ["one", "two"]
+
+    drafts.fail_on = None
+    runner.run_once(job["id"])
+
+    assert drafts.calls == ["one", "two", "two"]
+    assert durability_repo.get(job["id"])["status"] == "complete"
+    assert len(source_chunks.get_by_raw_input_id(raw_id)) == 2
+
+
+def test_durable_retry_cap_marks_job_failed(monkeypatch):
+    _patch_memory_db(monkeypatch)
+    raw_id = raw_inputs.save_or_reuse("job-1", "text", "hash-1")
+    durability_repo.create_or_reuse_job("job-1", "hash-1", raw_id)
+
+    for _ in range(5):
+        job = durability_repo.schedule_retry("job-1", STAGE_SOURCE_CHUNKS, "source_piece:1", "model down")
+
+    assert job["status"] == STATUS_FAILED
+    assert job["attempt_count"] == 5
+
+
+def test_manual_resume_keeps_completed_checkpoints(monkeypatch):
+    _patch_memory_db(monkeypatch)
+    raw_id = raw_inputs.save_or_reuse("job-1", "text", "hash-1")
+    durability_repo.create_or_reuse_job("job-1", "hash-1", raw_id)
+    durability_repo.complete_checkpoint("job-1", STAGE_SOURCE_CHUNKS, "source_piece:done", "chunk-1")
+    durability_repo.schedule_retry("job-1", STAGE_SOURCE_CHUNKS, "source_piece:todo", "bad")
+
+    durability_repo.resume("job-1")
+
+    assert durability_repo.get("job-1")["status"] == STATUS_QUEUED
+    assert durability_repo.checkpoint_complete("job-1", STAGE_SOURCE_CHUNKS, "source_piece:done") is True
+
+
+def _source_chunk(chunk_id: str, text: str) -> dict:
+    return {
+        "id": chunk_id,
+        "raw_input_id": "raw-1",
+        "text": text,
+        "summary": text,
+        "spans": [{"start": 0, "end": len(text)}],
+        "source_time": None,
+        "metadata": {},
+    }
+
+
+def _candidate(key_id: str, name: str, source: str) -> dict:
+    return {
+        "id": key_id,
+        "name": name,
+        "kind": "entity",
+        "kind_label": None,
+        "aliases": [],
+        "summary": "",
+        "metadata": {},
+        "created_at": None,
+        "updated_at": None,
+        "match_source": source,
+        "match_notes": [source],
+    }
+
+
+def _memory_db():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.executescript(Path(__file__).resolve().parents[3].joinpath("resources/schema.sql").read_text())
+    return conn
+
+
+def _patch_memory_db(monkeypatch):
+    conn = _memory_db()
+    for module in (raw_inputs, source_chunks, recall, durability_repo):
+        monkeypatch.setattr(module, "get_connection", lambda conn=conn: conn)
+    return conn
+
+
+class NoopPreprocess:
+    def run(self, text: str) -> str:
+        return text.strip()
+
+
+class FakeWindows:
+    def run(self, raw_text: str) -> list[dict]:
+        return [{"text": "one", "start": 0, "end": 3}, {"text": "two", "start": 4, "end": 7}]
+
+
+class FakeDrafts:
+    def __init__(self, fail_on: str | None = None) -> None:
+        self.fail_on = fail_on
+        self.calls = []
+
+    def run(self, window: dict) -> list[dict]:
+        self.calls.append(window["text"])
+        if window["text"] == self.fail_on:
+            raise RuntimeError("draft failed")
+        return [{"window": window, "summary": window["text"], "source_time": None, "metadata": {}}]
+
+
+class FakeRecallIndex:
+    def run(self, raw_text: str, chunks: list[dict]) -> dict:
+        chunk = chunks[0]
+        key_id = f"key-{chunk['id']}"
+        return {
+            "recall_keys": [{"id": key_id, "name": "Thing", "kind": "entity", "kind_label": None, "aliases": [], "summary": "", "metadata": {}}],
+            "recall_links": [{
+                "id": f"link-{chunk['id']}",
+                "recall_key_id": key_id,
+                "source_chunk_id": chunk["id"],
+                "relation": "about",
+                "relation_label": "",
+                "confidence": 1,
+                "reason": "test",
+                "metadata": {},
+            }],
+            "analysis": {},
+        }

@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { ChevronDown, ChevronRight, Database, FileText, Hash, Layers, RefreshCw, ShieldCheck } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, Database, FileText, Link2, PlayCircle, RefreshCw, Tags } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8000';
 
@@ -8,13 +8,19 @@ const Pill = ({ children, tone = 'muted' }) => (
   <span className={`detail-pill ${tone}`}>{children}</span>
 );
 
+const shortText = (value, fallback = 'Untitled') => {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  return text ? text.slice(0, 90) : fallback;
+};
+
 const spanLabel = (span) => `${span.start}-${span.end}`;
 
-const spanText = (rawText, spans = []) => (
-  spans.map((span) => rawText.slice(span.start, span.end)).join('\n...\n')
-);
+const formatJson = (value) => {
+  if (!value || (typeof value === 'object' && Object.keys(value).length === 0)) return '';
+  return JSON.stringify(value, null, 2);
+};
 
-const HighlightedSource = ({ rawText, spans = [] }) => {
+const HighlightedSource = ({ rawText = '', spans = [] }) => {
   const sorted = [...spans].sort((a, b) => a.start - b.start);
   const parts = [];
   let cursor = 0;
@@ -59,77 +65,95 @@ const TreeRow = ({ depth = 0, active, expandable, expanded, onToggle, onClick, i
   </button>
 );
 
-const RawNode = ({ raw, selected, setSelected }) => {
+const RawNode = ({ raw, selected, onSelect }) => {
   const [expanded, setExpanded] = useState(true);
-  const isActive = selected?.kind === 'raw' && selected.raw.id === raw.id;
+  const chunks = raw.source_chunks || [];
 
   return (
     <div>
       <TreeRow
-        active={isActive}
-        expandable={raw.episodes.length > 0}
+        active={selected?.kind === 'raw' && selected.raw.id === raw.id}
+        expandable={chunks.length > 0}
         expanded={expanded}
         onToggle={() => setExpanded(!expanded)}
-        onClick={() => setSelected({ kind: 'raw', raw })}
+        onClick={() => onSelect({ kind: 'raw', raw })}
         icon={<Database size={15} />}
-        title={raw.content.slice(0, 80) || 'Raw input'}
-        meta={`${raw.episodes.length} episodes`}
+        title={shortText(raw.content, 'Raw input')}
+        meta={`${chunks.length} chunks`}
       />
-      {expanded && raw.episodes.map((episode) => (
-        <EpisodeNode
-          key={episode.id}
-          raw={raw}
-          episode={episode}
-          selected={selected}
-          setSelected={setSelected}
+      {expanded && chunks.map((chunk) => (
+        <TreeRow
+          key={chunk.id}
+          depth={1}
+          active={selected?.kind === 'chunk' && selected.chunk.id === chunk.id}
+          onClick={() => onSelect({ kind: 'chunk', raw, chunk })}
+          icon={<FileText size={14} />}
+          title={shortText(chunk.summary || chunk.text, 'Source chunk')}
+          meta={`${chunk.spans?.length || 0} spans`}
         />
       ))}
     </div>
   );
 };
 
-const EpisodeNode = ({ raw, episode, selected, setSelected }) => {
+const RecallKeyNode = ({ recallKey, selected, onSelect }) => {
   const [expanded, setExpanded] = useState(true);
-  const isActive = selected?.kind === 'episode' && selected.episode.id === episode.id;
+  const links = recallKey.links || [];
 
   return (
     <div>
       <TreeRow
-        depth={1}
-        active={isActive}
-        expandable={episode.atoms.length > 0}
+        active={selected?.kind === 'recall_key' && selected.recallKey.id === recallKey.id}
+        expandable={links.length > 0}
         expanded={expanded}
         onToggle={() => setExpanded(!expanded)}
-        onClick={() => setSelected({ kind: 'episode', raw, episode })}
-        icon={<Layers size={15} />}
-        title={episode.summary || episode.text.slice(0, 80)}
-        meta={`${episode.spans.length} spans`}
+        onClick={() => onSelect({ kind: 'recall_key', recallKey })}
+        icon={<Tags size={15} />}
+        title={recallKey.name}
+        meta={`${links.length} links`}
       />
-      {expanded && episode.atoms.map((atom) => (
+      {expanded && links.map((link) => (
         <TreeRow
-          key={atom.id}
-          depth={2}
-          active={selected?.kind === 'atom' && selected.atom.id === atom.id}
-          onClick={() => setSelected({ kind: 'atom', raw, episode, atom })}
-          icon={<FileText size={14} />}
-          title={atom.content}
-          meta={atom.atom_role}
+          key={link.id}
+          depth={1}
+          active={selected?.kind === 'recall_link' && selected.link.id === link.id}
+          onClick={() => onSelect({ kind: 'recall_link', recallKey, link })}
+          icon={<Link2 size={14} />}
+          title={shortText(link.source_chunk_summary || link.reason || link.relation, 'Recall link')}
+          meta={link.relation_label || link.relation}
         />
       ))}
     </div>
   );
 };
+
+const JobNode = ({ job, selected, onSelect }) => (
+  <TreeRow
+    active={selected?.kind === 'job' && selected.job.id === job.id}
+    onClick={() => onSelect({ kind: 'job', job })}
+    icon={<Clock size={15} />}
+    title={shortText(job.id, 'Ingest job')}
+    meta={`${job.status} / ${job.stage}`}
+  />
+);
 
 export default function ExplorerView() {
   const [rawInputs, setRawInputs] = useState([]);
-  const [totals, setTotals] = useState({ episodes: 0, atoms: 0 });
+  const [recallKeys, setRecallKeys] = useState([]);
+  const [jobs, setJobs] = useState([]);
+  const [totals, setTotals] = useState({ rawInputs: 0, sourceChunks: 0, recallKeys: 0, recallLinks: 0, jobs: 0 });
   const [selected, setSelected] = useState(null);
+  const [mode, setMode] = useState('sources');
   const [tab, setTab] = useState('summary');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  const rawById = useMemo(() => {
+    return Object.fromEntries(rawInputs.map((raw) => [raw.id, raw]));
+  }, [rawInputs]);
+
   useEffect(() => {
-    fetchSEAI();
+    fetchMemory();
   }, []);
 
   const select = (value) => {
@@ -137,71 +161,84 @@ export default function ExplorerView() {
     setTab(value.kind === 'raw' ? 'source' : 'summary');
   };
 
-  const fetchSEAI = async () => {
+  const fetchMemory = async () => {
     setLoading(true);
     try {
-      const res = await axios.get(`${API_BASE}/dev/seai`);
-      const data = res.data.data || [];
-      setRawInputs(data);
-      setTotals({ episodes: res.data.total_episodes || 0, atoms: res.data.total_atoms || 0 });
-      setSelected((current) => current || (data[0] ? { kind: 'raw', raw: data[0] } : null));
+      const [sourceRes, recallRes, jobsRes] = await Promise.all([
+        axios.get(`${API_BASE}/dev/seai`),
+        axios.get(`${API_BASE}/dev/recall`),
+        axios.get(`${API_BASE}/dev/ingest_jobs`),
+      ]);
+      const sourceData = sourceRes.data.data || [];
+      const recallData = recallRes.data.data || [];
+      const jobData = jobsRes.data.data || [];
+      setRawInputs(sourceData);
+      setRecallKeys(recallData);
+      setJobs(jobData);
+      setTotals({
+        rawInputs: sourceRes.data.total_raw_inputs || 0,
+        sourceChunks: sourceRes.data.total_source_chunks || 0,
+        recallKeys: recallRes.data.total_recall_keys || 0,
+        recallLinks: recallRes.data.total_recall_links || 0,
+        jobs: jobsRes.data.total_jobs || 0,
+      });
+      setSelected((current) => refreshSelected(current, sourceData, recallData, jobData));
       setError('');
     } catch (err) {
       console.error(err);
-      setError('Failed to fetch SEAI index');
+      setError('Failed to fetch memory index');
     } finally {
       setLoading(false);
     }
   };
 
+  const refreshSelected = (current, sourceData, recallData, jobData) => {
+    if (!current) return sourceData[0] ? { kind: 'raw', raw: sourceData[0] } : null;
+    if (current.kind === 'job') {
+      const job = jobData.find((item) => item.id === current.job.id);
+      return job ? { kind: 'job', job } : current;
+    }
+    if (current.kind === 'recall_key') {
+      const recallKey = recallData.find((item) => item.id === current.recallKey.id);
+      return recallKey ? { kind: 'recall_key', recallKey } : current;
+    }
+    return current;
+  };
+
+  const switchMode = (nextMode) => {
+    setMode(nextMode);
+    if (nextMode === 'sources') {
+      setSelected(rawInputs[0] ? { kind: 'raw', raw: rawInputs[0] } : null);
+    } else if (nextMode === 'recall') {
+      setSelected(recallKeys[0] ? { kind: 'recall_key', recallKey: recallKeys[0] } : null);
+    } else {
+      setSelected(jobs[0] ? { kind: 'job', job: jobs[0] } : null);
+    }
+  };
+
+  const resumeJob = async (jobId) => {
+    await axios.post(`${API_BASE}/dev/ingest_jobs/${jobId}/resume`);
+    await fetchMemory();
+  };
+
   const renderDetail = () => {
     if (!selected) {
-      return <div className="empty-state">No SEAI memories indexed yet.</div>;
+      return <div className="empty-state">No memory data indexed yet.</div>;
     }
 
     if (selected.kind === 'raw') {
+      const chunks = selected.raw.source_chunks || [];
       return (
         <>
-          <DetailHeader title="Raw Input" pills={[`${selected.raw.episodes.length} episodes`, selected.raw.id]} />
+          <DetailHeader title="Raw Input" pills={[`${chunks.length} source chunks`, selected.raw.id]} />
+          <Tabs tabs={['source', 'metadata']} tab={tab} setTab={setTab} />
           <div className="detail-body">
-            <div className="evidence-text">{selected.raw.content}</div>
-          </div>
-        </>
-      );
-    }
-
-    if (selected.kind === 'episode') {
-      const { raw, episode } = selected;
-      return (
-        <>
-          <DetailHeader
-            title="Episode"
-            pills={[`${episode.spans.length} spans`, `${episode.atoms.length} atoms`, episode.id]}
-          />
-          <Tabs tabs={['summary', 'spans', 'atoms', 'source', 'metadata']} tab={tab} setTab={setTab} />
-          <div className="detail-body">
-            {tab === 'summary' && (
-              <>
-                <h3 className="detail-heading">Summary</h3>
-                <div className="evidence-text">{episode.summary}</div>
-                <h3 className="detail-heading">Episode Text</h3>
-                <div className="evidence-text">{episode.text}</div>
-              </>
-            )}
-            {tab === 'spans' && (
-              <SpanList rawText={raw.content} spans={episode.spans} />
-            )}
-            {tab === 'atoms' && (
-              <AtomList rawText={raw.content} atoms={episode.atoms} />
-            )}
-            {tab === 'source' && (
-              <HighlightedSource rawText={raw.content} spans={episode.spans} />
-            )}
+            {tab === 'source' && <div className="evidence-text">{selected.raw.content}</div>}
             {tab === 'metadata' && (
               <Metadata rows={[
-                ['episode_id', episode.id],
-                ['raw_input_id', episode.raw_input_id],
-                ['created_at', episode.created_at],
+                ['id', selected.raw.id],
+                ['job_id', selected.raw.job_id],
+                ['created_at', selected.raw.created_at],
               ]} />
             )}
           </div>
@@ -209,38 +246,165 @@ export default function ExplorerView() {
       );
     }
 
-    const { raw, episode, atom } = selected;
+    if (selected.kind === 'chunk') {
+      const { raw, chunk } = selected;
+      return (
+        <>
+          <DetailHeader title="Source Chunk" pills={[`${chunk.spans?.length || 0} spans`, chunk.id]} />
+          <Tabs tabs={['summary', 'source', 'metadata']} tab={tab} setTab={setTab} />
+          <div className="detail-body">
+            {tab === 'summary' && (
+              <>
+                <h3 className="detail-heading">Summary</h3>
+                <div className="evidence-text">{chunk.summary || 'No summary.'}</div>
+                <h3 className="detail-heading" style={{ marginTop: 18 }}>Chunk Text</h3>
+                <div className="evidence-text">{chunk.text}</div>
+                <div className="detail-meta">
+                  {chunk.source_time && <Pill><Clock size={12} /> {chunk.source_time}</Pill>}
+                  {(chunk.spans || []).map((span) => <Pill key={spanLabel(span)}>{spanLabel(span)}</Pill>)}
+                </div>
+              </>
+            )}
+            {tab === 'source' && <HighlightedSource rawText={raw.content} spans={chunk.spans || []} />}
+            {tab === 'metadata' && (
+              <Metadata rows={[
+                ['id', chunk.id],
+                ['raw_input_id', chunk.raw_input_id],
+                ['source_time', chunk.source_time || ''],
+                ['created_at', chunk.created_at],
+                ['metadata', formatJson(chunk.metadata)],
+              ]} />
+            )}
+          </div>
+        </>
+      );
+    }
+
+    if (selected.kind === 'recall_key') {
+      const { recallKey } = selected;
+      return (
+        <>
+          <DetailHeader title="Recall Key" pills={[recallKey.kind, `${recallKey.link_count} links`, recallKey.id]} />
+          <Tabs tabs={['summary', 'links', 'metadata']} tab={tab} setTab={setTab} />
+          <div className="detail-body">
+            {tab === 'summary' && (
+              <>
+                <h3 className="detail-heading">Summary</h3>
+                <div className="evidence-text">{recallKey.summary || 'No summary.'}</div>
+                <div className="detail-meta">
+                  {recallKey.kind_label && <Pill tone="green">{recallKey.kind_label}</Pill>}
+                  {(recallKey.aliases || []).map((alias) => <Pill key={alias} tone="blue">{alias}</Pill>)}
+                  {recallKey.latest_link_time && <Pill><Clock size={12} /> {recallKey.latest_link_time}</Pill>}
+                </div>
+              </>
+            )}
+            {tab === 'links' && <RecallLinkList links={recallKey.links || []} />}
+            {tab === 'metadata' && (
+              <Metadata rows={[
+                ['id', recallKey.id],
+                ['kind', recallKey.kind],
+                ['kind_label', recallKey.kind_label || ''],
+                ['aliases', (recallKey.aliases || []).join(', ')],
+                ['created_at', recallKey.created_at],
+                ['updated_at', recallKey.updated_at],
+                ['metadata', formatJson(recallKey.metadata)],
+              ]} />
+            )}
+          </div>
+        </>
+      );
+    }
+
+    if (selected.kind === 'job') {
+      const { job } = selected;
+      const canResume = ['failed', 'waiting_retry'].includes(job.status);
+      return (
+        <>
+          <DetailHeader title="Ingest Job" pills={[job.status, job.stage, job.id]} />
+          <Tabs tabs={['summary', 'metadata']} tab={tab} setTab={setTab} />
+          <div className="detail-body">
+            {tab === 'summary' && (
+              <>
+                <div className="detail-meta">
+                  <Pill tone={job.status === 'complete' ? 'green' : 'muted'}>{job.status}</Pill>
+                  <Pill>{job.stage}</Pill>
+                  <Pill>{job.attempt_count || 0} attempts</Pill>
+                </div>
+                {job.error && (
+                  <>
+                    <h3 className="detail-heading" style={{ marginTop: 18 }}>Error</h3>
+                    <div className="evidence-text" style={{ color: '#ef4444' }}>{job.error}</div>
+                  </>
+                )}
+                {canResume && (
+                  <button className="btn btn-primary" style={{ marginTop: 18 }} onClick={() => resumeJob(job.id)}>
+                    <PlayCircle size={16} /> Resume Job
+                  </button>
+                )}
+                <h3 className="detail-heading" style={{ marginTop: 18 }}>Counts</h3>
+                <div className="evidence-text">{formatJson(job.metadata) || 'No counts yet.'}</div>
+              </>
+            )}
+            {tab === 'metadata' && (
+              <Metadata rows={[
+                ['id', job.id],
+                ['content_hash', job.content_hash],
+                ['raw_input_id', job.raw_input_id || ''],
+                ['status', job.status],
+                ['stage', job.stage],
+                ['attempt_count', String(job.attempt_count || 0)],
+                ['next_run_at', job.next_run_at || ''],
+                ['error', job.error || ''],
+                ['created_at', job.created_at],
+                ['updated_at', job.updated_at],
+                ['metadata', formatJson(job.metadata)],
+              ]} />
+            )}
+          </div>
+        </>
+      );
+    }
+
+    const { recallKey, link } = selected;
+    const raw = rawById[link.raw_input_id];
     return (
       <>
-        <DetailHeader
-          title="Atom"
-          pills={[atom.atom_role, `${Math.round(atom.confidence * 100)}% confidence`, atom.id]}
-        />
-        <Tabs tabs={['summary', 'evidence', 'source', 'metadata']} tab={tab} setTab={setTab} />
+        <DetailHeader title="Recall Link" pills={[recallKey.name, link.relation_label || link.relation, link.id]} />
+        <Tabs tabs={['summary', 'source', 'metadata']} tab={tab} setTab={setTab} />
         <div className="detail-body">
           {tab === 'summary' && (
             <>
-              <h3 className="detail-heading">Content</h3>
-              <div className="evidence-text">{atom.content}</div>
+              <h3 className="detail-heading">Reason</h3>
+              <div className="evidence-text">{link.reason || 'No reason.'}</div>
               <div className="detail-meta">
-                <Pill><ShieldCheck size={12} /> {atom.atom_role}</Pill>
-                <Pill><Hash size={12} /> {Math.round(atom.confidence * 100)}%</Pill>
-                {atom.annotations.map((item) => <Pill key={item} tone="blue">{item}</Pill>)}
+                <Pill tone="green">{link.relation}</Pill>
+                {link.relation_label && <Pill>{link.relation_label}</Pill>}
+                <Pill>{Math.round((link.confidence || 0) * 100)}%</Pill>
+                {(link.event_time || link.time_label) && <Pill><Clock size={12} /> {link.event_time || link.time_label}</Pill>}
               </div>
+              <h3 className="detail-heading" style={{ marginTop: 18 }}>Linked Source Chunk</h3>
+              <div className="evidence-text">{link.source_chunk_text || link.source_chunk_summary}</div>
             </>
           )}
-          {tab === 'evidence' && (
-            <SpanList rawText={raw.content} spans={atom.evidence_spans} />
-          )}
           {tab === 'source' && (
-            <HighlightedSource rawText={raw.content} spans={atom.evidence_spans} />
+            raw
+              ? <HighlightedSource rawText={raw.content} spans={link.source_chunk_spans || []} />
+              : <div className="evidence-text">{link.source_chunk_text || 'Source chunk unavailable.'}</div>
           )}
           {tab === 'metadata' && (
             <Metadata rows={[
-              ['atom_id', atom.id],
-              ['episode_id', episode.id],
-              ['raw_input_id', atom.raw_input_id],
-              ['created_at', atom.created_at],
+              ['id', link.id],
+              ['recall_key_id', link.recall_key_id],
+              ['source_chunk_id', link.source_chunk_id],
+              ['raw_input_id', link.raw_input_id || ''],
+              ['relation', link.relation],
+              ['relation_label', link.relation_label || ''],
+              ['confidence', String(link.confidence)],
+              ['event_time', link.event_time || ''],
+              ['time_label', link.time_label || ''],
+              ['created_at', link.created_at],
+              ['metadata', formatJson(link.metadata)],
+              ['source_chunk_metadata', formatJson(link.source_chunk_metadata)],
             ]} />
           )}
         </div>
@@ -249,28 +413,52 @@ export default function ExplorerView() {
   };
 
   return (
-    <div className="view-container explorer-layout" style={{ display: 'flex', gap: '24px', height: '100%' }}>
+    <div className="view-container explorer-layout" style={{ display: 'flex', gap: '24px', height: '100%', maxWidth: 'none' }}>
       <div className="glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div className="panel-header">
-          <h2><Database size={20} className="text-blue" /> SEAI Index</h2>
+          <h2><Database size={20} className="text-blue" /> Memory Explorer</h2>
           <div className="detail-meta">
-            <Pill>{totals.episodes} episodes</Pill>
-            <Pill>{totals.atoms} atoms</Pill>
-            <button className="icon-btn" onClick={fetchSEAI} title="Refresh SEAI index">
+            {mode === 'sources' ? (
+              <>
+                <Pill>{totals.rawInputs} raw inputs</Pill>
+                <Pill>{totals.sourceChunks} source chunks</Pill>
+              </>
+            ) : mode === 'recall' ? (
+              <>
+                <Pill>{totals.recallKeys} recall keys</Pill>
+                <Pill>{totals.recallLinks} links</Pill>
+              </>
+            ) : (
+              <Pill>{totals.jobs} jobs</Pill>
+            )}
+            <button className="icon-btn" onClick={fetchMemory} title="Refresh memory index">
               <RefreshCw size={16} />
             </button>
           </div>
         </div>
+        <Tabs tabs={['sources', 'recall', 'jobs']} tab={mode} setTab={switchMode} />
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
           {loading ? (
-            <div className="empty-state">Loading SEAI index...</div>
+            <div className="empty-state">Loading memory index...</div>
           ) : error ? (
             <div className="empty-state" style={{ color: '#ef4444' }}>{error}</div>
-          ) : rawInputs.length === 0 ? (
-            <div className="empty-state">No SEAI memories indexed yet.</div>
-          ) : (
+          ) : mode === 'sources' && rawInputs.length === 0 ? (
+            <div className="empty-state">No source chunks indexed yet.</div>
+          ) : mode === 'recall' && recallKeys.length === 0 ? (
+            <div className="empty-state">No recall keys indexed yet.</div>
+          ) : mode === 'jobs' && jobs.length === 0 ? (
+            <div className="empty-state">No ingest jobs yet.</div>
+          ) : mode === 'sources' ? (
             rawInputs.map((raw) => (
-              <RawNode key={raw.id} raw={raw} selected={selected} setSelected={select} />
+              <RawNode key={raw.id} raw={raw} selected={selected} onSelect={select} />
+            ))
+          ) : mode === 'recall' ? (
+            recallKeys.map((recallKey) => (
+              <RecallKeyNode key={recallKey.id} recallKey={recallKey} selected={selected} onSelect={select} />
+            ))
+          ) : (
+            jobs.map((job) => (
+              <JobNode key={job.id} job={job} selected={selected} onSelect={select} />
             ))
           )}
         </div>
@@ -287,7 +475,7 @@ const DetailHeader = ({ title, pills }) => (
   <div className="panel-header">
     <h2><FileText size={18} className="text-yellow" /> {title}</h2>
     <div className="detail-meta">
-      {pills.map((pill) => <Pill key={pill}>{pill}</Pill>)}
+      {pills.filter(Boolean).map((pill) => <Pill key={pill}>{pill}</Pill>)}
     </div>
   </div>
 );
@@ -302,28 +490,19 @@ const Tabs = ({ tabs, tab, setTab }) => (
   </div>
 );
 
-const SpanList = ({ rawText, spans }) => (
+const RecallLinkList = ({ links }) => (
   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-    {spans.map((span, index) => (
-      <div key={`${span.start}-${span.end}-${index}`} className="span-card">
-        <Pill>{spanLabel(span)}</Pill>
-        <div className="evidence-text">{rawText.slice(span.start, span.end)}</div>
-      </div>
-    ))}
-  </div>
-);
-
-const AtomList = ({ rawText, atoms }) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-    {atoms.map((atom) => (
-      <div key={atom.id} className="span-card">
+    {links.map((link) => (
+      <div key={link.id} className="span-card">
         <div className="detail-meta">
-          <Pill tone={atom.atom_role === 'relation' ? 'green' : 'blue'}>{atom.atom_role}</Pill>
-          <Pill>{Math.round(atom.confidence * 100)}%</Pill>
-          {atom.annotations.map((item) => <Pill key={item}>{item}</Pill>)}
+          <Pill tone="green">{link.relation}</Pill>
+          {link.relation_label && <Pill>{link.relation_label}</Pill>}
+          <Pill>{Math.round((link.confidence || 0) * 100)}%</Pill>
+          {(link.event_time || link.time_label) && <Pill>{link.event_time || link.time_label}</Pill>}
         </div>
-        <div className="evidence-text" style={{ color: 'var(--text-primary)' }}>{atom.content}</div>
-        <div className="evidence-text">{spanText(rawText, atom.evidence_spans)}</div>
+        <div className="evidence-text" style={{ color: 'var(--text-primary)' }}>
+          {link.source_chunk_summary || link.reason || 'No source summary.'}
+        </div>
       </div>
     ))}
   </div>
@@ -334,7 +513,7 @@ const Metadata = ({ rows }) => (
     {rows.map(([label, value]) => (
       <React.Fragment key={label}>
         <div>{label}</div>
-        <div>{value}</div>
+        <div className="evidence-text">{value || ''}</div>
       </React.Fragment>
     ))}
   </div>

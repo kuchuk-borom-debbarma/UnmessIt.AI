@@ -17,7 +17,7 @@ function App() {
               <Send size={18} /> Ingest Journal
             </NavLink>
             <NavLink to="/explorer" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"}>
-              <FolderTree size={18} /> SEAI Explorer
+              <FolderTree size={18} /> Memory Explorer
             </NavLink>
             <NavLink to="/query" className={({ isActive }) => isActive ? "nav-link active" : "nav-link"}>
               <Search size={18} /> Ask AI

@@ -1,63 +1,121 @@
-import sqlite3
-import json
+from __future__ import annotations
+
 import os
+import sqlite3
 from pathlib import Path
-from uuid import uuid5
 
-# Global variable to hold our single database connection
-_db_connection = None
+SERVER_DIR = Path(__file__).resolve().parents[2]
+DATA_DIR = SERVER_DIR / "data"
+RESOURCES_DIR = SERVER_DIR / "resources"
+DEFAULT_DB_PATH = DATA_DIR / "sqlite.db"
 
-# Calculate the absolute path to server/data/sqlite.db
-# __file__ is server/src/infra/sqlite.py
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-DEFAULT_DB_PATH = str(BASE_DIR / "data" / "sqlite.db")
+_connection: sqlite3.Connection | None = None
 
-def get_db_connection(db_path=DEFAULT_DB_PATH):
+
+def get_connection(db_path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
+    """Return the process-wide SQLite connection.
+
+    Repositories share this connection so writes go through one configured
+    handle with the same SQLite pragmas.
     """
-    Returns a highly optimized, shared SQLite database connection.
-    Implements a singleton pattern so multiple calls return the exact same connection.
-    """
-    global _db_connection
-    
-    # If the connection already exists, just return it
-    if _db_connection is not None:
-        return _db_connection
-        
-    # Ensure the directory exists before connecting
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    
-    # check_same_thread=False is needed in multithreaded web server environments.
-    # Note: SQLite handles concurrent reads well in WAL mode, but only one concurrent writer.
+    global _connection
+    if _connection is not None:
+        return _connection
+
+    os.makedirs(Path(db_path).parent, exist_ok=True)
     conn = sqlite3.connect(db_path, check_same_thread=False)
-    
-    # Return rows as dictionary-like objects instead of tuples
     conn.row_factory = sqlite3.Row
-    
-    # Apply performance PRAGMAs
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.execute("PRAGMA journal_mode = WAL;")       # Enable Write-Ahead Logging for concurrent readers/writer
-    conn.execute("PRAGMA synchronous = NORMAL;")     # Faster synchronization
-    conn.execute("PRAGMA cache_size = -20000;")      # ~20MB cache
-    conn.execute("PRAGMA temp_store = MEMORY;")      # Store temp tables/indices in RAM
-    conn.execute("PRAGMA mmap_size = 30000000000;")  # Enable memory-mapped I/O (up to ~30GB)
-    
-    # Store the connection globally for future calls
-    _db_connection = conn
-    
-    return _db_connection
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    _connection = conn
+    return conn
 
-def init_db():
-    """
-    Initializes the database by executing the schema.sql file.
-    Should be run once when the server starts.
-    """
-    schema_path = BASE_DIR / "data" / "schema.sql"
-    conn = get_db_connection()
-    
-    # Read the schema file and execute it
-    with open(schema_path, 'r') as f:
-        schema_script = f.read()
-        
-    # Execute the SQL script
-    conn.executescript(schema_script)
+
+def init_db() -> None:
+    """Apply the checked-in schema at app startup."""
+    schema_path = RESOURCES_DIR / "schema.sql"
+    conn = get_connection()
+    conn.executescript(schema_path.read_text())
+    _migrate_ingest_job_status(conn)
+    _add_column_if_missing(conn, "raw_inputs", "content_hash", "TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_inputs_content_hash ON raw_inputs(content_hash)")
     conn.commit()
+
+
+def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    """SQLite cannot add columns with `IF NOT EXISTS`, so migrations check first."""
+    columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _migrate_ingest_job_status(conn: sqlite3.Connection) -> None:
+    """Rebuild old durability tables so `aborted` is an allowed terminal state."""
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ingest_jobs'").fetchone()
+    if not row or "'aborted'" in row["sql"]:
+        return
+
+    # SQLite cannot alter CHECK constraints, so this one migration rebuilds the
+    # two durability tables that reference each other.
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("ALTER TABLE ingest_checkpoints RENAME TO ingest_checkpoints_old")
+    conn.execute("ALTER TABLE ingest_jobs RENAME TO ingest_jobs_old")
+    conn.execute("DROP INDEX IF EXISTS idx_ingest_jobs_content_hash")
+    conn.execute("DROP INDEX IF EXISTS idx_ingest_jobs_status_next_run")
+    conn.execute("DROP INDEX IF EXISTS idx_ingest_checkpoints_job_stage")
+    conn.executescript(
+        """
+        CREATE TABLE ingest_jobs (
+            id TEXT PRIMARY KEY,
+            content_hash TEXT NOT NULL,
+            raw_input_id TEXT,
+            status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'waiting_retry', 'complete', 'failed', 'aborted')),
+            stage TEXT NOT NULL,
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            next_run_at DATETIME,
+            error TEXT,
+            metadata JSON NOT NULL DEFAULT '{}',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(raw_input_id) REFERENCES raw_inputs(id) ON DELETE SET NULL
+        );
+        CREATE UNIQUE INDEX idx_ingest_jobs_content_hash ON ingest_jobs(content_hash);
+        CREATE INDEX idx_ingest_jobs_status_next_run ON ingest_jobs(status, next_run_at);
+
+        CREATE TABLE ingest_checkpoints (
+            job_id TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            unit_key TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('running', 'complete', 'failed')),
+            output_ref TEXT,
+            error TEXT,
+            metadata JSON NOT NULL DEFAULT '{}',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(job_id, stage, unit_key),
+            FOREIGN KEY(job_id) REFERENCES ingest_jobs(id) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_ingest_checkpoints_job_stage ON ingest_checkpoints(job_id, stage, status);
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO ingest_jobs
+            (id, content_hash, raw_input_id, status, stage, attempt_count, next_run_at, error, metadata, created_at, updated_at)
+        SELECT id, content_hash, raw_input_id, status, stage, attempt_count, next_run_at, error, metadata, created_at, updated_at
+        FROM ingest_jobs_old
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO ingest_checkpoints
+            (job_id, stage, unit_key, status, output_ref, error, metadata, created_at, updated_at)
+        SELECT job_id, stage, unit_key, status, output_ref, error, metadata, created_at, updated_at
+        FROM ingest_checkpoints_old
+        """
+    )
+    conn.execute("DROP TABLE ingest_checkpoints_old")
+    conn.execute("DROP TABLE ingest_jobs_old")
+    conn.execute("PRAGMA foreign_keys = ON")

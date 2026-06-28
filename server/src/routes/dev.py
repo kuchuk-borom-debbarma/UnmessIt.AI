@@ -1,65 +1,61 @@
+from __future__ import annotations
+
 import logging
 
 from fastapi import APIRouter, HTTPException
-from kink import di
-from src.repositories.sqlite_dev_repository import SqliteDevRepository
-from src.services.retrieval_engine.ports.outbound.VectorStoreContract import VectorStoreContract
+
+from src.repositories import dev
+from src.services.rag.rag_service import get_rag_service
 
 router = APIRouter(prefix="/dev", tags=["dev"])
 logger = logging.getLogger(__name__)
 
+
 @router.get("/facts")
-def get_facts():
-    """
-    Developer endpoint to fetch deterministic chunks.
-    """
-    facts = di[SqliteDevRepository].get_facts()
-        
-    return {
-        "status": "success",
-        "total_chunks": len(facts),
-        "data": facts
-    }
+def get_facts() -> dict:
+    """Compatibility alias for the active source chunk dev view."""
+    return {"status": "success", **dev.memory_view()}
+
 
 @router.get("/seai")
-def get_seai():
-    """
-    Developer endpoint to inspect SEAI raw inputs, episodes, and atoms.
-    """
-    seai = di[SqliteDevRepository].get_seai()
+def get_seai() -> dict:
+    """Return raw inputs with nested source chunks."""
+    return {"status": "success", **dev.memory_view()}
 
-    return {
-        "status": "success",
-        **seai,
-    }
 
 @router.get("/raw_inputs/{input_id}")
-def get_raw_input(input_id: str):
-    """
-    Developer endpoint to fetch the original raw conversational text.
-    """
-    raw_input = di[SqliteDevRepository].get_raw_input(input_id)
+def get_raw_input(input_id: str) -> dict:
+    """Return one saved raw input, or 404 for unknown IDs."""
+    raw_input = dev.raw_input(input_id)
     if not raw_input:
         raise HTTPException(status_code=404, detail="Raw input not found")
-        
-    return {
-        "status": "success",
-        "data": raw_input,
-    }
+    return {"status": "success", "data": raw_input}
+
+
+@router.get("/recall")
+def get_recall() -> dict:
+    """Return recall keys with their evidence links."""
+    return {"status": "success", **dev.recall_view()}
+
+
+@router.get("/ingest_jobs")
+def get_ingest_jobs() -> dict:
+    """Return durable ingestion jobs for dev inspection."""
+    jobs = get_rag_service().list_ingest_jobs()
+    return {"status": "success", "total_jobs": len(jobs), "data": jobs}
+
+
+@router.post("/ingest_jobs/{job_id}/resume")
+def resume_ingest_job(job_id: str) -> dict:
+    """Manually resume one waiting or failed durable ingestion job."""
+    job = get_rag_service().resume_ingest_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Ingest job not found")
+    return {"status": "success", "data": job}
+
 
 @router.delete("/facts")
-def delete_all_facts():
-    """
-    Developer endpoint to completely wipe the SQLite database tables and the Chroma vector store.
-    """
-    di[SqliteDevRepository].wipe_all()
-    try:
-        vector_store = di[VectorStoreContract]
-        vector_store.reset()
-    except Exception as e:
-        logger.warning("dev_vector_reset_failed error=%s", e)
-    
-    return {
-        "status": "success",
-        "message": "All databases cleared successfully"
-    }
+def delete_all_facts() -> dict:
+    """Clear local memory and its vector index for dev reset."""
+    dev.wipe_all()
+    return {"status": "success", "message": "All active ingestion data cleared successfully"}

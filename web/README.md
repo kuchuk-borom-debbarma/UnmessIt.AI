@@ -1,16 +1,28 @@
-# React + Vite
+# UnmessIt.AI Web
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React/Vite frontend for the UnmessIt.AI memory app.
 
-Currently, two official plugins are available:
+## Screens
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Ingest Journal** posts text to `POST /ingest/` and shows the queued durable job id.
+- **Memory Explorer** reads `/dev/seai`, `/dev/recall`, and `/dev/ingest_jobs` to inspect saved source chunks, recall links, and job state.
+- **Ask AI** posts to `POST /api/retrieval/query` and displays the answer, citations, full source chunks, and retrieval trace.
+- **Database** calls `DELETE /dev/facts` to wipe local memory, durability rows, lookup indexes, and vectors.
 
-## React Compiler
+## Backend Assumption
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+The UI currently points at:
 
-## Expanding the Oxlint configuration
+```txt
+http://localhost:8000
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+Run the FastAPI server before using the UI.
+
+## Commands
+
+```bash
+npm run dev
+npm run build
+npm run lint
+```
