@@ -1,26 +1,23 @@
-from fastapi import APIRouter
-from kink import di
-from pydantic import BaseModel, Field
-import uuid
+from __future__ import annotations
 
-from src.ports.event_bus import EventBus
+from uuid import uuid4
+
+from fastapi import APIRouter
+from pydantic import BaseModel, Field
+
+from src.services.rag.rag_service import get_rag_service
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
 
+
 class IngestRequest(BaseModel):
+    """Request body for raw text ingestion."""
+
     text: str = Field(..., min_length=1, description="The raw, messy conversational text to process.")
 
-@router.post("/")
-async def process_text(request: IngestRequest):
-    """
-    Publish the raw text to the event bus and return instantly.
-    The background listener will pick it up and run the heavy ML pipeline.
-    """
-    job_id = str(uuid.uuid4())
 
-    await di[EventBus].publish("ingest_requests", {"job_id": job_id, "text": request.text})
-    
-    return {
-        "status": "processing",
-        "job_id": job_id
-    }
+@router.post("/")
+async def process_text(request: IngestRequest) -> dict:
+    """Create or reuse a durable job and return immediately."""
+    result = get_rag_service().ingest(request.text, str(uuid4()))
+    return {"status": "processing", "job_id": result["job_id"]}

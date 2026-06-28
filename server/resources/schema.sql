@@ -1,0 +1,118 @@
+-- ==============================================================
+-- UNMESSIT AI: Source Chunk + Recall Link Storage Schema
+-- ==============================================================
+
+CREATE TABLE IF NOT EXISTS raw_inputs (
+    id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL,
+    content_hash TEXT,
+    content TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ingest_jobs (
+    id TEXT PRIMARY KEY,
+    content_hash TEXT NOT NULL,
+    raw_input_id TEXT,
+    status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'waiting_retry', 'complete', 'failed', 'aborted')),
+    stage TEXT NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    next_run_at DATETIME,
+    error TEXT,
+    metadata JSON NOT NULL DEFAULT '{}',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(raw_input_id) REFERENCES raw_inputs(id) ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_jobs_content_hash ON ingest_jobs(content_hash);
+CREATE INDEX IF NOT EXISTS idx_ingest_jobs_status_next_run ON ingest_jobs(status, next_run_at);
+
+CREATE TABLE IF NOT EXISTS ingest_checkpoints (
+    job_id TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    unit_key TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('running', 'complete', 'failed')),
+    output_ref TEXT,
+    error TEXT,
+    metadata JSON NOT NULL DEFAULT '{}',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(job_id, stage, unit_key),
+    FOREIGN KEY(job_id) REFERENCES ingest_jobs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingest_checkpoints_job_stage ON ingest_checkpoints(job_id, stage, status);
+
+CREATE TABLE IF NOT EXISTS source_chunks (
+    id TEXT PRIMARY KEY,
+    raw_input_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    spans JSON NOT NULL,
+    source_time TEXT,
+    metadata JSON NOT NULL DEFAULT '{}',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(raw_input_id) REFERENCES raw_inputs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_source_chunks_raw_input ON source_chunks(raw_input_id);
+CREATE INDEX IF NOT EXISTS idx_source_chunks_created_at ON source_chunks(created_at);
+CREATE INDEX IF NOT EXISTS idx_source_chunks_source_time ON source_chunks(source_time);
+
+CREATE TABLE IF NOT EXISTS recall_keys (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('entity', 'topic', 'event', 'task', 'question', 'other')),
+    kind_label TEXT,
+    aliases JSON NOT NULL,
+    summary TEXT NOT NULL,
+    metadata JSON NOT NULL DEFAULT '{}',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_recall_keys_name ON recall_keys(name);
+CREATE INDEX IF NOT EXISTS idx_recall_keys_updated_at ON recall_keys(updated_at);
+
+CREATE TABLE IF NOT EXISTS recall_key_terms (
+    recall_key_id TEXT NOT NULL,
+    term TEXT NOT NULL,
+    normalized_term TEXT NOT NULL,
+    term_type TEXT NOT NULL CHECK(term_type IN ('name', 'alias')),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(recall_key_id) REFERENCES recall_keys(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_recall_key_terms_normalized ON recall_key_terms(normalized_term);
+CREATE INDEX IF NOT EXISTS idx_recall_key_terms_key ON recall_key_terms(recall_key_id);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS recall_keys_fts USING fts5(
+    recall_key_id UNINDEXED,
+    name,
+    aliases,
+    summary,
+    kind_label
+);
+
+CREATE TABLE IF NOT EXISTS recall_links (
+    id TEXT PRIMARY KEY,
+    recall_key_id TEXT NOT NULL,
+    source_chunk_id TEXT NOT NULL,
+    relation TEXT NOT NULL CHECK(relation IN ('mentions', 'about', 'updates', 'contradicts', 'supports', 'other')),
+    relation_label TEXT NOT NULL DEFAULT '',
+    confidence REAL NOT NULL CHECK(confidence >= 0 AND confidence <= 1),
+    reason TEXT NOT NULL,
+    event_time TEXT,
+    time_label TEXT,
+    metadata JSON NOT NULL DEFAULT '{}',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(recall_key_id) REFERENCES recall_keys(id) ON DELETE CASCADE,
+    FOREIGN KEY(source_chunk_id) REFERENCES source_chunks(id) ON DELETE CASCADE,
+    UNIQUE(recall_key_id, source_chunk_id, relation, relation_label)
+);
+
+CREATE INDEX IF NOT EXISTS idx_recall_links_key ON recall_links(recall_key_id);
+CREATE INDEX IF NOT EXISTS idx_recall_links_source_chunk ON recall_links(source_chunk_id);
+CREATE INDEX IF NOT EXISTS idx_recall_links_created_at ON recall_links(created_at);
+CREATE INDEX IF NOT EXISTS idx_recall_links_event_time ON recall_links(event_time);

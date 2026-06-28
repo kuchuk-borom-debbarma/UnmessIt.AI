@@ -1,64 +1,70 @@
 # UnmessIt.AI
 
-UnmessIt.AI is a local-first app for turning evolving user input into a searchable, source-backed knowledge memory.
+UnmessIt.AI is an AI RAG-powered knowledge base for information that keeps growing.
 
-Users can keep adding arbitrary text over time. The app preserves the original input, structures it into source-bound evidence, and answers later questions using citations back to what was actually stored.
+People can type or paste their own notes, stories, research, logs, plans, decisions, or messy thoughts into the app. Later, they can ask AI about that knowledge base and get answers grounded in the stored source text.
 
-## What It Does
+Traditional RAG usually assumes a mostly static document set: upload files, index them, ask questions. UnmessIt.AI is built for evolving input. Users keep adding new data over time, and the system updates its searchable memory as that data arrives.
 
-- Saves raw user input as the source of truth.
-- Splits messy input into source-bound episodes.
-- Extracts small standalone atoms from episodes.
-- Builds lightweight memory subjects for recurring concepts.
-- Tracks temporal links between subjects and evidence.
-- Lets users ask questions over accumulated input.
-- Returns answers with citations back to stored source text.
+## What Users Can Do
 
-## Why It Exists
+- Add arbitrary text whenever they want.
+- Keep the original input as the source of truth.
+- Ask simple factual questions about stored information.
+- Ask broader questions that need multiple source chunks.
+- Ask timeline or connection-style questions where the answer needs related evidence.
+- Inspect the stored source chunks and recall links behind an answer.
+- Use configurable model providers, API keys, base URLs, and local or hosted model endpoints.
 
-Simple search works when the question is narrow:
+## How It Works
 
-> What did I say about the deadline?
-
-Accumulated knowledge is harder. A useful answer may need to connect material added at different times, under different wording, and at different levels of detail.
-
-> What is going on with this?
-
-For that kind of question, the app should identify the recurring subject, gather relevant evidence across stored inputs, include recent and important earlier context, and answer only from cited source text.
-
-## Core Idea
-
-UnmessIt.AI treats raw input as the authority and builds indexes around it:
+The app stores user input as source-backed memory:
 
 ```txt
-raw input
--> episodes
--> atoms
--> memory subjects and temporal links
--> retrieval with citations
+user input
+-> source chunks
+-> recall keys
+-> recall links
+-> vector indexes
 ```
 
-Memory subjects are lightweight recall nodes for recurring things in the user's knowledge base. A subject may represent any useful recurring concept: a person, place, project, theme, question, decision, problem, event, story, research topic, or something else specific to the user's input.
+Source chunks are citable slices of the original input. Recall keys are reusable handles for things the user may ask about later: people, topics, events, tasks, questions, places, projects, or anything else in the user's data. Recall links connect those keys back to the source chunks that mention, update, support, or otherwise relate to them.
 
-Subjects are not factual authority. They help retrieval find relevant source-backed evidence. Final answers still cite raw episode or atom spans.
+When a user asks a question, retrieval searches source chunks directly, searches recall keys, expands through linked source chunks, and answers from the source chunks.
 
-## Current Status
+```txt
+question
+-> source chunk search
+-> recall key search
+-> linked source chunk expansion
+-> cited answer
+```
 
-The app currently has:
+This makes basic questions possible through direct source search, while broader questions can use the recall structure to pull together related pieces of evidence.
 
-- A FastAPI backend for ingestion and retrieval.
-- A React frontend for entering text, asking questions, and inspecting stored evidence.
-- SQLite storage for raw inputs, episodes, atoms, and legacy compatibility data.
-- Chroma vector search over source-backed retrieval material.
-- Source-backed answer generation with citation validation.
-- Developer views for inspecting raw inputs, episodes, atoms, and retrieval traces.
+## Why The Index Matters
 
-Temporal memory subjects are implemented as a derived index that connects recurring subjects to evidence over time so broad questions can retrieve from the accumulated record without loading everything at once.
+UnmessIt.AI does not treat recall keys or summaries as truth. They are navigation structures.
 
-## Design Notes
+The source text remains the authority. Recall keys and recall links help the system find the right source chunks for questions like:
 
-- Raw source text remains the source of truth.
-- Episodes and atoms provide citable evidence.
-- Memory subjects organize recurring material.
-- Temporal links help retrieval distinguish recent state, milestones, and historical context.
-- Retrieval should fetch capped relevant evidence, not every memory attached to a subject.
+- "What did I decide about this project?"
+- "How did this idea change over time?"
+- "Write the timeline from this person's beginning to their ending."
+- "What connects these two topics?"
+- "What do I know about this thing so far?"
+
+Broad answers work because the index connects related chunks instead of relying only on one nearest vector match.
+
+## Current Product Shape
+
+The current app has:
+
+- A React UI for ingesting text, asking questions, and inspecting saved memory.
+- A FastAPI backend for ingestion, retrieval, and dev inspection routes.
+- Durable ingestion so partially completed jobs can resume.
+- SQLite storage for raw inputs, source chunks, recall keys, and recall links.
+- Chroma vector indexes for source chunks and recall keys.
+- Configurable LLM and embedding providers through environment settings.
+
+Future iteration: add one broad raw-input summary for large inputs before considering recursive summary trees.

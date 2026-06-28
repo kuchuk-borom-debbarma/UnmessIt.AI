@@ -13,7 +13,7 @@ class PerMinuteRateLimiter:
         *,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
-    ):
+    ) -> None:
         self.calls_per_minute = calls_per_minute
         self.monotonic = monotonic
         self.sleep = sleep
@@ -37,7 +37,7 @@ class PerMinuteRateLimiter:
 
 
 class RateLimitedModel:
-    def __init__(self, model, limiter: PerMinuteRateLimiter):
+    def __init__(self, model, limiter: PerMinuteRateLimiter) -> None:
         self.model = model
         self.limiter = limiter
 
@@ -50,7 +50,7 @@ class RateLimitedModel:
 
 
 class RateLimitedEmbeddingFunction:
-    def __init__(self, embedding_function, limiter: PerMinuteRateLimiter):
+    def __init__(self, embedding_function, limiter: PerMinuteRateLimiter) -> None:
         self.embedding_function = embedding_function
         self.limiter = limiter
 

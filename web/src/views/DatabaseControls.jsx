@@ -31,8 +31,8 @@ export default function DatabaseControls() {
       <div className="glass-panel" style={{ padding: '24px', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
         <h3 style={{ color: '#ef4444', marginBottom: 12 }}>Danger Zone</h3>
         <p style={{ color: 'var(--text-secondary)', marginBottom: 24 }}>
-          Completely wipe the SQLite database. This will delete all episodes, atoms, legacy chunks, and source documents.
-          It also resets the vector store.
+          Completely wipe local memory. This deletes raw inputs, source chunks, recall keys, and recall links.
+          It also clears durable ingest jobs, checkpoints, recall lookup indexes, and the vector store.
           This action cannot be undone.
         </p>
         

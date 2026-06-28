@@ -7,6 +7,7 @@ export default function RetrievalView() {
   const [status, setStatus] = useState('idle') // idle | loading | success | error
   const [answer, setAnswer] = useState(null)
   const [citations, setCitations] = useState([])
+  const [sourceChunks, setSourceChunks] = useState([])
   const [retrievalTrace, setRetrievalTrace] = useState(null)
   
   const [selectedCitation, setSelectedCitation] = useState(null)
@@ -19,15 +20,16 @@ export default function RetrievalView() {
     setStatus('loading')
     setAnswer(null)
     setCitations([])
+    setSourceChunks([])
     setRetrievalTrace(null)
     setSelectedCitation(null)
     
     try {
       const response = await axios.post('http://localhost:8000/api/retrieval/query', { query })
-      // New v4 backend returns structured object
       if (typeof response.data === 'object' && response.data.answer) {
          setAnswer(response.data.answer)
          setCitations(response.data.citations || [])
+         setSourceChunks(response.data.source_chunks || [])
          setRetrievalTrace(response.data.retrieval_trace || null)
       } else {
          setAnswer(response.data) // fallback
@@ -103,12 +105,12 @@ export default function RetrievalView() {
             <h3 style={{ fontSize: '14px', color: 'var(--primary-color)', margin: 0 }}>Extracted Information</h3>
             
             <div style={{ borderLeft: '2px solid rgba(255,255,255,0.1)', paddingLeft: '12px' }}>
-                <strong style={{ display: 'block', fontSize: '11px', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>Raw Snippet</strong>
+                <strong style={{ display: 'block', fontSize: '11px', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>Source Chunk</strong>
                 <div style={{ color: 'var(--text-secondary)' }}>{selectedCitation.raw_text || "N/A"}</div>
             </div>
             
             <div style={{ borderLeft: '2px solid var(--primary-color)', paddingLeft: '12px' }}>
-                <strong style={{ display: 'block', fontSize: '11px', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>Cleaned Target</strong>
+                <strong style={{ display: 'block', fontSize: '11px', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '4px' }}>Chunk Summary</strong>
                 <div style={{ color: '#fff' }}>{selectedCitation.cleaned_text || "N/A"}</div>
             </div>
         </div>
@@ -198,10 +200,33 @@ export default function RetrievalView() {
                                 }}
                               >
                                   <strong>[{idx + 1}]</strong> <em>"{cit.exact_quote}"</em>
+                                  {cit.cleaned_text && (
+                                    <div style={{ marginTop: '8px', color: 'var(--text-tertiary)' }}>{cit.cleaned_text}</div>
+                                  )}
                               </button>
                           ))}
                       </div>
                   </div>
+              )}
+
+              {sourceChunks && sourceChunks.length > 0 && (
+                <details style={{ borderTop: '1px solid rgba(255, 255, 255, 0.05)', marginTop: '16px', paddingTop: '16px' }}>
+                  <summary style={{ color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: '14px' }}>
+                    Source Chunks
+                  </summary>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
+                    {sourceChunks.map((chunk, idx) => (
+                      <div key={chunk.id} className="span-card">
+                        <div className="detail-meta">
+                          <span className="detail-pill">chunk {idx + 1}</span>
+                          <span className="detail-pill">{chunk.id}</span>
+                        </div>
+                        <div style={{ color: 'var(--text-secondary)', lineHeight: 1.5 }}>{chunk.summary || 'No summary'}</div>
+                        <div className="evidence-text">{chunk.text}</div>
+                      </div>
+                    ))}
+                  </div>
+                </details>
               )}
 
               {retrievalTrace && (
@@ -211,35 +236,69 @@ export default function RetrievalView() {
                   </summary>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '12px' }}>
                     <div className="metadata-grid">
-                      <div>intent</div>
-                      <div>{retrievalTrace.plan?.intent || 'unknown'}</div>
-                      <div>context</div>
-                      <div>{retrievalTrace.context_char_count || 0} chars</div>
-                      <div>retry</div>
-                      <div>{retrievalTrace.answer_retry ? 'yes' : 'no'}</div>
+                      <div>mode</div>
+                      <div>{retrievalTrace.mode || 'unknown'}</div>
+                      <div>source chunks</div>
+                      <div>{retrievalTrace.source_chunk_count || 0}</div>
+                      <div>lexical matches</div>
+                      <div>{retrievalTrace.lexical_source_chunk_count || 0}</div>
+                      <div>linked chunks</div>
+                      <div>{retrievalTrace.linked_source_chunk_count || 0}</div>
+                      <div>citations</div>
+                      <div>{retrievalTrace.citation_count || 0}</div>
+                      <div>context before</div>
+                      <div>{retrievalTrace.context_chars_before_packing || 0} chars</div>
+                      <div>context after</div>
+                      <div>{retrievalTrace.context_chars_after_packing || 0} chars</div>
+                      <div>context saved</div>
+                      <div>{retrievalTrace.context_chars_saved || 0} chars</div>
                     </div>
-                    {(retrievalTrace.rounds || []).map((round) => (
-                      <div key={round.round} className="span-card">
+                    {(retrievalTrace.ranked_source_chunk_ids || []).length > 0 && (
+                      <div className="span-card">
                         <div className="detail-meta">
-                          <span className="detail-pill">round {round.round}</span>
-                          <span className="detail-pill">{round.candidate_count} candidates</span>
-                          <span className={`detail-pill ${round.enough_evidence ? 'green' : 'muted'}`}>
-                            {round.enough_evidence ? 'enough' : 'continue'}
-                          </span>
+                          <span className="detail-pill">ranked chunks</span>
+                          <span className="detail-pill">{retrievalTrace.ranked_source_chunk_ids.length}</span>
                         </div>
                         <div className="evidence-text">
-                          queries: {(round.queries || []).join(' | ') || 'none'}
+                          {retrievalTrace.ranked_source_chunk_ids.join(', ')}
                         </div>
-                        <div className="evidence-text">
-                          selected: {(round.selected_evidence_ids || []).join(', ') || 'none'}
-                        </div>
-                        {(round.missing_aspects || []).length > 0 && (
-                          <div className="evidence-text">
-                            missing: {round.missing_aspects.join(', ')}
-                          </div>
-                        )}
                       </div>
-                    ))}
+                    )}
+                    {retrievalTrace.selected_snippet_counts && (
+                      <div className="span-card">
+                        <div className="detail-meta">
+                          <span className="detail-pill">packed snippets</span>
+                        </div>
+                        <div className="evidence-text">
+                          {Object.entries(retrievalTrace.selected_snippet_counts)
+                            .map(([chunkId, count]) => `${chunkId}: ${count}`)
+                            .join('\n')}
+                        </div>
+                      </div>
+                    )}
+                    {retrievalTrace.chunk_score_reasons && (
+                      <div className="span-card">
+                        <div className="detail-meta">
+                          <span className="detail-pill">score reasons</span>
+                        </div>
+                        <div className="evidence-text">
+                          {Object.entries(retrievalTrace.chunk_score_reasons)
+                            .map(([chunkId, reasons]) => `${chunkId}: ${(reasons || []).join(', ')}`)
+                            .join('\n')}
+                        </div>
+                      </div>
+                    )}
+                    {(retrievalTrace.recall_keys || []).length > 0 && (
+                      <div className="span-card">
+                        <div className="detail-meta">
+                          <span className="detail-pill">recall keys</span>
+                          <span className="detail-pill">{retrievalTrace.recall_key_count || 0}</span>
+                        </div>
+                        <div className="evidence-text">
+                          {retrievalTrace.recall_keys.map((key) => key.name).join(', ')}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </details>
               )}

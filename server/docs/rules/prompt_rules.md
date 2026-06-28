@@ -91,11 +91,11 @@ Prompts should be boring, standard, explicit, and portable across domains. A goo
 
 ## 10. Applying These Rules Here
 
-- SEAI episodes, atoms, memory subjects, retrieval plans, rerank decisions, and cited answers must follow the general rules above.
+- Source chunks, recall keys, recall links, retrieval plans, rerank decisions, and cited answers must follow the general rules above.
 - Raw input is source evidence.
-- Episode summaries, subject summaries, aliases, link reasons, and retrieval hints are metadata or hints, not factual authority.
+- Source chunk summaries, recall key summaries, aliases, link reasons, and retrieval hints are metadata or hints, not factual authority.
 - Final answers must cite citable source spans, not metadata.
-- Memory subjects are general recall structures for any recurring subject type, not a domain-specific model.
+- Recall keys are general recall structures for reusable user-specific things, not a domain-specific model.
 - Retrieval prompts should select evidence that matches the user's subject and time scope before broader context.
 
 ## 11. Test Expectations

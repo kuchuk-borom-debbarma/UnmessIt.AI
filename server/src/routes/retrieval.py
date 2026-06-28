@@ -1,22 +1,20 @@
-from fastapi import APIRouter, HTTPException
+from __future__ import annotations
+
+from fastapi import APIRouter
 from pydantic import BaseModel
-from typing import Optional
-from kink import di
-from src.services.retrieval_engine.ports.inbound.RetrievalServiceContract import RetrievalServiceContract
+
+from src.services.rag.rag_service import get_rag_service
 
 router = APIRouter(prefix="/api/retrieval", tags=["Retrieval"])
 
+
 class QueryRequest(BaseModel):
+    """Request body for the query endpoint."""
+
     query: str
 
+
 @router.post("/query")
-async def query_endpoint(request: QueryRequest):
-    """
-    Retrieves facts based on the query and generates an answer using the Retrieval Engine pipeline.
-    """
-    try:
-        retrieval_service = di[RetrievalServiceContract]
-        answer = retrieval_service.query(text=request.query)
-        return answer
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def query_endpoint(request: QueryRequest) -> dict:
+    """Return the current query response."""
+    return get_rag_service().query(request.query)

@@ -1,97 +1,120 @@
 # SEAI Indexing Flow
 
-SEAI means **Source-bound Episode Atom Indexing**. It turns evolving user input into source-backed retrieval material while preserving the original text as the authority.
-
-SEAI includes a derived temporal memory subject layer:
+SEAI now means **Source Evidence And Indexing** for this codebase. The active memory ingestion flow is deliberately small:
 
 ```txt
 raw input
 -> source windows
--> episodes
--> atoms
--> memory subjects and temporal links
+-> source chunks
+-> recall keys and recall links
 -> vector index
 ```
 
-Raw input remains the source of truth. Episodes, atoms, memory subjects, and links are indexes over that source. They help retrieval find and organize evidence; they do not replace the original text.
+Raw input remains the source of truth. Source chunks, recall keys, and recall links are indexes over that source. They help retrieval find and organize evidence; they do not replace the original text.
 
 ## Objects
 
 **Raw input** is the exact user submission. It is saved before LLM work so all later spans point back to durable source text.
 
-**Source window** is a bounded slice of raw input used to keep episode splitting practical for local and cloud models.
+**Source window** is a bounded slice of raw input used to keep source chunk splitting practical for local and cloud models.
 
-**Episode** is one meaningful unit inside a raw input. It can describe any kind of user-provided material: a fact, event, question, plan, observation, scene, concern, preference, or partial thought. One episode may point to multiple raw spans when the same subject appears in separate parts of one input.
+**Source chunk** is one citable unit inside a raw input. Code chooses it by source position so ingestion preserves every part of the input; the LLM summarizes the chunk but does not choose what text survives.
 
-**Atom** is a small standalone claim extracted from an episode. Atoms must stay source-supported and understandable without rereading the whole episode.
+**Recall key** is a lightweight derived handle for something the knowledge base may need to recall. It can be an entity, topic, event, task, question, or another user-specific thing.
 
-Atom roles:
+**Recall link** connects a recall key to a source chunk. A link can carry relation and time metadata so retrieval can build useful views without loading everything.
 
-- `direct`: directly expressed facts, events, states, preferences, plans, claims, or uncertainty.
-- `relation`: local relationships inside the same episode, such as cause, contrast, sequence, dependency, example, or result.
+## Recall Key Fields
 
-**Memory subject** is a lightweight derived node for a recurring thing the knowledge base needs to remember. A subject can be a concept, person, place, project, theme, question, decision, problem, event, story, research topic, or another user-specific subject. Subjects are domain-neutral by design.
+Recall keys use coarse normalized fields plus source-grounded hints:
 
-**Memory subject link** connects a subject to source-backed evidence: an episode and, when useful, a specific atom. Links may carry relation and time metadata so retrieval can build a useful view without loading every linked memory.
+- `kind`: `entity`, `topic`, `event`, `task`, `question`, or `other`.
+- `kind_label`: optional natural label from the source.
+- `aliases`: conservative alternate names only.
+- `summary`: short orientation hint, not citable evidence.
+- `metadata`: small source-grounded extras.
 
-## Temporal Links
+Unknown LLM kinds normalize to `other`; the original value is preserved in metadata.
 
-Every subject link has `created_at`, the reliable time when the evidence was ingested.
+## Recall Link Fields
 
-Links may also have:
+Recall links use:
 
-- `event_time`: a normalized time from the source text when the text clearly mentions one.
-- `time_label`: the original time phrase when useful, such as `next month`, `June 2026`, or `yesterday`.
+- `relation`: `mentions`, `about`, `updates`, `contradicts`, `supports`, or `other`.
+- `relation_label`: optional natural source-grounded phrase.
+- `event_time`: optional normalized time from source text.
+- `time_label`: optional original time phrase.
+- `metadata`: small source-grounded extras.
 
-Mentioned times are best-effort metadata. Ingest time is always available and should be used as the fallback timeline order.
+Unknown LLM relations normalize to `other`; the original value is preserved in metadata.
 
 ## Indexing Flow
 
 1. Receive raw text.
-2. Save raw input unchanged.
-3. Split the input into source windows.
-4. Split windows into source-bound episodes.
-5. Summarize each episode neutrally.
-6. Extract direct and relation atoms from each episode.
-7. Verify atoms against episode text.
-8. Run code checks for valid role, confidence threshold, standalone content, and exact evidence spans.
-9. Save episodes and atoms.
-10. Extract or match memory subjects for the new evidence.
-11. Save subject links with relation and temporal metadata.
-12. Embed episodes and atoms for vector search.
+2. Preprocess text if configured.
+3. Save raw input unchanged.
+4. Split input into source windows.
+5. Save each source window as a source chunk.
+6. Summarize each source chunk neutrally.
+7. Extract or match recall keys for the new chunks.
+8. Save recall keys and append recall links.
+9. Embed source chunks and recall keys for vector search.
 
-Subject extraction is a derived-index step. If it fails, the raw input, episodes, atoms, and vector index should still remain usable.
+If recall indexing fails, raw input, source chunks, and vector index should still remain usable.
 
-## Subject Matching
+The implementation lives under `server/src/services/rag/`. The public ingest route submits a durable job through `RagService.ingest(...)` and returns immediately.
 
-Subject matching should prefer reuse when a new note clearly refers to an existing subject by name, alias, summary, or recent linked evidence. If no appropriate subject exists and the concept is central to the input, create a new subject.
+Durable job details live in `server/docs/RAG_DURABILITY.md`.
 
-V1 should use moderate granularity:
+## Recall Matching
 
-- Create subjects for central or recurring concepts.
-- Do not create a subject for every noun.
-- Keep subject kinds broad and neutral.
-- Update only simple subject metadata such as aliases, summary, and `updated_at`.
+Recall matching should prefer reuse when a new chunk clearly refers to an existing key by name, alias, summary, or candidate match.
 
-Subject summaries are orientation hints, not citable evidence.
+Recall indexing is coordinated by a small LangGraph subgraph:
+
+```txt
+find_candidates
+-> draft
+-> normalize
+   -> retry once if validation failed
+   -> done
+```
+
+The subgraph is only orchestration. Existing chains still do candidate lookup,
+LLM drafting, and code normalization.
+
+Candidate lookup is bounded before the LLM sees it:
+
+1. Exact saved name/alias matches.
+2. SQLite FTS keyword matches over saved recall keys.
+3. Chroma semantic recall-key matches, only when at least one recall key exists.
+4. Merge and cap candidates before prompting the LLM.
+
+The semantic lookup is skipped when there are no saved recall keys yet. That avoids embedding calls during first-ingest recall retries where there is nothing to semantically match.
+
+Safe recall key updates:
+
+- Merge conservative aliases.
+- Update summary as a broad merged orientation hint when new evidence improves it.
+- Update `kind_label` when clearer.
+- Update coarse `kind` only when the existing value is `other`.
+- Shallow-merge safe metadata.
+- Update `updated_at`.
+
+Existing recall key names stay stable. New source chunks may enrich the key's
+summary, aliases, label, or metadata, but they should not narrow the key to only
+the latest chunk.
+
+Normal ingest appends links. It does not delete old links or rewrite old chunks.
 
 ## Source-Bound Rules
 
 - Raw input is the authority.
-- Episodes and atoms must point to raw spans.
-- Atoms must preserve uncertainty from the source.
-- Relation atoms describe local relationships only.
-- Memory subjects and subject summaries must not introduce unsupported facts.
-- Final answers cite raw episode or atom evidence, not subject metadata.
-
-## Relationship To Retrieval
-
-Broad Retrieval can use subjects to narrow the search space before evidence ranking. For example, a broad query may resolve to a small set of likely subjects, fetch a capped set of linked atoms and episodes, then combine that evidence with vector and lexical search.
-
-The retrieval path may still use a lexical/entity sweep and a quote bank. The indexing job is to create complete standalone claims and source-bound episode evidence so retrieval can stay compact and cited.
-
-The full retrieval design is documented in `SEAI_RETRIEVAL_FLOW.md`.
+- Source chunks must point to raw spans and should not be lossy.
+- Recall keys and summaries must not introduce unsupported facts.
+- Labels, reasons, and metadata are hints, not citable evidence.
+- Final answers should cite source chunk spans, not recall metadata.
 
 ## Not In This Enhancement
 
-This design does not require full graph traversal, contradiction resolution, durable job queues, production multi-user storage, or global summary engines. Those can be added later if the subject-link layer proves insufficient.
+This design does not include atom extraction, full graph traversal, contradiction resolution, production multi-user storage, or recursive summary engines. A single broad raw-input summary is a future iteration if broad retrieval needs it.

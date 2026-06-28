@@ -1,125 +1,120 @@
 # Current State
 
-This file is a plain snapshot of the project today: implemented behavior, system shape, strengths, weaknesses, and known limits.
+This file is the engineering snapshot: what exists, what is rough, and what should improve next.
 
-## Implemented System
+## Product Direction
 
-- UnmessIt.AI is a local-first knowledge ingestion and retrieval app.
-- The server lives in `server/src` and exposes FastAPI routes.
-- The UI lives in `web/src` and calls the server routes.
-- Raw user input is saved unchanged as the source of truth.
-- Active ingestion is SEAI: raw input -> source windows -> episodes -> atoms -> SQLite save -> temporal memory subjects/links -> Chroma index.
-- Active retrieval is SEAI-aware: normalized query -> planner -> subject-linked evidence for broad queries -> vector search plus lexical sweep -> reranker -> quote bank -> strict cited answer.
-- Episodes and atoms point back to exact raw spans.
-- Memory subjects are a derived recall index over episodes and atoms; they are not source truth.
-- The app keeps old `memory_items` table support only for old DB and wipe compatibility.
+UnmessIt.AI is an AI RAG-powered knowledge base for evolving user input. Users add their own data over time, then ask AI about it later.
 
-## Temporal Memory Subjects
+The product is not local-only. It should support configurable model providers, API keys, base URLs, and local or hosted model endpoints. The current code already reads provider settings from environment variables.
 
-Implemented shape:
+## Implemented Features
+
+- React UI for ingesting text, asking questions, browsing stored memory, and wiping dev data.
+- FastAPI backend with stable ingest, retrieval, dev, and health routes.
+- Raw input storage as the source of truth.
+- Lossless source chunks chosen by source position, not by LLM importance.
+- LLM-written source chunk summaries.
+- Recall keys for reusable entities, topics, events, tasks, questions, and other user-specific things.
+- Recall indexing uses a nested LangGraph subgraph for candidate lookup, LLM draft, normalization, and one validation retry.
+- Recall links connecting recall keys back to source chunks with relation and optional time metadata.
+- Durable ingest jobs orchestrated with LangGraph and checkpointed in SQLite for source pieces, recall chunks, recall-key vectors, and source-chunk vectors.
+- Corrupt ingest jobs abort when their raw source row is missing instead of retrying forever.
+- Startup/manual resume for queued, retryable, or failed ingest jobs.
+- Chroma vector indexes for both source chunks and recall keys.
+- Retrieval from ranked source chunks with recall expansion, context-packed snippets, and cited answers.
+
+## Active Ingestion Shape
 
 ```txt
 raw input
 -> source windows
--> episodes
--> atoms
--> memory subjects and temporal links
--> vector index
+-> lossless source chunks
+-> source chunk summaries
+-> recall keys and recall links
+-> source chunk and recall key vector indexes
 ```
 
-A memory subject is a lightweight derived node for a recurring thing in the user's accumulated input. It can represent any useful concept, person, place, project, theme, question, decision, problem, event, story, research topic, or user-specific subject.
+Source chunks save the full text piece and point back to exact raw spans. The LLM can summarize a chunk, but it cannot decide which source text survives.
 
-Memory subjects link to source-backed episodes and atoms. Links can carry relation labels and time metadata:
+Recall keys evolve cautiously as new evidence arrives. Existing names stay stable, aliases merge conservatively, and summaries can become broader orientation hints.
 
-- `created_at`: reliable ingest time.
-- `event_time`: optional normalized time mentioned in source text.
-- `time_label`: optional original time phrase from the text.
+## Active Retrieval Shape
 
-Subjects and links are retrieval indexes. They are not factual authority. Final answers must still cite raw episode or atom spans.
+```txt
+query
+-> source chunk vector search
+-> source chunk lexical search
+-> recall key search
+-> linked source chunk expansion
+-> rank and context-pack source chunks
+-> one JSON answer prompt over focused snippets
+```
 
-## Core Retrieval Challenge
+Retrieval treats recall keys and recall links as navigation only. The final answer prompt receives source chunks as citable evidence.
+The prompt uses summaries plus focused snippets to save context, while the API still returns full source chunks for inspection.
 
-The main unsolved product problem is broad-topic recall over an evolving user knowledge base.
+This supports:
 
-Users may ask about a broad subject that appears across many separate inputs, chunks, points, and references. A correct answer may require finding the recurring subject, gathering relevant evidence across time, and synthesizing only what the cited record supports.
+- Basic fact questions through direct source chunk search.
+- Broader questions through recall-key and linked-chunk expansion.
+- Connection-style questions when related chunks share recall keys.
+- Timeline-style questions when relevant chunks contain source order or time labels.
 
-Narrow questions can usually be answered from a small number of matching facts. Broad questions need subject resolution, coverage, temporal awareness, grouping, and compact synthesis.
+## Active API
+
+- `POST /ingest/` schedules a durable ingest job and returns immediately.
+- `POST /api/retrieval/query` returns `{ answer, citations, source_chunks, retrieval_trace }`.
+- `GET /dev/seai` returns raw inputs with nested source chunks.
+- `GET /dev/recall` returns recall keys with recall links.
+- `GET /dev/raw_inputs/{input_id}` returns one raw source document.
+- `GET /dev/ingest_jobs` lists durable ingest jobs.
+- `POST /dev/ingest_jobs/{job_id}/resume` manually resumes a waiting or failed job.
+- `DELETE /dev/facts` wipes active ingestion tables and Chroma vectors.
 
 ## Tech Stack
 
 - Backend: Python 3.12, FastAPI, Uvicorn, Pydantic.
 - Frontend: React, Vite, React Router, Axios, lucide-react.
-- Dependency injection: `kink`.
 - LLM client layer: LangChain with OpenAI-compatible and Ollama-compatible providers.
 - Embeddings/vector search: Chroma.
 - Relational storage: SQLite.
-- Eventing: in-memory async `EventBus` adapter.
-- Optional coreference: `fastcoref`, with fallback to raw text.
-- Testing: pytest.
+- Testing: pytest and frontend lint/build.
 
-## Active API
+## What Is Good Now
 
-- `POST /ingest/` publishes an ingest job to the in-memory event bus.
-- `POST /api/retrieval/query` returns `{ answer, citations, retrieval_trace }`.
-- `GET /dev/seai` returns raw inputs with nested episodes and atoms.
-- `GET /dev/subjects` returns memory subjects with temporal evidence links.
-- `GET /dev/raw_inputs/{input_id}` returns one raw source document.
-- `DELETE /dev/facts` wipes raw inputs, episodes, atoms, memory subjects, legacy memory items, and Chroma.
+- The memory model is small: raw inputs, source chunks, recall keys, recall links.
+- Source chunks are no longer lossy.
+- Ingest uses a LangGraph stage workflow with durable, idempotent unit checkpoints.
+- Missing source truth is now a terminal abort path, so bad jobs stop cleanly.
+- Recall indexing has its own small LangGraph subgraph, so the retry/validation branch is visible.
+- Recall-key lookup is bounded before LLM calls.
+- Recall keys can be reused and updated instead of creating obvious duplicates every time.
+- Retrieval now uses both direct source search and recall-link expansion.
+- The UI is wired to show answers, citations, source chunks, retrieval trace, and durable ingest jobs.
 
-## Architecture Rules
+## Current Limits
 
-- `src/routes/` is HTTP delivery only.
-- `src/services/` owns use-case orchestration and domain flow.
-- `src/repositories/` owns SQLite query/write classes and repository ports.
-- `src/infra/` owns external technology such as LangChain, Chroma, SQLite connection, settings, logging, UUIDs, and event bus adapters.
-- `src/infra/di/bootstrap.py` is the composition root.
-- LLM-backed chains use the `JsonLLM` port and do not import LangChain directly.
-- Retrieval keeps the public response shape `{ answer, citations, retrieval_trace }`.
+- Retrieval is intentionally simple: deterministic ranking/context packing, no planner, graph traversal, or agentic tool loop yet.
+- Broad answers depend on recall-link quality and source chunk quality.
+- No broad raw-input summary exists yet.
+- Existing old lossy local data is not migrated; wipe and reingest to rebuild with current source chunk behavior.
+- Background ingest workers are in-process, not a distributed queue.
+- Corrupt-job cleanup is minimal: aborted jobs clear checkpoints and known SQLite source chunks, but Chroma orphan cleanup is deferred.
+- SQLite and Chroma are fine for current development but not yet a production multi-user storage plan.
+- Provider configuration exists through environment settings, but the product UI for managing user API keys/provider URLs is not built yet.
 
-Full rules live in `server/docs/rules/codebase_rules.md`.
+## Likely Next Steps
 
-## Strengths
-
-- Source-bound by design: answers and UI evidence can trace back to raw text spans.
-- Multi-span episodes handle messy notes where one subject appears in multiple places.
-- Atoms are complete standalone claims, which improves retrieval precision.
-- Quote-bank retrieval keeps final answer context smaller than passing whole documents.
-- LLM/provider setup is mostly isolated behind infra and ports.
-- Ingest chains are simple `run(...)` units, so the SEAI flow is easy to reorder or replace.
-- Dev UI/API can inspect raw inputs, episodes, atoms, spans, and retrieval traces.
-- Local model support exists through LM Studio/Ollama/OpenAI-compatible endpoints.
-
-## Weaknesses
-
-- Ingest is LLM-heavy: splitting, summarizing, extraction, episode verification, and atom verification can be slow or brittle on small local models.
-- Retrieval still depends on LLM planner/reranker/answer quality; bad JSON or weak reasoning can cause fallback behavior.
-- Broad questions have subject-linked recall, but synthesis is still limited by extracted links, capped evidence, and LLM reranking quality.
-- The event bus is in-memory, so jobs are not durable across process restarts.
-- SQLite and Chroma are good for local/dev use but not yet a production multi-user storage story.
-- Retrieval repository/vector ports are not fully normalized into shared top-level port locations yet.
-- Dev routes still resolve the dev repository directly because they are intentionally simple.
-- Fastcoref is optional and can fail or be too heavy locally.
-
-## Local Model Constraints
-
-- LM Studio/OpenAI-compatible JSON behavior varies by model and server.
-- Some reasoning models may return JSON in hidden/reasoning fields instead of normal content.
-- 8B-class local models can hit memory or compute errors on long prompts.
-- Smaller chunks and compact quote banks help, but do not remove local hardware limits.
-- Cloud LLMs are usually more reliable for JSON-heavy SEAI steps.
-
-## Not Solved Yet
-
-- No backfill for memory subjects over existing pre-feature data.
-- No durable job queue.
-- No migration system.
-- No production auth/multi-user isolation.
-- No contradiction resolution.
-- No global rolling summary.
-- No full graph traversal.
+- Add a broad raw-input summary for large inputs.
+- Improve retrieval ranking before adding a full planner.
+- Add provider/API-key configuration in the UI.
+- Add better timeline ordering from `event_time`, `time_label`, and source order.
+- Add evaluations using real multi-input knowledge-base questions.
 
 ## Docs
 
 - Architecture rules: `server/docs/rules/codebase_rules.md`.
 - Indexing design: `server/docs/SEAI_INDEXING_FLOW.md`.
+- Durable ingest: `server/docs/RAG_DURABILITY.md`.
 - Retrieval design: `server/docs/SEAI_RETRIEVAL_FLOW.md`.

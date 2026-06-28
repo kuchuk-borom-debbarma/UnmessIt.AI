@@ -1,0 +1,261 @@
+from __future__ import annotations
+
+import hashlib
+import logging
+from typing import Any, Literal, TypedDict
+
+from langgraph.graph import END, START, StateGraph
+
+from src.repositories import recall, recall_key_vectors, source_chunk_vectors, source_chunks
+from src.services.rag.models import SourceChunk, SourceChunkDraft, SourceWindow
+from . import repository
+from .models import (
+    STAGE_RECALL,
+    STAGE_RECALL_VECTORS,
+    STAGE_RAW_INPUT,
+    STAGE_SOURCE_CHUNKS,
+    STAGE_SOURCE_VECTORS,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class IngestGraphState(TypedDict, total=False):
+    """State passed between LangGraph ingest stage nodes."""
+
+    job_id: str
+    raw_input_id: str
+    raw_text: str
+    chunks: list[SourceChunk]
+    recall_keys: list[dict[str, Any]]
+    corrupt: bool
+    abort_reason: str
+
+
+class DurableIngestRunner:
+    """Run one durable ingest job through the LangGraph stage workflow."""
+
+    def __init__(self, source_windows, source_chunk_drafts, source_chunk_assembler, recall_index) -> None:
+        """Receive existing chains; durability only coordinates checkpoints."""
+        self.source_windows = source_windows
+        self.source_chunk_drafts = source_chunk_drafts
+        self.source_chunk_assembler = source_chunk_assembler
+        self.recall_index = recall_index
+        self.graph = self._build_graph()
+
+    def run_once(self, job_id: str) -> None:
+        """Run until complete or until one graph node schedules retry."""
+        job = repository.get(job_id)
+        if not job:
+            return
+        self.graph.invoke({"job_id": job_id})
+
+    def _build_graph(self):
+        """Build the fixed durable ingest workflow once per runner."""
+        graph = StateGraph(IngestGraphState)
+        graph.add_node("load_raw_input", self._load_raw_input)
+        graph.add_node("source_chunks", self._source_chunk_node)
+        graph.add_node("recall", self._recall_node)
+        graph.add_node("recall_vectors", self._recall_vector_node)
+        graph.add_node("source_vectors", self._source_vector_node)
+        graph.add_node("complete", self._complete_node)
+        graph.add_node("abort", self._abort_node)
+        graph.add_edge(START, "load_raw_input")
+        graph.add_conditional_edges("load_raw_input", self._after_load_raw_input, {"abort": "abort", "continue": "source_chunks"})
+        graph.add_edge("source_chunks", "recall")
+        graph.add_edge("recall", "recall_vectors")
+        graph.add_edge("recall_vectors", "source_vectors")
+        graph.add_edge("source_vectors", "complete")
+        graph.add_edge("complete", END)
+        graph.add_edge("abort", END)
+        return graph.compile()
+
+    def _load_raw_input(self, state: IngestGraphState) -> IngestGraphState:
+        """Load source truth before any derived work runs."""
+        job_id = state["job_id"]
+        job = repository.get(job_id)
+        if not job or not job["raw_input_id"]:
+            return {**state, "corrupt": True, "abort_reason": "raw input missing from ingest job"}
+
+        raw_input = _raw_input(job["raw_input_id"])
+        if not raw_input:
+            return {**state, "raw_input_id": job["raw_input_id"], "corrupt": True, "abort_reason": "raw input row missing"}
+
+        raw_text = raw_input["content"]
+        repository.start_stage(job_id, STAGE_RAW_INPUT)
+        repository.complete_checkpoint(job_id, STAGE_RAW_INPUT, f"raw_input:{job['raw_input_id']}", job["raw_input_id"])
+        return {**state, "raw_input_id": job["raw_input_id"], "raw_text": raw_text}
+
+    def _after_load_raw_input(self, state: IngestGraphState) -> Literal["abort", "continue"]:
+        """Branch corrupt jobs away from retryable ingest work."""
+        return "abort" if state.get("corrupt") else "continue"
+
+    def _abort_node(self, state: IngestGraphState) -> IngestGraphState:
+        """Abort corrupt jobs because missing source truth cannot be retried."""
+        raw_input_id = state.get("raw_input_id")
+        if raw_input_id:
+            source_chunks.delete_by_raw_input_id(raw_input_id)
+        repository.abort(state["job_id"], state.get("abort_reason", "ingest job is corrupt"), {"raw_input_id": raw_input_id})
+        logger.info("ingest_job_aborted job_id=%s reason=%s", state["job_id"], state.get("abort_reason"))
+        return state
+
+    def _source_chunk_node(self, state: IngestGraphState) -> IngestGraphState:
+        """Build or reuse source chunks before recall work."""
+        chunks = self._source_chunks(state["job_id"], state["raw_input_id"], state["raw_text"])
+        return {**state, "chunks": chunks}
+
+    def _recall_node(self, state: IngestGraphState) -> IngestGraphState:
+        """Build recall links from saved source chunks."""
+        self._recall(state["job_id"], state["raw_text"], state["chunks"])
+        return state
+
+    def _recall_vector_node(self, state: IngestGraphState) -> IngestGraphState:
+        """Index recall keys connected to this job's source chunks."""
+        job_id = state["job_id"]
+        chunks = state["chunks"]
+        recall_keys = recall.keys_for_source_chunks([chunk["id"] for chunk in chunks])
+        self._recall_vectors(state["job_id"], recall_keys)
+        return {**state, "recall_keys": recall_keys}
+
+    def _source_vector_node(self, state: IngestGraphState) -> IngestGraphState:
+        """Index saved source chunks after recall-key vectors."""
+        self._source_vectors(state["job_id"], state["chunks"])
+        return state
+
+    def _complete_node(self, state: IngestGraphState) -> IngestGraphState:
+        """Persist final counts after every graph stage succeeds."""
+        job_id = state["job_id"]
+        chunks = state.get("chunks", [])
+        recall_keys = state.get("recall_keys", [])
+        repository.complete(job_id, {
+            "raw_input_id": state.get("raw_input_id"),
+            "source_chunks": len(chunks),
+            "recall_keys": len(recall_keys),
+        })
+        logger.info("ingest_job_complete job_id=%s source_chunks=%s recall_keys=%s", job_id, len(chunks), len(recall_keys))
+        return state
+
+    def _source_chunks(self, job_id: str, raw_input_id: str, raw_text: str) -> list[SourceChunk]:
+        """Create chunks for only unfinished text pieces."""
+        repository.start_stage(job_id, STAGE_SOURCE_CHUNKS)
+        existing = source_chunks.get_by_raw_input_id(raw_input_id)
+        if existing and not repository.has_stage_checkpoints(job_id, STAGE_SOURCE_CHUNKS):
+            logger.info("ingest_stage_reuse job_id=%s stage=%s count=%s", job_id, STAGE_SOURCE_CHUNKS, len(existing))
+            return existing
+
+        for text_piece in self.source_windows.run(raw_text):
+            unit_key = _source_piece_key(raw_input_id, text_piece)
+            if repository.checkpoint_complete(job_id, STAGE_SOURCE_CHUNKS, unit_key):
+                logger.info("ingest_unit_reuse job_id=%s stage=%s unit=%s", job_id, STAGE_SOURCE_CHUNKS, unit_key)
+                continue
+            self._run_unit(job_id, STAGE_SOURCE_CHUNKS, unit_key, lambda: self._build_source_piece(raw_input_id, raw_text, text_piece, unit_key))
+        return source_chunks.get_by_raw_input_id(raw_input_id)
+
+    def _build_source_piece(self, raw_input_id: str, raw_text: str, text_piece: SourceWindow, unit_key: str) -> tuple[str, dict[str, Any]]:
+        """Summarize one text piece, then save the full piece as evidence."""
+        drafts: list[SourceChunkDraft] = self.source_chunk_drafts.run(text_piece)
+        chunks = self.source_chunk_assembler.run(raw_input_id, raw_text, drafts)
+        for index, chunk in enumerate(chunks):
+            chunk["id"] = _stable_id("source_chunk", unit_key, str(index), chunk["text"])
+        source_chunks.save_many(chunks)
+        chunk_ids = [chunk["id"] for chunk in chunks]
+        return ",".join(chunk_ids), {"source_chunk_ids": chunk_ids}
+
+    def _recall(self, job_id: str, raw_text: str, chunks: list[SourceChunk]) -> None:
+        """Create recall links only for chunks without completed recall work."""
+        repository.start_stage(job_id, STAGE_RECALL)
+        linked_chunk_ids = recall.source_chunks_with_links([chunk["id"] for chunk in chunks])
+        for chunk in chunks:
+            unit_key = f"recall_chunk:{chunk['id']}"
+            if repository.checkpoint_complete(job_id, STAGE_RECALL, unit_key) or chunk["id"] in linked_chunk_ids:
+                repository.complete_checkpoint(job_id, STAGE_RECALL, unit_key, chunk["id"], {"reused": True})
+                logger.info("ingest_unit_reuse job_id=%s stage=%s unit=%s", job_id, STAGE_RECALL, unit_key)
+                continue
+            self._run_unit(job_id, STAGE_RECALL, unit_key, lambda chunk=chunk: self._build_recall(raw_text, chunk))
+
+    def _build_recall(self, raw_text: str, chunk: SourceChunk) -> tuple[str, dict[str, Any]]:
+        """Run recall indexing for one source chunk."""
+        index = self.recall_index.run(raw_text, [chunk])
+        logger.info(
+            "ingest_recall_index_result chunk_id=%s keys=%s links=%s analysis=%s",
+            chunk["id"],
+            len(index["recall_keys"]),
+            len(index["recall_links"]),
+            index.get("analysis", {}),
+        )
+        if not index["recall_links"]:
+            raise ValueError("recall produced no links")
+        saved_links = recall.save_index(index)
+        logger.info("ingest_recall_saved chunk_id=%s saved_links=%s", chunk["id"], saved_links)
+        return chunk["id"], {"saved_links": saved_links, "recall_keys": [key["id"] for key in index["recall_keys"]]}
+
+    def _recall_vectors(self, job_id: str, keys: list[dict[str, Any]]) -> None:
+        """Index only missing recall-key vectors."""
+        repository.start_stage(job_id, STAGE_RECALL_VECTORS)
+        for key in keys:
+            unit_key = f"recall_key_vector:{key['id']}"
+            if repository.checkpoint_complete(job_id, STAGE_RECALL_VECTORS, unit_key) or recall_key_vectors.exists(key["id"]):
+                repository.complete_checkpoint(job_id, STAGE_RECALL_VECTORS, unit_key, key["id"], {"reused": True})
+                continue
+            self._run_unit(job_id, STAGE_RECALL_VECTORS, unit_key, lambda key=key: _index_recall_key(key))
+
+    def _source_vectors(self, job_id: str, chunks: list[SourceChunk]) -> None:
+        """Index only missing source chunk vectors."""
+        repository.start_stage(job_id, STAGE_SOURCE_VECTORS)
+        for chunk in chunks:
+            unit_key = f"source_vector:{chunk['id']}"
+            if repository.checkpoint_complete(job_id, STAGE_SOURCE_VECTORS, unit_key) or source_chunk_vectors.exists(chunk["id"]):
+                repository.complete_checkpoint(job_id, STAGE_SOURCE_VECTORS, unit_key, chunk["id"], {"reused": True})
+                continue
+            self._run_unit(job_id, STAGE_SOURCE_VECTORS, unit_key, lambda chunk=chunk: _index_source_chunk(chunk))
+
+    def _run_unit(self, job_id: str, stage: str, unit_key: str, work) -> None:
+        """Run one unit and convert failures into durable retry state."""
+        repository.start_checkpoint(job_id, stage, unit_key)
+        logger.info("ingest_unit_start job_id=%s stage=%s unit=%s", job_id, stage, unit_key)
+        try:
+            output_ref, metadata = work()
+            repository.complete_checkpoint(job_id, stage, unit_key, output_ref, metadata)
+            repository.reset_attempts(job_id)
+            logger.info("ingest_unit_complete job_id=%s stage=%s unit=%s", job_id, stage, unit_key)
+        except Exception as exc:
+            repository.fail_checkpoint(job_id, stage, unit_key, str(exc))
+            job = repository.schedule_retry(job_id, stage, unit_key, str(exc))
+            logger.info(
+                "ingest_unit_retry job_id=%s stage=%s unit=%s status=%s attempt=%s error=%s",
+                job_id,
+                stage,
+                unit_key,
+                job["status"],
+                job["attempt_count"],
+                str(exc),
+            )
+            raise
+
+
+def _index_recall_key(key: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    recall_key_vectors.index([key])
+    return key["id"], {}
+
+
+def _index_source_chunk(chunk: SourceChunk) -> tuple[str, dict[str, Any]]:
+    source_chunk_vectors.index([chunk])
+    return chunk["id"], {}
+
+
+def _raw_input(raw_input_id: str) -> dict[str, Any] | None:
+    from src.repositories import raw_inputs
+
+    return raw_inputs.get(raw_input_id)
+
+
+def _source_piece_key(raw_input_id: str, text_piece: SourceWindow) -> str:
+    """Content-bound unit key lets resume skip exactly completed text pieces."""
+    digest = hashlib.sha256(text_piece["text"].encode("utf-8")).hexdigest()
+    return f"source_piece:{raw_input_id}:{text_piece['start']}:{text_piece['end']}:{digest}"
+
+
+def _stable_id(*parts: str) -> str:
+    """Stable IDs make save-after-crash idempotent even before checkpoint completion."""
+    digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+    return digest
