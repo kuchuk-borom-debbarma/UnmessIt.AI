@@ -13,6 +13,8 @@ query
 -> one JSON answer prompt over focused snippets
 ```
 
+This is the retrieval foundation for the temporal-memory goal. It can answer timeline-style questions only when the right chunks are found and the stored evidence already carries useful source order or time hints. A dedicated temporal ordering pass is future work.
+
 ## Rules
 
 - Source chunks are the only citable evidence.
@@ -22,6 +24,7 @@ query
 - The API still returns full source chunks so the UI can inspect the evidence.
 - If vector search fails, lexical source chunk search can still return evidence.
 - If answer generation fails, the API still returns found source chunks.
+- Recall `event_time` and `time_label` are hints. Retrieval must not treat them as stronger than source text.
 
 ## Response Shape
 
@@ -47,4 +50,12 @@ query
 
 ## Current Limits
 
-This is not a planner, reranker, graph traversal engine, or multi-step agent. Add those only if this simple path cannot answer real broad questions well enough.
+This is not a planner, reranker, graph traversal engine, multi-step agent, or temporal ordering engine. Add those only if this simple path cannot answer real broad or timeline questions well enough.
+
+The next temporal step should be:
+
+```txt
+detect timeline-style query
+-> sort selected evidence by event_time, time_label, source span, and source order
+-> pass timeline_order into the answer prompt
+```

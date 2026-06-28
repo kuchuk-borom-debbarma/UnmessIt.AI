@@ -24,6 +24,8 @@ Raw input remains the source of truth. Source chunks, recall keys, and recall li
 
 **Recall link** connects a recall key to a source chunk. A link can carry relation and time metadata so retrieval can build useful views without loading everything.
 
+This branch originally targeted temporal memory. The active indexing work became the smaller foundation temporal memory needs: source-backed chunks, recall links, and optional time hints. Dedicated temporal ordering is not implemented in this document yet.
+
 ## Recall Key Fields
 
 Recall keys use coarse normalized fields plus source-grounded hints:
@@ -47,6 +49,12 @@ Recall links use:
 - `metadata`: small source-grounded extras.
 
 Unknown LLM relations normalize to `other`; the original value is preserved in metadata.
+
+Temporal fields are hints, not truth:
+
+- `event_time` should be a normalized date, year, or comparable value only when the source clearly supports it.
+- `time_label` should preserve source phrases such as "before the time skip", "later", or "after the decision".
+- Missing time fields are acceptable. The system should prefer partial temporal evidence over invented precision.
 
 ## Indexing Flow
 
@@ -117,4 +125,4 @@ Normal ingest appends links. It does not delete old links or rewrite old chunks.
 
 ## Not In This Enhancement
 
-This design does not include atom extraction, full graph traversal, contradiction resolution, production multi-user storage, or recursive summary engines. A single broad raw-input summary is a future iteration if broad retrieval needs it.
+This design does not include atom extraction, full graph traversal, contradiction resolution, production multi-user storage, recursive summary engines, or dedicated temporal ordering. Temporal retrieval should build on `event_time`, `time_label`, source spans, and recall links in a later pass.

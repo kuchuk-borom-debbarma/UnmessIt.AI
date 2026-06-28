@@ -92,6 +92,7 @@ Statuses:
 - `waiting_retry`: failed, but retry is scheduled.
 - `complete`: finished successfully.
 - `failed`: retry cap reached; manual resume is required.
+- `aborted`: terminal corrupt-job state, used when required source truth is missing.
 
 ### `ingest_checkpoints`
 
@@ -424,6 +425,9 @@ Manual resume:
 Completed checkpoints are not deleted. That is the key point: manual resume
 retries missing or failed units without redoing completed work.
 
+Aborted jobs are terminal. Manual resume returns the aborted job row without
+rescheduling it, because the missing source text cannot be recreated safely.
+
 ## Dev Visibility
 
 Dev routes:
@@ -433,7 +437,8 @@ Dev routes:
 - `DELETE /dev/facts`: wipe active memory, vectors, jobs, and checkpoints.
 
 The wipe route clears durability rows, raw inputs, source chunks, recall keys,
-recall links, recall exact/FTS lookup rows, and the Chroma collection.
+recall links, recall exact/FTS lookup rows, and the shared Chroma collection
+that contains both source-chunk and recall-key vectors.
 
 Logs are emitted at info level for:
 

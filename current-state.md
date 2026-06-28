@@ -8,6 +8,18 @@ UnmessIt.AI is an AI RAG-powered knowledge base for evolving user input. Users a
 
 The product is not local-only. It should support configurable model providers, API keys, base URLs, and local or hosted model endpoints. The current code already reads provider settings from environment variables.
 
+## Branch Direction
+
+This branch started as temporal memory work, but the implementation shifted after the old ingestion/retrieval code proved too noisy and too lossy for temporal reasoning.
+
+The current branch is now a memory-engine reset:
+
+- replace atom/episode/memory-subject storage with source chunks and recall links
+- make ingestion durable and resumable
+- keep source text lossless
+- make retrieval source-backed and inspectable
+- leave temporal ordering as the next layer, using existing `event_time`, `time_label`, source spans, and recall links
+
 ## Implemented Features
 
 - React UI for ingesting text, asking questions, browsing stored memory, and wiping dev data.
@@ -98,6 +110,7 @@ This supports:
 - Retrieval is intentionally simple: deterministic ranking/context packing, no planner, graph traversal, or agentic tool loop yet.
 - Broad answers depend on recall-link quality and source chunk quality.
 - No broad raw-input summary exists yet.
+- Timeline answers use available source order and stored time hints, but there is no dedicated temporal ordering layer yet.
 - Existing old lossy local data is not migrated; wipe and reingest to rebuild with current source chunk behavior.
 - Background ingest workers are in-process, not a distributed queue.
 - Corrupt-job cleanup is minimal: aborted jobs clear checkpoints and known SQLite source chunks, but Chroma orphan cleanup is deferred.
@@ -106,10 +119,10 @@ This supports:
 
 ## Likely Next Steps
 
-- Add a broad raw-input summary for large inputs.
-- Improve retrieval ranking before adding a full planner.
-- Add provider/API-key configuration in the UI.
-- Add better timeline ordering from `event_time`, `time_label`, and source order.
+- Add temporal retrieval support: detect timeline questions, sort evidence by `event_time`, `time_label`, source span, and source order, then pass explicit timeline order to the answer prompt.
+- Strengthen recall prompts for temporal hints without inventing dates.
+- Add a broad raw-input summary only if broad answers still lose too much context.
+- Add provider/API-key configuration in the UI later.
 - Add evaluations using real multi-input knowledge-base questions.
 
 ## Docs

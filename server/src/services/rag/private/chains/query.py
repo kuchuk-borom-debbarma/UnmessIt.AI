@@ -65,8 +65,8 @@ class QueryAnswerChain:
                 (
                     "Answer the user query using only SOURCE_CHUNKS. "
                     "Return only valid JSON. No markdown. "
-            "SOURCE_CHUNKS are the only evidence; recall metadata is not evidence. "
-            "Each source chunk contains a summary and focused snippets from saved text. "
+                    "SOURCE_CHUNKS are the only evidence; recall metadata is not evidence. "
+                    "Each source chunk contains a summary and focused snippets from saved text. "
                     "If the evidence is incomplete, say what is missing. "
                     "For broad or timeline questions, combine relevant chunks in source/time order. "
                     "Citations must be source_chunk ids from SOURCE_CHUNKS."

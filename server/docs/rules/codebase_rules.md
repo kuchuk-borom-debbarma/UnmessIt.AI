@@ -43,6 +43,7 @@ Keep the server boring, small, and easy to read.
 - Durable job dev routes may live under `/dev/ingest_jobs`.
 - `POST /ingest/` returns after durable job submission; the private scheduler does the background work.
 - Retrieval returns `{ answer, citations, source_chunks, retrieval_trace }` from source chunks, with recall keys/links used only for expansion.
+- Timeline behavior must build on source chunks, recall links, `event_time`, `time_label`, and spans. Do not add a separate temporal model until the simple ordered-evidence path fails real examples.
 
 ## 7. Comments
 - Comments explain why a non-obvious choice exists. Do not narrate obvious code.
