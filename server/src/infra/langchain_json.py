@@ -38,9 +38,26 @@ class JsonLLMClient:
             except Exception as exc:
                 last_error = exc
                 logger.warning("llm_json_parse_failed attempt=%s error=%s", attempt, exc)
-                # If the model returned text, ask it to repair that exact text once.
                 messages = _repair_messages(content, str(exc)) if content.strip() else messages
         raise ValueError(f"LLM returned invalid JSON: {last_error}")
+
+    async def async_invoke_json(self, system: str, human: str) -> dict[str, Any]:
+        """Async variant: awaits ainvoke() so the event loop stays free during LLM I/O."""
+        llm = self.llm or _get_chat_llm()
+        messages = [SystemMessage(content=system), HumanMessage(content=human)]
+        last_error: Exception | None = None
+        for attempt in range(1, get_settings().llm_max_retries + 2):
+            content = ""
+            try:
+                response = await llm.ainvoke(messages)
+                content = response.content if hasattr(response, "content") else str(response)
+                return JsonOutputParser().parse(content)
+            except Exception as exc:
+                last_error = exc
+                logger.warning("llm_json_parse_failed_async attempt=%s error=%s", attempt, exc)
+                messages = _repair_messages(content, str(exc)) if content.strip() else messages
+        raise ValueError(f"LLM returned invalid JSON (async): {last_error}")
+
 
 
 @lru_cache(maxsize=1)

@@ -46,9 +46,9 @@ def get_ingest_jobs() -> dict:
 
 
 @router.post("/ingest_jobs/{job_id}/resume")
-def resume_ingest_job(job_id: str) -> dict:
+async def resume_ingest_job(job_id: str) -> dict:
     """Manually resume one waiting or failed durable ingestion job."""
-    job = get_rag_service().resume_ingest_job(job_id)
+    job = await get_rag_service().resume_ingest_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Ingest job not found")
     return {"status": "success", "data": job}

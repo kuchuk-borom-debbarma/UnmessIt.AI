@@ -20,7 +20,7 @@ class RecallNormalizerChain:
     rejects links to unknown chunks, and drops duplicate links from this run.
     """
 
-    def run(
+    async def run(
         self,
         data: dict[str, Any],
         source_chunks: list[SourceChunk],

@@ -8,7 +8,7 @@ from src.services.rag.models import SourceChunk, SourceChunkDraft, Span
 class SourceChunkAssemblerChain:
     """Turn deterministic text windows into saved source chunk records."""
 
-    def run(self, raw_input_id: str, raw_text: str, drafts: list[SourceChunkDraft]) -> list[SourceChunk]:
+    async def run(self, raw_input_id: str, raw_text: str, drafts: list[SourceChunkDraft]) -> list[SourceChunk]:
         """Attach exact source positions and build final chunk dictionaries."""
         chunks = [_chunk_from_draft(raw_input_id, raw_text, draft) for draft in drafts]
         return chunks or [_fallback_chunk(raw_input_id, raw_text, {"start": 0, "end": len(raw_text)})]

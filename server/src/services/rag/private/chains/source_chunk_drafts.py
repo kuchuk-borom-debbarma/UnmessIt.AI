@@ -15,10 +15,10 @@ class SourceChunkDraftChain:
         """Keep the JSON client at the chain boundary."""
         self.json_client = json_client
 
-    def run(self, window: SourceWindow) -> list[SourceChunkDraft]:
+    async def run(self, window: SourceWindow) -> list[SourceChunkDraft]:
         """Return summary metadata while keeping source text selection deterministic."""
         try:
-            data = self.json_client.invoke_json(
+            data = await self.json_client.async_invoke_json(
                 "Summarize one source chunk. Return only JSON.",
                 (
                     "Return JSON: {\"summary\":\"short neutral summary\",\"source_time\":null,\"metadata\":{}}\n"
@@ -31,6 +31,7 @@ class SourceChunkDraftChain:
             # Durable ingest should retry provider/auth outages instead of saving guessed chunks.
             logger.warning("source_chunk_draft_failed retryable=true error=%s", exc)
             raise
+
 
 
 def _draft(window: SourceWindow, value: dict[str, Any]) -> SourceChunkDraft:

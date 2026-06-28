@@ -19,5 +19,5 @@ class IngestRequest(BaseModel):
 @router.post("/")
 async def process_text(request: IngestRequest) -> dict:
     """Create or reuse a durable job and return immediately."""
-    result = get_rag_service().ingest(request.text, str(uuid4()))
+    result = await get_rag_service().ingest(request.text, str(uuid4()))
     return {"status": "processing", "job_id": result["job_id"]}

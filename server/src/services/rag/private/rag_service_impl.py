@@ -42,10 +42,10 @@ class RagServiceImpl:
             self.recall_index,
         )
 
-    def ingest(self, data: str, job_id: str | None = None) -> IngestResult:
+    async def ingest(self, data: str, job_id: str | None = None) -> IngestResult:
         """Submit durable ingestion and return the durable job id."""
         job_id = job_id or str(uuid4())
-        job = self.durability.submit(data, job_id)
+        job = await self.durability.submit(data, job_id)
         return {
             "job_id": job["id"],
             "status": job["status"],
@@ -58,25 +58,25 @@ class RagServiceImpl:
             },
         }
 
-    def resume_pending_jobs(self) -> None:
+    async def resume_pending_jobs(self) -> None:
         """Resume durable jobs after app startup."""
-        self.durability.resume_pending()
+        await self.durability.resume_pending()
 
-    def resume_ingest_job(self, job_id: str) -> dict | None:
+    async def resume_ingest_job(self, job_id: str) -> dict | None:
         """Resume one durable job from the dev route."""
-        return self.durability.resume_job(job_id)
+        return await self.durability.resume_job(job_id)
 
     def list_ingest_jobs(self) -> list[dict]:
-        """List durable jobs for the dev route."""
+        """List durable jobs for the dev route (sync: read-only, cheap)."""
         return self.durability.list_jobs()
 
-    def query(self, data: str) -> QueryResult:
+    async def query(self, data: str) -> QueryResult:
         """Search source chunks, expand through recall links, then answer."""
         query = " ".join(data.split())
         if not query:
             trace = {"mode": "empty_query", "query": query, "source_chunk_count": 0}
             answer = {"answer": "Ask a question to search your source chunks.", "citation_ids": []}
             return build_query_result(query, [], answer, trace)
-        chunks, trace = self.query_evidence.run(query)
-        answer = self.query_answer.run(query, chunks)
+        chunks, trace = await self.query_evidence.run(query)
+        answer = await self.query_answer.run(query, chunks)
         return build_query_result(query, chunks, answer, trace)

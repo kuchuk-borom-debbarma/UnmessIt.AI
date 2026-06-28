@@ -17,4 +17,4 @@ class QueryRequest(BaseModel):
 @router.post("/query")
 async def query_endpoint(request: QueryRequest) -> dict:
     """Return the current query response."""
-    return get_rag_service().query(request.query)
+    return await get_rag_service().query(request.query)

@@ -11,16 +11,16 @@ from src.services.rag.private.rag_service_impl import RagServiceImpl
 class RagService(Protocol):
     """Methods exposed to HTTP routes."""
 
-    def ingest(self, data: str, job_id: str | None = None) -> IngestResult:
+    async def ingest(self, data: str, job_id: str | None = None) -> IngestResult:
         ...
 
-    def query(self, data: str) -> QueryResult:
+    async def query(self, data: str) -> QueryResult:
         ...
 
-    def resume_pending_jobs(self) -> None:
+    async def resume_pending_jobs(self) -> None:
         ...
 
-    def resume_ingest_job(self, job_id: str) -> dict | None:
+    async def resume_ingest_job(self, job_id: str) -> dict | None:
         ...
 
     def list_ingest_jobs(self) -> list[dict]:

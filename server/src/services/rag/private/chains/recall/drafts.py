@@ -16,7 +16,7 @@ class RecallDraftChain:
         """Keep the JSON client at the chain boundary."""
         self.json_client = json_client
 
-    def run(
+    async def run(
         self,
         source_chunks: list[SourceChunk],
         candidates: list[dict[str, Any]],
@@ -25,7 +25,6 @@ class RecallDraftChain:
         """Return raw LLM output before code validates IDs and duplicate links."""
         repair = ""
         if errors:
-            # Retry prompts include concrete validation errors from the previous run.
             repair = "The previous response failed validation. Fix these errors:\n" + "\n".join(f"- {error}" for error in errors[:8]) + "\n\n"
         logger.info(
             "recall_draft_request chunks=%s candidates=%s retry=%s",
@@ -33,7 +32,7 @@ class RecallDraftChain:
             len(candidates),
             bool(errors),
         )
-        data = self.json_client.invoke_json(
+        data = await self.json_client.async_invoke_json(
             (
                 "Create recall keys and recall links for source chunks. Return only valid JSON. No markdown.\n"
                 "Use SOURCE_CHUNKS as source evidence. EXISTING_CANDIDATES are reuse hints, not source evidence.\n"
@@ -78,6 +77,7 @@ class RecallDraftChain:
             _list_count(data.get("recall_links")),
         )
         return data
+
 
 
 def _chunk_payload(source_chunks: list[SourceChunk]) -> list[dict[str, Any]]:
