@@ -7,7 +7,7 @@ from typing import Any
 import chromadb
 from chromadb.utils import embedding_functions
 
-from src.infra.rate_limit import PerMinuteRateLimiter, RateLimitedEmbeddingFunction
+from src.infra.rate_limit import RateLimitedEmbeddingFunction, get_limiter
 from src.infra.settings import get_settings
 from src.infra.sqlite import DATA_DIR
 
@@ -99,5 +99,5 @@ def _embedding_function():
         raise ValueError(f"Unsupported embedding provider: {settings.embedding_provider}")
 
     if settings.embedding_rate_limit_per_minute > 0:
-        return RateLimitedEmbeddingFunction(fn, PerMinuteRateLimiter(settings.embedding_rate_limit_per_minute))
+        return RateLimitedEmbeddingFunction(fn, get_limiter(settings.embedding_rate_limit_per_minute))
     return fn

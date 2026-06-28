@@ -1,0 +1,29 @@
+[Jan 12, 2021 - Globex Internal Memo]
+Welcome to the team, Alex! As the newly appointed Lead for Project Alpha, you will be spearheading our cloud migration strategy. We are excited to have you in our New York headquarters. Project Alpha is our biggest bet this year.
+
+[March 5, 2021 - Meeting Transcript]
+Alex: "The cloud migration is going well. We are evaluating several vendors. I'm loving the NY office, by the way, the pizza here is great."
+Sam: "Glad to hear it. Let's keep the focus on the Q2 deliverables."
+
+[Nov 18, 2022 - Press Release]
+Globex is thrilled to announce the acquisition of Initech. This synergistic merger will allow us to absorb Initech's machine learning division directly into our ongoing infrastructure initiatives. To reflect this broadened scope, Project Alpha will henceforth be known as Project Omega. 
+
+[Dec 2, 2022 - Slack Export]
+Sam: @Alex how is the Initech integration going?
+Alex: It's messy. Their ML models are highly coupled. We are rewriting half of Omega to accommodate it.
+Sam: Just get it done before the holidays.
+
+[Aug 14, 2023 - HR Announcement]
+We are pleased to announce that Alex is transferring to our European division. Alex will be relocating to London effective September 1st to help establish our overseas presence. Consequently, Sam will be taking over as the Lead for Project Omega. Alex will remain involved in an advisory capacity.
+
+[Sept 10, 2023 - Email]
+From: Alex
+To: Sam
+Subject: London office
+Hey Sam, the weather here in London is terrible compared to NY, but the office is finally set up. Let me know if you need any help with Omega this quarter. 
+
+[Feb 28, 2024 - Board Minutes]
+The board has voted unanimously to spin off Project Omega into its own independent entity, given its massive success and distinct market fit. The new startup will be named Omegacorp. 
+
+[March 1, 2024 - Omegacorp Launch Document]
+Omegacorp is officially live! Sam has been appointed as the CEO of the new venture. We are also proud to announce our founding Board of Directors, which includes our original visionary, Alex, who will provide strategic oversight. The Omegacorp headquarters will remain in New York.

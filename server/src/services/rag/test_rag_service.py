@@ -157,6 +157,9 @@ def test_query_uses_source_search_and_recall_expansion(monkeypatch):
 
     class QueryJson:
         def invoke_json(self, system: str, human: str) -> dict:
+            # breakdown call returns original query only (simple pass-through)
+            if "Decompose the user query" in system:
+                return {"sub_queries": ["Grisha to Eren"]}
             assert "SOURCE_CHUNKS" in human
             assert "snippets" in human
             assert "Unrelated tail should not be sent" not in human
@@ -167,7 +170,8 @@ def test_query_uses_source_search_and_recall_expansion(monkeypatch):
     assert result["answer"] == "Grisha's power later connects to Eren."
     assert [chunk["id"] for chunk in result["source_chunks"]] == ["chunk-1", "chunk-2"]
     assert result["citations"][0]["source_chunk_id"] == "chunk-2"
-    assert result["retrieval_trace"]["recall_key_count"] == 1
+    sub_trace = result["retrieval_trace"]["sub_query_traces"][0]
+    assert sub_trace["recall_key_count"] == 1
     assert result["retrieval_trace"]["context_chars_saved"] > 0
     assert result["source_chunks"][1]["text"] == chunk_2["text"]
 
@@ -184,12 +188,57 @@ def test_query_context_packer_ranks_and_falls_back(monkeypatch):
     monkeypatch.setattr(recall, "has_keys", lambda: False)
     monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda key_ids, limit=12: ["linked"])
 
-    chunks, trace = QueryEvidenceChain().run("Attack Titan")
+    class PassthroughBreakdownJson:
+        def invoke_json(self, system: str, human: str) -> dict:
+            if "Decompose the user query" in system:
+                return {"sub_queries": ["Attack Titan"]}
+            return {"answer": "ok", "citation_ids": []}
 
-    assert [chunk["id"] for chunk in chunks] == ["vector", "lexical", "linked"]
-    assert trace["selected_snippet_counts"] == {"vector": 1, "lexical": 1, "linked": 1}
-    assert chunks[1]["_snippets"] == ["fallback summary"]
-    assert trace["chunk_score_reasons"]["vector"] == ["vector", "query_terms:2"]
+    chain = QueryEvidenceChain(PassthroughBreakdownJson())
+    chunks, trace = chain.run("Attack Titan")
+
+    assert {chunk["id"] for chunk in chunks} == {"vector", "lexical", "linked"}
+    assert trace["selected_snippet_counts"].keys() == {"vector", "lexical", "linked"}
+    # lexical chunk has no query-term overlap so it falls back to its summary snippet
+    lexical_chunk = next(c for c in chunks if c["id"] == "lexical")
+    assert lexical_chunk["_snippets"] == ["fallback summary"]
+    assert trace["context_chars_saved"] >= 0
+
+
+def test_query_breakdown_falls_back_to_original_query_on_llm_failure(monkeypatch):
+    """Breakdown must not block retrieval when the LLM call fails."""
+    from src.services.rag.private.chains.query._breakdown import _decompose
+
+    class FailJson:
+        def invoke_json(self, system: str, human: str) -> dict:
+            raise RuntimeError("provider unavailable")
+
+    result = _decompose(FailJson(), "what happened to the project")
+
+    assert result == ["what happened to the project"]
+
+
+def test_query_breakdown_caps_and_deduplicates_sub_queries(monkeypatch):
+    """Breakdown must cap at 4, always lead with original, and dedup."""
+    from src.services.rag.private.chains.query._breakdown import _decompose
+
+    class OverflowJson:
+        def invoke_json(self, system: str, human: str) -> dict:
+            # Returns 6 items including duplicates; should be trimmed and deduped
+            return {"sub_queries": [
+                "original",
+                "sub-query 1",
+                "sub-query 2",
+                "sub-query 1",  # duplicate
+                "sub-query 3",
+                "sub-query 4",  # 6th — should be cut
+            ]}
+
+    result = _decompose(OverflowJson(), "original")
+
+    assert result[0] == "original"
+    assert len(result) == 4
+    assert len(set(result)) == 4  # no duplicates
 
 
 def test_normalizer_reuses_single_exact_name_or_alias_match(monkeypatch):

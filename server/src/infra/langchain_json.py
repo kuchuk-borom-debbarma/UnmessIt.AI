@@ -7,7 +7,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 
-from src.infra.rate_limit import PerMinuteRateLimiter, RateLimitedModel
+from src.infra.rate_limit import RateLimitedModel, get_limiter
 from src.infra.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -49,8 +49,9 @@ def get_json_client() -> JsonLLMClient:
     return JsonLLMClient()
 
 
+@lru_cache(maxsize=1)
 def _get_chat_llm():
-    """Create the provider-specific LangChain chat model lazily."""
+    """Create the provider-specific LangChain chat model lazily, cached for the process lifetime."""
     settings = get_settings()
     if settings.llm_provider == "ollama":
         from langchain_ollama import ChatOllama
@@ -74,7 +75,8 @@ def _get_chat_llm():
         )
 
     if settings.llm_rate_limit_per_minute > 0:
-        return RateLimitedModel(llm, PerMinuteRateLimiter(settings.llm_rate_limit_per_minute))
+        # get_limiter returns a singleton so ingest and retrieval share one token bucket.
+        return RateLimitedModel(llm, get_limiter(settings.llm_rate_limit_per_minute))
     return llm
 
 
