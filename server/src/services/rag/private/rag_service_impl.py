@@ -32,7 +32,7 @@ class RagServiceImpl:
         self.source_chunk_drafts = SourceChunkDraftChain(json_client)
         self.source_chunk_assembler = SourceChunkAssemblerChain()
         self.recall_index = RecallIndexChain(json_client)
-        self.query_evidence = QueryEvidenceChain()
+        self.query_evidence = QueryEvidenceChain(json_client)
         self.query_answer = QueryAnswerChain(json_client)
         self.durability = DurableIngest(
             self.preprocess,

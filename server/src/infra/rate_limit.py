@@ -2,8 +2,20 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from functools import lru_cache
 from threading import Lock
 from typing import Callable
+
+
+# ponytail: one shared limiter per RPM value; callers must not construct their own.
+@lru_cache(maxsize=8)
+def get_limiter(calls_per_minute: int) -> "PerMinuteRateLimiter":
+    """Return the process-wide rate limiter for a given RPM cap.
+
+    Using a singleton means concurrent ingest + retrieval requests share one
+    token bucket and the configured cap is the real global cap, not per-caller.
+    """
+    return PerMinuteRateLimiter(calls_per_minute)
 
 
 class PerMinuteRateLimiter:

@@ -55,11 +55,10 @@ Recall keys evolve cautiously as new evidence arrives. Existing names stay stabl
 
 ```txt
 query
--> source chunk vector search
--> source chunk lexical search
--> recall key search
--> linked source chunk expansion
--> rank and context-pack source chunks
+-> sub-query breakdown
+-> parallel retrieval (vector/lexical/recall)
+-> merge and re-rank
+-> context-pack source chunks
 -> one JSON answer prompt over focused snippets
 ```
 
@@ -102,12 +101,13 @@ This supports:
 - Recall indexing has its own small LangGraph subgraph, so the retry/validation branch is visible.
 - Recall-key lookup is bounded before LLM calls.
 - Recall keys can be reused and updated instead of creating obvious duplicates every time.
-- Retrieval now uses both direct source search and recall-link expansion.
 - The UI is wired to show answers, citations, source chunks, retrieval trace, and durable ingest jobs.
 
 ## Current Limits
 
-- Retrieval is intentionally simple: deterministic ranking/context packing, no planner, graph traversal, or agentic tool loop yet.
+- Retrieval uses a LangGraph graph: LLM breakdown into ≤4 sub-queries, evidence search per sub-query, merge + re-rank, context-pack snippets, one answer prompt. Falls back to a single pass if breakdown fails.
+- Rate limiters are process-wide singletons so concurrent ingest and retrieval share one token bucket per RPM cap.
+- Background workers are in-process, so parallelism is still local-process only.
 - Broad answers depend on recall-link quality and source chunk quality.
 - No broad raw-input summary exists yet.
 - Timeline answers use available source order and stored time hints, but there is no dedicated temporal ordering layer yet.
