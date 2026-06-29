@@ -19,10 +19,7 @@ def find_candidate_keys(terms: list[str], limit: int = 20) -> list[dict[str, Any
     return _merge_candidates([*exact, *fts], limit)
 
 
-def has_keys() -> bool:
-    """Return whether semantic recall-key lookup has anything useful to search."""
-    row = get_connection().execute("SELECT 1 FROM recall_keys LIMIT 1").fetchone()
-    return row is not None
+
 
 
 def find_exact_term_matches(terms: list[str], limit: int = 20) -> list[dict[str, Any]]:
@@ -161,13 +158,12 @@ def linked_source_chunk_ids(recall_key_ids: list[str], limit: int = 12) -> list[
     placeholders = ", ".join("?" for _ in clean_ids)
     rows = get_connection().execute(
         f"""
-        SELECT c.id, 
+        SELECT l.source_chunk_id AS id, 
                COUNT(DISTINCT l.recall_key_id) AS match_count,
-               MIN(c.created_at) AS first_seen
-        FROM source_chunks c
-        JOIN recall_links l ON l.source_chunk_id = c.id
+               MIN(l.created_at) AS first_seen
+        FROM recall_links l
         WHERE l.recall_key_id IN ({placeholders})
-        GROUP BY c.id
+        GROUP BY l.source_chunk_id
         ORDER BY match_count DESC, first_seen ASC
         LIMIT ?
         """,

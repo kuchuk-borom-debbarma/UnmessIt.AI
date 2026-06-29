@@ -152,7 +152,6 @@ async def test_query_uses_source_search_and_recall_expansion(monkeypatch):
     monkeypatch.setattr(source_chunks, "get_by_ids", lambda ids: [chunk for chunk in [chunk_1, chunk_2] if chunk["id"] in ids])
     monkeypatch.setattr(source_chunks, "search", lambda query, limit=8: [])
     monkeypatch.setattr(recall, "find_candidate_keys", lambda terms, limit=8: [_candidate("key-1", "Grisha Yeager", "keyword")])
-    monkeypatch.setattr(recall, "has_keys", lambda: False)
     monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda key_ids, limit=12: ["chunk-2"])
 
     class QueryJson:
@@ -184,7 +183,6 @@ async def test_query_context_packer_ranks_and_falls_back(monkeypatch):
     monkeypatch.setattr(source_chunks, "get_by_ids", lambda ids: [chunk for chunk in [vector, lexical, linked] if chunk["id"] in ids])
     monkeypatch.setattr(source_chunks, "search", lambda query, limit=8: [lexical])
     monkeypatch.setattr(recall, "find_candidate_keys", lambda terms, limit=8: [_candidate("key-1", "Attack Titan", "keyword")])
-    monkeypatch.setattr(recall, "has_keys", lambda: False)
     monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda key_ids, limit=12: ["linked"])
 
     class PassthroughBreakdownJson:

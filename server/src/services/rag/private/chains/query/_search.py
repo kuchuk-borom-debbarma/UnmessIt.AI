@@ -108,40 +108,37 @@ async def _recall_keys(query: str, extracted_subjects: list[str]) -> list[dict[s
     by explicit name — the subjects node extracts those names before search runs.
     """
     term_keys = await asyncio.to_thread(recall.find_candidate_keys, _terms(query), 8)
-    has_keys = await asyncio.to_thread(recall.has_keys)
-    
     all_keys = []
     
-    if has_keys:
-        # Direct FTS name lookup for implied subjects (Highest priority)
-        # CRITICAL INSIGHT: If the LLM successfully resolved a description (e.g. "the man") 
-        # into a specific entity name ("Prince Vasili"), we MUST put these keys at the 
-        # front of the list. Otherwise, they get pushed behind generic term matches like 
-        # "Officer" or "Guards" and truncated by the [:8] cap at the end.
+    # Direct FTS name lookup for implied subjects (Highest priority)
+    # CRITICAL INSIGHT: If the LLM successfully resolved a description (e.g. "the man") 
+    # into a specific entity name ("Prince Vasili"), we MUST put these keys at the 
+    # front of the list. Otherwise, they get pushed behind generic term matches like 
+    # "Officer" or "Guards" and truncated by the [:8] cap at the end.
+    if extracted_subjects:
+        subject_keys = await asyncio.to_thread(recall.find_keys_by_names, extracted_subjects)
+        all_keys.extend(subject_keys)
+        
+    try:
+        # Run sub-query vector search and subject-name vector search concurrently.
+        searches = [asyncio.to_thread(recall_key_vectors.search, query, 8)]
         if extracted_subjects:
-            subject_keys = await asyncio.to_thread(recall.find_keys_by_names, extracted_subjects)
-            all_keys.extend(subject_keys)
-            
-        try:
-            # Run sub-query vector search and subject-name vector search concurrently.
-            searches = [asyncio.to_thread(recall_key_vectors.search, query, 8)]
-            if extracted_subjects:
-                subject_query = " ".join(extracted_subjects)
-                searches.append(asyncio.to_thread(recall_key_vectors.search, subject_query, 8))
-            results = await asyncio.gather(*searches, return_exceptions=True)
-            vector_ids: list[str] = []
-            for result in results:
-                if isinstance(result, Exception):
-                    logger.warning("query_recall_vector_search_failed error=%s", result)
-                    continue
-                vector_ids.extend(
-                    hit["object_id"] for hit in result if hit.get("object_type") == "recall_key"
-                )
-            if vector_ids:
-                vector_keys = await asyncio.to_thread(recall.find_keys_by_ids, list(dict.fromkeys(vector_ids)))
-                all_keys.extend(vector_keys)
-        except Exception as exc:
-            logger.warning("query_recall_vector_search_failed error=%s", exc)
+            subject_query = " ".join(extracted_subjects)
+            searches.append(asyncio.to_thread(recall_key_vectors.search, subject_query, 8))
+        results = await asyncio.gather(*searches, return_exceptions=True)
+        vector_ids: list[str] = []
+        for result in results:
+            if isinstance(result, Exception):
+                logger.warning("query_recall_vector_search_failed error=%s", result)
+                continue
+            vector_ids.extend(
+                hit["object_id"] for hit in result if hit.get("object_type") == "recall_key"
+            )
+        if vector_ids:
+            vector_keys = await asyncio.to_thread(recall.find_keys_by_ids, list(dict.fromkeys(vector_ids)))
+            all_keys.extend(vector_keys)
+    except Exception as exc:
+        logger.warning("query_recall_vector_search_failed error=%s", exc)
             
     # Add generic term matches last (Lowest priority)
     all_keys.extend(term_keys)
