@@ -1,6 +1,106 @@
 import React, { useState } from 'react'
 import axios from 'axios'
-import { Search, Loader, Bot, FileText, X } from 'lucide-react'
+import { Search, Loader, Bot, FileText, X, ChevronDown, ChevronRight } from 'lucide-react'
+
+// A small component to cleanly truncate long arrays
+const TruncatedList = ({ items, maxStart = 3, maxEnd = 2, renderItem }) => {
+  if (!items || items.length === 0) return <span style={{ color: 'var(--text-tertiary)' }}>none</span>;
+  if (items.length <= maxStart + maxEnd) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        {items.map((item, idx) => <div key={idx}>{renderItem ? renderItem(item, idx) : item}</div>)}
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+      {items.slice(0, maxStart).map((item, idx) => <div key={`start-${idx}`}>{renderItem ? renderItem(item, idx) : item}</div>)}
+      <div style={{ color: 'var(--text-tertiary)', paddingLeft: '8px', fontSize: '12px' }}>... ({items.length - maxStart - maxEnd} more items) ...</div>
+      {items.slice(-maxEnd).map((item, idx) => <div key={`end-${idx}`}>{renderItem ? renderItem(item, idx) : item}</div>)}
+    </div>
+  );
+};
+
+// Modular component for the complex retrieval trace
+const RetrievalTraceDetails = ({ trace }) => {
+  if (!trace) return null;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '12px' }}>
+      
+      {/* Global Metadata */}
+      <div className="span-card">
+        <h4 style={{ fontSize: '12px', color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>Global Stats</h4>
+        <div className="metadata-grid" style={{ gridTemplateColumns: '120px 1fr' }}>
+          <div>mode</div><div>{trace.mode || 'unknown'}</div>
+          <div>sub-queries</div><div>{trace.sub_query_count || 1}</div>
+          <div>extracted subjects</div>
+          <div>
+            <TruncatedList items={trace.extracted_subjects} maxStart={3} maxEnd={1} />
+          </div>
+          <div>citations</div><div>{trace.citation_count || 0}</div>
+          <div>context sizes</div>
+          <div>
+            before: {trace.context_chars_before_packing || 0}c 
+            → after: {trace.context_chars_after_packing || 0}c 
+            (saved: {trace.context_chars_saved || 0}c)
+          </div>
+        </div>
+      </div>
+
+      {/* Sub-Query Breakdowns */}
+      {trace.sub_query_traces && trace.sub_query_traces.length > 0 && (
+        <div className="span-card">
+          <h4 style={{ fontSize: '12px', color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>Sub-Query Traces</h4>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {trace.sub_query_traces.map((sqt, idx) => (
+              <div key={idx} style={{ background: 'rgba(0,0,0,0.1)', padding: '12px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.02)' }}>
+                <div style={{ fontWeight: 'bold', color: 'var(--primary-color)', marginBottom: '8px', fontSize: '13px' }}>"{sqt.sub_query}"</div>
+                <div className="metadata-grid" style={{ gridTemplateColumns: '120px 1fr', fontSize: '12px' }}>
+                   <div>lexical matches</div><div>{sqt.lexical_source_chunk_count || 0} chunks</div>
+                   <div>vector matches</div>
+                   <div>
+                     <TruncatedList items={sqt.vector_source_chunk_ids} maxStart={2} maxEnd={1} />
+                   </div>
+                   <div>recall keys</div>
+                   <div>
+                     <TruncatedList items={sqt.recall_keys} maxStart={3} maxEnd={1} renderItem={(key) => `${key.name} (id: ${key.id.substring(0,8)}...)`} />
+                   </div>
+                   <div>linked chunks</div><div>{sqt.linked_source_chunk_count || 0} chunks</div>
+                   <div>merged chunks</div><div>{sqt.source_chunk_count || 0} total found</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Ranked Source Chunks */}
+      {(trace.ranked_source_chunk_ids || []).length > 0 && (
+        <div className="span-card">
+          <h4 style={{ fontSize: '12px', color: 'var(--text-tertiary)', textTransform: 'uppercase', marginBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '4px' }}>Ranked & Selected Evidence ({trace.ranked_source_chunk_ids.length})</h4>
+          <TruncatedList 
+             items={trace.ranked_source_chunk_ids} 
+             maxStart={4} 
+             maxEnd={2} 
+             renderItem={(id) => {
+                 const reasons = trace.chunk_score_reasons?.[id] || [];
+                 const snippets = trace.selected_snippet_counts?.[id] || 0;
+                 return (
+                   <div style={{ display: 'flex', flexDirection: 'column', padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                     <span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{id}</span>
+                     <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
+                       snippets packed: {snippets} | reasons: {reasons.join(', ') || 'none'}
+                     </span>
+                   </div>
+                 );
+             }} 
+          />
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default function RetrievalView() {
   const [query, setQuery] = useState('')
@@ -232,74 +332,9 @@ export default function RetrievalView() {
               {retrievalTrace && (
                 <details style={{ borderTop: '1px solid rgba(255, 255, 255, 0.05)', marginTop: '16px', paddingTop: '16px' }}>
                   <summary style={{ color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: '14px' }}>
-                    Retrieval Trace
+                    Retrieval Trace Details
                   </summary>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '12px' }}>
-                    <div className="metadata-grid">
-                      <div>mode</div>
-                      <div>{retrievalTrace.mode || 'unknown'}</div>
-                      <div>source chunks</div>
-                      <div>{retrievalTrace.source_chunk_count || 0}</div>
-                      <div>lexical matches</div>
-                      <div>{retrievalTrace.lexical_source_chunk_count || 0}</div>
-                      <div>linked chunks</div>
-                      <div>{retrievalTrace.linked_source_chunk_count || 0}</div>
-                      <div>citations</div>
-                      <div>{retrievalTrace.citation_count || 0}</div>
-                      <div>context before</div>
-                      <div>{retrievalTrace.context_chars_before_packing || 0} chars</div>
-                      <div>context after</div>
-                      <div>{retrievalTrace.context_chars_after_packing || 0} chars</div>
-                      <div>context saved</div>
-                      <div>{retrievalTrace.context_chars_saved || 0} chars</div>
-                    </div>
-                    {(retrievalTrace.ranked_source_chunk_ids || []).length > 0 && (
-                      <div className="span-card">
-                        <div className="detail-meta">
-                          <span className="detail-pill">ranked chunks</span>
-                          <span className="detail-pill">{retrievalTrace.ranked_source_chunk_ids.length}</span>
-                        </div>
-                        <div className="evidence-text">
-                          {retrievalTrace.ranked_source_chunk_ids.join(', ')}
-                        </div>
-                      </div>
-                    )}
-                    {retrievalTrace.selected_snippet_counts && (
-                      <div className="span-card">
-                        <div className="detail-meta">
-                          <span className="detail-pill">packed snippets</span>
-                        </div>
-                        <div className="evidence-text">
-                          {Object.entries(retrievalTrace.selected_snippet_counts)
-                            .map(([chunkId, count]) => `${chunkId}: ${count}`)
-                            .join('\n')}
-                        </div>
-                      </div>
-                    )}
-                    {retrievalTrace.chunk_score_reasons && (
-                      <div className="span-card">
-                        <div className="detail-meta">
-                          <span className="detail-pill">score reasons</span>
-                        </div>
-                        <div className="evidence-text">
-                          {Object.entries(retrievalTrace.chunk_score_reasons)
-                            .map(([chunkId, reasons]) => `${chunkId}: ${(reasons || []).join(', ')}`)
-                            .join('\n')}
-                        </div>
-                      </div>
-                    )}
-                    {(retrievalTrace.recall_keys || []).length > 0 && (
-                      <div className="span-card">
-                        <div className="detail-meta">
-                          <span className="detail-pill">recall keys</span>
-                          <span className="detail-pill">{retrievalTrace.recall_key_count || 0}</span>
-                        </div>
-                        <div className="evidence-text">
-                          {retrievalTrace.recall_keys.map((key) => key.name).join(', ')}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  <RetrievalTraceDetails trace={retrievalTrace} />
                 </details>
               )}
             </div>
