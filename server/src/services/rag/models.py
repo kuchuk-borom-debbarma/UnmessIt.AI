@@ -1,6 +1,20 @@
 from __future__ import annotations
 
-from typing import Any, TypedDict
+from typing import Any, Protocol, TypedDict
+
+
+class ProgressReporter(Protocol):
+    """Stateless reporter for streaming progress events."""
+    
+    async def report(self, message: str, details: dict[str, Any] | None = None) -> None:
+        ...
+
+
+class NullProgressReporter(ProgressReporter):
+    """No-op reporter when no client is listening."""
+    
+    async def report(self, message: str, details: dict[str, Any] | None = None) -> None:
+        pass
 
 
 class Span(TypedDict):

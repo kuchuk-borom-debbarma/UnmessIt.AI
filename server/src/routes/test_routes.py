@@ -26,7 +26,7 @@ def test_ingest_route_returns_processing_and_schedules(monkeypatch):
 
 def test_retrieval_route_returns_current_query_shape(monkeypatch):
     class FakeRag:
-        async def query(self, data: str) -> dict:
+        async def query(self, data: str, reporter=None) -> dict:
             return {"answer": "Retrieval rewrite pending.", "citations": [], "source_chunks": [], "retrieval_trace": {"query": data}}
 
     monkeypatch.setattr(retrieval_route, "get_rag_service", lambda: FakeRag())

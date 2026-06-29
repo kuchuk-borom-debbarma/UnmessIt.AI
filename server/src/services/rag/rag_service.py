@@ -4,7 +4,7 @@ from functools import lru_cache
 from typing import Protocol
 
 from src.infra.langchain_json import get_json_client
-from src.services.rag.models import IngestResult, QueryResult
+from src.services.rag.models import IngestResult, QueryResult, ProgressReporter
 from src.services.rag.private.rag_service_impl import RagServiceImpl
 
 
@@ -14,7 +14,7 @@ class RagService(Protocol):
     async def ingest(self, data: str, job_id: str | None = None) -> IngestResult:
         ...
 
-    async def query(self, data: str) -> QueryResult:
+    async def query(self, data: str, reporter: ProgressReporter | None = None) -> QueryResult:
         ...
 
     async def resume_pending_jobs(self) -> None:

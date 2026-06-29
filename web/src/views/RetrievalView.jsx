@@ -113,6 +113,8 @@ export default function RetrievalView() {
   const [selectedCitation, setSelectedCitation] = useState(null)
   const [rawInput, setRawInput] = useState(null)
   const [loadingRaw, setLoadingRaw] = useState(false)
+  
+  const [progressEvents, setProgressEvents] = useState([])
 
   const handleQuery = async () => {
     if (!query.trim()) return
@@ -123,9 +125,22 @@ export default function RetrievalView() {
     setSourceChunks([])
     setRetrievalTrace(null)
     setSelectedCitation(null)
+    setProgressEvents([])
+    
+    const clientId = crypto.randomUUID()
+    const eventSource = new EventSource(`http://localhost:8000/api/retrieval/events/${clientId}`)
+    
+    eventSource.addEventListener('progress', (e) => {
+        try {
+            const data = JSON.parse(e.data)
+            setProgressEvents(prev => [...prev, data.message])
+        } catch (err) {
+            console.error("Failed to parse progress event", err)
+        }
+    })
     
     try {
-      const response = await axios.post('http://localhost:8000/api/retrieval/query', { query })
+      const response = await axios.post('http://localhost:8000/api/retrieval/query', { query, client_id: clientId })
       if (typeof response.data === 'object' && response.data.answer) {
          setAnswer(response.data.answer)
          setCitations(response.data.citations || [])
@@ -138,6 +153,8 @@ export default function RetrievalView() {
     } catch (err) {
       console.error(err)
       setStatus('error')
+    } finally {
+      eventSource.close()
     }
   }
 
@@ -267,6 +284,37 @@ export default function RetrievalView() {
             {status === 'error' && (
               <div style={{ marginTop: '16px', color: '#ef4444' }}>
                 Error connecting to server. Is the API running?
+              </div>
+            )}
+            
+            {(status === 'loading' || progressEvents.length > 0) && (
+              <div style={{ 
+                  marginTop: '16px', 
+                  background: 'rgba(0,0,0,0.4)', 
+                  border: '1px solid rgba(255,255,255,0.05)', 
+                  borderRadius: '6px', 
+                  padding: '12px',
+                  fontFamily: 'monospace',
+                  fontSize: '12px',
+                  color: 'var(--text-tertiary)',
+                  maxHeight: '150px',
+                  overflowY: 'auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px'
+              }}>
+                {progressEvents.map((msg, idx) => (
+                    <div key={idx} style={{ display: 'flex', gap: '8px' }}>
+                        <span style={{ color: 'var(--primary-color)' }}>&gt;</span>
+                        <span>{msg}</span>
+                    </div>
+                ))}
+                {status === 'loading' && (
+                    <div style={{ display: 'flex', gap: '8px', opacity: 0.7, animation: 'pulse 2s infinite' }}>
+                        <span style={{ color: 'var(--primary-color)' }}>&gt;</span>
+                        <span>_</span>
+                    </div>
+                )}
               </div>
             )}
           </div>

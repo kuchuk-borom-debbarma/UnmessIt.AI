@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from src.services.rag.models import IngestResult, QueryResult
+from src.services.rag.models import IngestResult, QueryResult, ProgressReporter, NullProgressReporter
 from src.services.rag.private.chains.preprocess import NoopPreprocessChain
 from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, build_query_result
 from src.services.rag.private.chains.recall.index import RecallIndexChain
@@ -74,13 +74,20 @@ class RagServiceImpl:
         """Delete one durable job."""
         return self.durability.delete_job(job_id)
 
-    async def query(self, data: str) -> QueryResult:
+    async def query(self, data: str, reporter: ProgressReporter | None = None) -> QueryResult:
         """Search source chunks, expand through recall links, then answer."""
+        reporter = reporter or NullProgressReporter()
         query = " ".join(data.split())
+        
         if not query:
             trace = {"mode": "empty_query", "query": query, "source_chunk_count": 0}
             answer = {"answer": "Ask a question to search your source chunks.", "citation_ids": []}
             return build_query_result(query, [], answer, trace)
-        chunks, trace = await self.query_evidence.run(query)
+            
+        await reporter.report("Decomposing query...")
+        chunks, trace = await self.query_evidence.run(query, reporter)
+        
+        await reporter.report("Generating final answer...")
         answer = await self.query_answer.run(query, chunks)
+        
         return build_query_result(query, chunks, answer, trace)

@@ -25,12 +25,25 @@ async def search_node(state: QueryState) -> dict[str, Any]:
     instead of N sequential passes.
     """
     extracted_subjects = state.get("extracted_subjects") or []
-    results = await asyncio.gather(*[_evidence_for(sq, extracted_subjects) for sq in state["sub_queries"]])
+    reporter = state.get("reporter")
+    
+    if reporter:
+        await reporter.report(f"Starting concurrent search across {len(state['sub_queries'])} sub-queries...")
+
+    async def _search_and_report(sq: str):
+        res = await _evidence_for(sq, extracted_subjects)
+        if reporter:
+            await reporter.report(f"Gathered evidence for: '{sq}'")
+        return res
+        
+    results = await asyncio.gather(*[_search_and_report(sq) for sq in state["sub_queries"]])
+    
     all_chunks: list[dict[str, Any]] = []
     trace_parts: list[dict[str, Any]] = []
     for chunks, trace_part in results:
         all_chunks.extend(chunks)
         trace_parts.append(trace_part)
+        
     return {"chunks": all_chunks, "trace_parts": trace_parts}
 
 

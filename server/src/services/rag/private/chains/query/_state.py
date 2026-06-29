@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import operator
 from typing import Annotated, Any, TypedDict
+from src.services.rag.models import ProgressReporter
 
 
 class QueryState(TypedDict):
@@ -15,6 +16,7 @@ class QueryState(TypedDict):
     query: str
     sub_queries: list[str]
     extracted_subjects: list[str]
+    reporter: ProgressReporter | None
     # operator.add merges chunk lists across parallel/sequential sub-query nodes.
     chunks: Annotated[list[dict[str, Any]], operator.add]
     trace_parts: Annotated[list[dict[str, Any]], operator.add]

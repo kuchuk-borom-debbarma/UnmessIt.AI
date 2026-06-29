@@ -25,8 +25,17 @@ def subjects_node(json_client) -> callable:
     async def _node(state: QueryState) -> dict[str, Any]:
         query = state["query"]
         sub_queries = state.get("sub_queries", [])
+        reporter = state.get("reporter")
+        
+        if reporter:
+            await reporter.report("Extracting implicit subjects from query...")
+            
         subjects = await _extract(json_client, query, sub_queries)
         logger.info("query_subjects query_len=%s extracted=%s", len(query), len(subjects))
+        
+        if reporter and subjects:
+            await reporter.report(f"Found implicit subjects: {', '.join(subjects)}")
+            
         return {"extracted_subjects": subjects}
 
     return _node

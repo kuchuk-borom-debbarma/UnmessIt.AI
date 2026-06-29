@@ -21,8 +21,14 @@ def breakdown_node(json_client) -> callable:
 
     async def _node(state: QueryState) -> dict[str, Any]:
         query = state["query"]
+        reporter = state.get("reporter")
+        
         sub_queries = await _decompose(json_client, query)
         logger.info("query_breakdown query_len=%s sub_queries=%s", len(query), len(sub_queries))
+        
+        if reporter and len(sub_queries) > 1:
+            await reporter.report(f"Decomposed into {len(sub_queries)} sub-queries: {', '.join(sub_queries)}")
+            
         return {"sub_queries": sub_queries}
 
     return _node

@@ -4,6 +4,8 @@ import json
 import logging
 from typing import Any
 
+from src.services.rag.models import ProgressReporter
+
 from ._graph import build_retrieval_graph
 from ._search import finalize_chunks
 
@@ -22,12 +24,13 @@ class QueryEvidenceChain:
         self.json_client = json_client
         self._graph = build_retrieval_graph(json_client)
 
-    async def run(self, query: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    async def run(self, query: str, reporter: ProgressReporter | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Return context-packed source chunks plus a trace of how they were found."""
         result = await self._graph.ainvoke({
             "query": query,
             "sub_queries": [],
             "extracted_subjects": [],
+            "reporter": reporter,
             "chunks": [],
             "trace_parts": [],
         })
@@ -36,7 +39,8 @@ class QueryEvidenceChain:
         extracted_subjects: list[str] = result.get("extracted_subjects") or []
         raw_chunks: list[dict[str, Any]] = result["chunks"]
         trace_parts: list[dict[str, Any]] = result["trace_parts"]
-
+        if reporter:
+            await reporter.report("Deduplicating, re-ranking, and context-packing evidence...")
         chunks, finalize_trace = finalize_chunks(raw_chunks, query)
 
         trace = {
