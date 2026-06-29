@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 from pathlib import Path
 
 SERVER_DIR = Path(__file__).resolve().parents[2]
@@ -9,26 +10,27 @@ DATA_DIR = SERVER_DIR / "data"
 RESOURCES_DIR = SERVER_DIR / "resources"
 DEFAULT_DB_PATH = DATA_DIR / "sqlite.db"
 
-_connection: sqlite3.Connection | None = None
+_local = threading.local()
 
 
 def get_connection(db_path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
-    """Return the process-wide SQLite connection.
+    """Return this thread's SQLite connection, creating it on first use.
 
-    Repositories share this connection so writes go through one configured
-    handle with the same SQLite pragmas.
+    Each thread in the asyncio thread pool executor gets its own connection.
+    WAL mode (set once at init_db time) handles concurrent multi-connection
+    access safely at the SQLite level.
     """
-    global _connection
-    if _connection is not None:
-        return _connection
+    conn = getattr(_local, "connection", None)
+    if conn is not None:
+        return conn
 
     os.makedirs(Path(db_path).parent, exist_ok=True)
-    conn = sqlite3.connect(db_path, check_same_thread=False)
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
-    _connection = conn
+    _local.connection = conn
     return conn
 
 
