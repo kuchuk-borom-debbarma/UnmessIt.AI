@@ -276,6 +276,15 @@ def clear_all() -> None:
     conn.commit()
 
 
+def delete_job(job_id: str) -> bool:
+    """Delete a durable job and its checkpoints."""
+    conn = get_connection()
+    conn.execute("DELETE FROM ingest_checkpoints WHERE job_id = ?", (job_id,))
+    cursor = conn.execute("DELETE FROM ingest_jobs WHERE id = ?", (job_id,))
+    conn.commit()
+    return cursor.rowcount > 0
+
+
 def _job(row) -> IngestJob:
     data = dict(row)
     data["metadata"] = _json(data.get("metadata"), {})

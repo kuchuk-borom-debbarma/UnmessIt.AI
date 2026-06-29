@@ -20,8 +20,7 @@ class RecallCandidateChain:
         text = _search_text(raw_text, source_chunks)
 
         candidates = await asyncio.to_thread(recall.find_candidate_keys, terms, limit=20)
-        has_keys = await asyncio.to_thread(recall.has_keys)
-        vector_candidates = await _vector_candidates(text, limit=20) if has_keys else []
+        vector_candidates = await _vector_candidates(text, limit=20)
         merged = _merge_candidates([*candidates, *vector_candidates], limit=20)
         logger.info(
             "recall_candidates chunks=%s terms=%s sqlite=%s vector=%s merged=%s sources=%s",

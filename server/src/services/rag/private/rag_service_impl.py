@@ -70,6 +70,10 @@ class RagServiceImpl:
         """List durable jobs for the dev route (sync: read-only, cheap)."""
         return self.durability.list_jobs()
 
+    def delete_ingest_job(self, job_id: str) -> bool:
+        """Delete one durable job."""
+        return self.durability.delete_job(job_id)
+
     async def query(self, data: str) -> QueryResult:
         """Search source chunks, expand through recall links, then answer."""
         query = " ".join(data.split())

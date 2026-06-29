@@ -26,6 +26,9 @@ class RagService(Protocol):
     def list_ingest_jobs(self) -> list[dict]:
         ...
 
+    def delete_ingest_job(self, job_id: str) -> bool:
+        ...
+
 
 @lru_cache(maxsize=1)
 def get_rag_service() -> RagService:

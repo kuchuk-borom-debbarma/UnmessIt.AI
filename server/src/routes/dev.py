@@ -54,6 +54,15 @@ async def resume_ingest_job(job_id: str) -> dict:
     return {"status": "success", "data": job}
 
 
+@router.delete("/ingest_jobs/{job_id}")
+def delete_ingest_job(job_id: str) -> dict:
+    """Delete a specific durable ingestion job."""
+    deleted = get_rag_service().delete_ingest_job(job_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Ingest job not found")
+    return {"status": "success"}
+
+
 @router.delete("/facts")
 def delete_all_facts() -> dict:
     """Clear local memory and its vector index for dev reset."""

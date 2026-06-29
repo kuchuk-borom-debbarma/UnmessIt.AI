@@ -92,7 +92,6 @@ async def test_recall_index_chain_retries_once_after_invalid_output(monkeypatch)
 
     monkeypatch.setattr(recall, "find_candidate_keys", lambda terms, limit=20: [])
     monkeypatch.setattr(recall, "find_exact_term_matches", lambda terms, limit=3: [])
-    monkeypatch.setattr(recall, "has_keys", lambda: False)
     monkeypatch.setattr(recall_key_vectors, "search", lambda text, top_k=20: [])
 
     json_client = RetryJson()
@@ -118,7 +117,6 @@ async def test_candidate_lookup_merges_ranks_filters_and_caps(monkeypatch):
     extra = [_candidate(f"extra-{index}", f"Extra {index}", "keyword") for index in range(25)]
 
     monkeypatch.setattr(recall, "find_candidate_keys", lambda terms, limit=20: [*sqlite_candidates, *extra])
-    monkeypatch.setattr(recall, "has_keys", lambda: True)
     monkeypatch.setattr(recall_key_vectors, "search", lambda text, top_k=20: [
         {"object_id": "vector-1", "object_type": "recall_key", "distance": 0.2},
         {"object_id": "ignored-source", "object_type": "source_chunk", "distance": 0.1},
@@ -132,16 +130,6 @@ async def test_candidate_lookup_merges_ranks_filters_and_caps(monkeypatch):
     assert [candidate["id"] for candidate in candidates[:3]] == ["exact-1", "keyword-1", "extra-0"]
     assert "ignored-source" not in {candidate["id"] for candidate in candidates}
     assert "semantic vector match" in " ".join(candidates[1]["match_notes"])
-
-
-async def test_candidate_lookup_skips_vector_search_when_no_recall_keys(monkeypatch):
-    monkeypatch.setattr(recall, "find_candidate_keys", lambda terms, limit=20: [])
-    monkeypatch.setattr(recall, "has_keys", lambda: False)
-    monkeypatch.setattr(recall_key_vectors, "search", lambda text, top_k=20: pytest.fail("vector search should be skipped"))
-
-    candidates = await RecallCandidateChain().run("Eren wants freedom", [_source_chunk("chunk-1", "Eren wants freedom.")])
-
-    assert candidates == []
 
 
 async def test_query_uses_source_search_and_recall_expansion(monkeypatch):

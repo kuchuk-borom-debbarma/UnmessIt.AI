@@ -11,7 +11,7 @@ def test_ingest_route_returns_processing_and_schedules(monkeypatch):
     calls = []
 
     class FakeRag:
-        def ingest(self, text: str, job_id: str) -> dict:
+        async def ingest(self, text: str, job_id: str) -> dict:
             calls.append((text, job_id))
             return {"job_id": "durable-job-1"}
 
@@ -26,7 +26,7 @@ def test_ingest_route_returns_processing_and_schedules(monkeypatch):
 
 def test_retrieval_route_returns_current_query_shape(monkeypatch):
     class FakeRag:
-        def query(self, data: str) -> dict:
+        async def query(self, data: str) -> dict:
             return {"answer": "Retrieval rewrite pending.", "citations": [], "source_chunks": [], "retrieval_trace": {"query": data}}
 
     monkeypatch.setattr(retrieval_route, "get_rag_service", lambda: FakeRag())
@@ -42,7 +42,7 @@ def test_dev_routes_read_repositories(monkeypatch):
         def list_ingest_jobs(self) -> list:
             return [{"id": "job-1"}]
 
-        def resume_ingest_job(self, job_id: str) -> dict:
+        async def resume_ingest_job(self, job_id: str) -> dict:
             return {"id": job_id, "status": "queued"}
 
     monkeypatch.setattr(dev_route.dev, "memory_view", lambda: {"total_raw_inputs": 1, "total_source_chunks": 1, "data": []})
@@ -54,4 +54,4 @@ def test_dev_routes_read_repositories(monkeypatch):
     assert dev_route.get_recall()["total_recall_keys"] == 1
     assert dev_route.get_raw_input("raw-1")["data"]["content"] == "hello"
     assert dev_route.get_ingest_jobs()["total_jobs"] == 1
-    assert dev_route.resume_ingest_job("job-1")["data"]["status"] == "queued"
+    assert asyncio.run(dev_route.resume_ingest_job("job-1"))["data"]["status"] == "queued"

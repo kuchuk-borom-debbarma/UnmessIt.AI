@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { ChevronDown, ChevronRight, Clock, Database, FileText, Link2, PlayCircle, RefreshCw, Tags } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, Database, FileText, Link2, PlayCircle, RefreshCw, Tags, Trash2 } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8000';
 
@@ -221,6 +221,13 @@ export default function ExplorerView() {
     await fetchMemory();
   };
 
+  const deleteJob = async (jobId) => {
+    if (!window.confirm("Are you sure you want to delete this job and all its checkpoints?")) return;
+    await axios.delete(`${API_BASE}/dev/ingest_jobs/${jobId}`);
+    setSelected(null);
+    await fetchMemory();
+  };
+
   const renderDetail = () => {
     if (!selected) {
       return <div className="empty-state">No memory data indexed yet.</div>;
@@ -336,11 +343,16 @@ export default function ExplorerView() {
                     <div className="evidence-text" style={{ color: '#ef4444' }}>{job.error}</div>
                   </>
                 )}
-                {canResume && (
-                  <button className="btn btn-primary" style={{ marginTop: 18 }} onClick={() => resumeJob(job.id)}>
-                    <PlayCircle size={16} /> Resume Job
+                <div style={{ display: 'flex', gap: '12px', marginTop: 18 }}>
+                  {canResume && (
+                    <button className="btn btn-primary" onClick={() => resumeJob(job.id)}>
+                      <PlayCircle size={16} /> Resume Job
+                    </button>
+                  )}
+                  <button className="btn" style={{ color: '#ef4444', borderColor: '#ef4444' }} onClick={() => deleteJob(job.id)}>
+                    <Trash2 size={16} /> Delete Job
                   </button>
-                )}
+                </div>
                 <h3 className="detail-heading" style={{ marginTop: 18 }}>Counts</h3>
                 <div className="evidence-text">{formatJson(job.metadata) || 'No counts yet.'}</div>
               </>

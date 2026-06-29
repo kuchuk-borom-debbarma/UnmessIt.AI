@@ -54,6 +54,10 @@ class DurableIngest:
         """Return durable jobs for dev inspection (sync: read-only, cheap)."""
         return repository.list_jobs()
 
+    def delete_job(self, job_id: str) -> bool:
+        """Delete one durable job."""
+        return repository.delete_job(job_id)
+
 
 def _hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
