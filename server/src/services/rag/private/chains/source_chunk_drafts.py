@@ -19,10 +19,11 @@ class SourceChunkDraftChain:
         """Return summary metadata while keeping source text selection deterministic."""
         try:
             data = await self.json_client.async_invoke_json(
-                "Summarize one source chunk. Return only JSON.",
+                "Summarize one source chunk and extract its main subjects. Return only JSON.",
                 (
-                    "Return JSON: {\"summary\":\"short neutral summary\",\"source_time\":null,\"metadata\":{}}\n"
-                    "Do not omit details because the full SOURCE_TEXT is saved as the citable chunk.\n\n"
+                    "Return JSON: {\"summary\":\"short neutral summary\",\"source_time\":null,\"metadata\":{\"salient_entities\":[\"Subject 1\",\"Subject 2\"]}}\n"
+                    "Do not omit details because the full SOURCE_TEXT is saved as the citable chunk.\n"
+                    "Extract 2-8 of the most important people, places, topics, or events into salient_entities to aid later retrieval.\n\n"
                     f"SOURCE_TEXT:\n{window['text']}"
                 ),
             )
@@ -36,11 +37,15 @@ class SourceChunkDraftChain:
 
 def _draft(window: SourceWindow, value: dict[str, Any]) -> SourceChunkDraft:
     """Normalize one LLM source chunk suggestion."""
+    meta = value.get("metadata") if isinstance(value.get("metadata"), dict) else {}
+    entities = meta.get("salient_entities") if isinstance(meta.get("salient_entities"), list) else []
+    clean_entities = [str(e).strip() for e in entities if str(e).strip()]
+    
     return {
         "window": window,
         "summary": str(value.get("summary") or "").strip(),
         "source_time": _optional_str(value.get("source_time")),
-        "metadata": value.get("metadata") if isinstance(value.get("metadata"), dict) else {},
+        "metadata": {**meta, "salient_entities": clean_entities[:20]},
     }
 
 

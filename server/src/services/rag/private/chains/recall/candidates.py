@@ -35,23 +35,17 @@ class RecallCandidateChain:
 
 
 def _important_terms(raw_text: str, source_chunks: list[SourceChunk]) -> list[str]:
-    """Pull simple search words from the new text and chunk summaries."""
-    values = [
-        raw_text[:1000],
-        *[chunk["summary"] for chunk in source_chunks],
-        *[chunk["text"][:400] for chunk in source_chunks],
-    ]
-    stop = {"what", "with", "from", "that", "this", "they", "them", "were", "have", "about", "source", "chunk"}
+    """Pull search words from the cleanly extracted LLM entities."""
     result = []
     seen = set()
-    for value in values:
-        for term in re.findall(r"[A-Za-z][A-Za-z']+", str(value)):
-            lowered = term.lower().strip("'")
-            if len(lowered) >= 4 and lowered not in stop and lowered not in seen:
-                # These words are only lookup hints; the LLM still decides whether a candidate is the same thing.
-                seen.add(lowered)
-                result.append(term.strip("'"))
-    return result[:12]
+    for chunk in source_chunks:
+        entities = chunk.get("metadata", {}).get("salient_entities", [])
+        for entity in entities:
+            clean = str(entity).strip()
+            if clean and clean.lower() not in seen:
+                seen.add(clean.lower())
+                result.append(clean)
+    return result[:20]
 
 
 def _search_text(raw_text: str, source_chunks: list[SourceChunk]) -> str:

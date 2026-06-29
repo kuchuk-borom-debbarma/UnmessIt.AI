@@ -537,10 +537,10 @@ def _source_chunk(chunk_id: str, text: str) -> dict:
         "id": chunk_id,
         "raw_input_id": "raw-1",
         "text": text,
-        "summary": text,
+        "summary": "test chunk summary",
         "spans": [{"start": 0, "end": len(text)}],
         "source_time": None,
-        "metadata": {},
+        "metadata": {"salient_entities": ["Test Entity"]},
     }
 
 
@@ -594,7 +594,7 @@ class FakeDrafts:
         self.calls.append(window["text"])
         if window["text"] == self.fail_on:
             raise RuntimeError("draft failed")
-        return [{"window": window, "summary": window["text"], "source_time": None, "metadata": {}}]
+        return [{"window": window, "summary": window["text"], "source_time": None, "metadata": {"salient_entities": ["Test Entity"]}}]
 
 
 class FakeRecallIndex:
