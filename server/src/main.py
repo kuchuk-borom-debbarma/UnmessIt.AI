@@ -10,7 +10,7 @@ from src.infra.logging import setup_logging
 from src.infra.settings import get_settings
 from src.infra.sqlite import init_db
 from src.routes import dev, health
-from src.routes.ingest import router as ingest_router
+from src.routes.notes import router as notes_router
 from src.routes.retrieval import router as retrieval_router
 from src.routes.auth import router as auth_router
 from src.services.rag.rag_service import get_rag_service
@@ -28,11 +28,14 @@ def create_app() -> FastAPI:
     setup_logging(settings)
     init_db()
 
-    # Initialize event bus and notification service to register listeners
+    # Initialize event bus and register listeners
     from src.infra.events import get_event_bus
     from src.services.notification import get_notification_service
+    from src.services.rag.listener import register_rag_listeners
+    
     get_event_bus()
     get_notification_service()
+    register_rag_listeners()
 
     app = FastAPI(title="UnmessIt.AI Server", lifespan=lifespan)
     # ponytail: local app, open CORS keeps Vite/dev clients simple.
@@ -44,7 +47,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(health.router)
-    app.include_router(ingest_router)
+    app.include_router(notes_router)
     app.include_router(retrieval_router)
     app.include_router(auth_router)
     app.include_router(dev.router)

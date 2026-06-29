@@ -138,3 +138,51 @@ CREATE INDEX IF NOT EXISTS idx_recall_links_key ON recall_links(recall_key_id);
 CREATE INDEX IF NOT EXISTS idx_recall_links_source_chunk ON recall_links(source_chunk_id);
 CREATE INDEX IF NOT EXISTS idx_recall_links_created_at ON recall_links(created_at);
 CREATE INDEX IF NOT EXISTS idx_recall_links_event_time ON recall_links(event_time);
+
+-- ==============================================================
+-- UNMESSIT AI: Notes and Organization Schema
+-- ==============================================================
+
+CREATE TABLE IF NOT EXISTS directories (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    parent_id TEXT,
+    path TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(parent_id) REFERENCES directories(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_directories_user ON directories(user_id);
+CREATE INDEX IF NOT EXISTS idx_directories_path ON directories(path);
+
+CREATE TABLE IF NOT EXISTS notes (
+    id TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    directory_id TEXT,
+    user_id TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(directory_id) REFERENCES directories(id) ON DELETE SET NULL,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_notes_user ON notes(user_id);
+
+CREATE TABLE IF NOT EXISTS tags (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE(name, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tags_user ON tags(user_id);
+
+CREATE TABLE IF NOT EXISTS note_tags (
+    note_id TEXT NOT NULL,
+    tag_id TEXT NOT NULL,
+    PRIMARY KEY(note_id, tag_id),
+    FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE,
+    FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
+);
