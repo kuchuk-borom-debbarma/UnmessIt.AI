@@ -283,9 +283,9 @@ async def test_normalizer_reused_candidate_preserves_identity_and_merges_aliases
 
 
 async def test_normalizer_does_not_auto_merge_ambiguous_exact_match(monkeypatch):
-    monkeypatch.setattr(recall, "find_exact_term_matches", lambda terms, limit=3: [
-        _candidate("key-1", "Alex", "exact"),
-        _candidate("key-2", "Alex", "exact"),
+    monkeypatch.setattr(recall, "find_exact_term_matches", lambda terms, limit=5: [
+        _candidate("key-1", "Alex Smith", "exact"),
+        _candidate("key-2", "Alex Doe", "exact"),
     ])
 
     index, errors = await RecallNormalizerChain().run(
