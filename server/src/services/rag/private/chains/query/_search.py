@@ -95,30 +95,47 @@ async def _vector_source_chunks(query: str) -> tuple[list[dict[str, Any]], list[
 
 
 async def _recall_keys(query: str, extracted_subjects: list[str]) -> list[dict[str, Any]]:
-    """Find recall keys by term search and by extracted subject names.
+    """Find recall keys via three concurrent paths:
 
-    Term search works when the query contains explicit names. Subject name lookup
-    covers queries that describe subjects by relationship rather than by name —
-    the subjects node extracts those names before the search runs.
+    1. FTS term search on the sub-query words.
+    2. FTS name search on extracted subject names (handles diacritics via FTS5).
+    3. Vector search — two concurrent queries:
+       a. Full sub-query text (semantic context).
+       b. Subject names joined as a compact string (direct entity embedding).
+       Both run concurrently; results are merged.
+
+    Path 2+3b handle queries that describe subjects by relationship rather than
+    by explicit name — the subjects node extracts those names before search runs.
     """
     keys = await asyncio.to_thread(recall.find_candidate_keys, _terms(query), 8)
     has_keys = await asyncio.to_thread(recall.has_keys)
     if has_keys:
-        # Direct name lookup for subjects the query implied but did not name.
+        # Direct FTS name lookup for implied subjects.
         if extracted_subjects:
             subject_keys = await asyncio.to_thread(recall.find_keys_by_names, extracted_subjects)
             keys = [*keys, *subject_keys]
         try:
-            vector_ids = [
-                hit["object_id"]
-                for hit in await asyncio.to_thread(recall_key_vectors.search, query, 8)
-                if hit.get("object_type") == "recall_key"
-            ]
-            vector_keys = await asyncio.to_thread(recall.find_keys_by_ids, vector_ids)
-            keys = [*keys, *vector_keys]
+            # Run sub-query vector search and subject-name vector search concurrently.
+            searches = [asyncio.to_thread(recall_key_vectors.search, query, 8)]
+            if extracted_subjects:
+                subject_query = " ".join(extracted_subjects)
+                searches.append(asyncio.to_thread(recall_key_vectors.search, subject_query, 8))
+            results = await asyncio.gather(*searches, return_exceptions=True)
+            vector_ids: list[str] = []
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.warning("query_recall_vector_search_failed error=%s", result)
+                    continue
+                vector_ids.extend(
+                    hit["object_id"] for hit in result if hit.get("object_type") == "recall_key"
+                )
+            if vector_ids:
+                vector_keys = await asyncio.to_thread(recall.find_keys_by_ids, list(dict.fromkeys(vector_ids)))
+                keys = [*keys, *vector_keys]
         except Exception as exc:
             logger.warning("query_recall_vector_search_failed error=%s", exc)
     return _merge_keys(keys)[:8]
+
 
 
 def _rank_chunks(
