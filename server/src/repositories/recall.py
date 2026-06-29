@@ -87,6 +87,37 @@ def find_keys_by_ids(ids: list[str]) -> list[dict[str, Any]]:
     return [key_by_id[item] for item in clean_ids if item in key_by_id]
 
 
+def find_keys_by_names(names: list[str]) -> list[dict[str, Any]]:
+    """Find recall keys whose name or aliases match any of the given subject names.
+
+    Used by retrieval when the query describes subjects by relationship rather
+    than by explicit name. Matches name exactly or as a substring of aliases.
+    Domain-neutral: names come from the subjects extraction node, not from a
+    fixed schema or entity type.
+    """
+    if not names:
+        return []
+    seen: dict[str, dict[str, Any]] = {}
+    conn = get_connection()
+    for name in names:
+        # Exact name match (case-insensitive via LIKE).
+        rows = conn.execute(
+            "SELECT id, name, kind, kind_label, aliases, summary, metadata, created_at, updated_at FROM recall_keys WHERE name LIKE ?",
+            (name,),
+        ).fetchall()
+        for row in rows:
+            seen.setdefault(row["id"], _key_from_row(row))
+        # Alias match — aliases column is a JSON array stored as text.
+        rows = conn.execute(
+            "SELECT id, name, kind, kind_label, aliases, summary, metadata, created_at, updated_at FROM recall_keys WHERE aliases LIKE ?",
+            (f'%"{name}"%',),
+        ).fetchall()
+        for row in rows:
+            seen.setdefault(row["id"], _key_from_row(row))
+    return list(seen.values())
+
+
+
 def source_chunks_with_links(source_chunk_ids: list[str]) -> set[str]:
     """Return source chunk IDs that already have recall evidence links."""
     clean_ids = [chunk_id for chunk_id in dict.fromkeys(source_chunk_ids) if chunk_id]

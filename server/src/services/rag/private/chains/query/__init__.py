@@ -27,11 +27,13 @@ class QueryEvidenceChain:
         result = await self._graph.ainvoke({
             "query": query,
             "sub_queries": [],
+            "extracted_subjects": [],
             "chunks": [],
             "trace_parts": [],
         })
 
         sub_queries: list[str] = result["sub_queries"]
+        extracted_subjects: list[str] = result.get("extracted_subjects") or []
         raw_chunks: list[dict[str, Any]] = result["chunks"]
         trace_parts: list[dict[str, Any]] = result["trace_parts"]
 
@@ -42,6 +44,7 @@ class QueryEvidenceChain:
             "query": query,
             "sub_queries": sub_queries,
             "sub_query_count": len(sub_queries),
+            "extracted_subjects": extracted_subjects,
             "sub_query_traces": trace_parts,
             "ranked_source_chunk_ids": [chunk["id"] for chunk in chunks],
             "source_chunk_count": len(chunks),

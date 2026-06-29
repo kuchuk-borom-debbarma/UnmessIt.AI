@@ -24,7 +24,8 @@ async def search_node(state: QueryState) -> dict[str, Any]:
     parallel. For N sub-queries the wall-clock time is roughly one search pass
     instead of N sequential passes.
     """
-    results = await asyncio.gather(*[_evidence_for(sq) for sq in state["sub_queries"]])
+    extracted_subjects = state.get("extracted_subjects") or []
+    results = await asyncio.gather(*[_evidence_for(sq, extracted_subjects) for sq in state["sub_queries"]])
     all_chunks: list[dict[str, Any]] = []
     trace_parts: list[dict[str, Any]] = []
     for chunks, trace_part in results:
@@ -54,13 +55,13 @@ def finalize_chunks(raw_chunks: list[dict[str, Any]], query: str) -> tuple[list[
 # ── internal helpers ─────────────────────────────────────────────────────────
 
 
-async def _evidence_for(sub_query: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+async def _evidence_for(sub_query: str, extracted_subjects: list[str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Run all three search paths for one sub-query concurrently where possible."""
     # Vector search and lexical search can run in parallel; recall key lookup is cheap.
     (vector_chunks, vector_ids), lexical_chunks, recall_keys = await asyncio.gather(
         _vector_source_chunks(sub_query),
         asyncio.to_thread(source_chunks.search, sub_query, 8),
-        _recall_keys(sub_query),
+        _recall_keys(sub_query, extracted_subjects),
     )
     linked_ids = await asyncio.to_thread(recall.linked_source_chunk_ids, [key["id"] for key in recall_keys], 12)
     linked_chunks = await asyncio.to_thread(source_chunks.get_by_ids, linked_ids)
@@ -70,6 +71,7 @@ async def _evidence_for(sub_query: str) -> tuple[list[dict[str, Any]], dict[str,
 
     trace_part = {
         "sub_query": sub_query,
+        "extracted_subjects": extracted_subjects,
         "vector_source_chunk_ids": vector_ids,
         "lexical_source_chunk_count": len(lexical_chunks),
         "recall_key_count": len(recall_keys),
@@ -92,11 +94,20 @@ async def _vector_source_chunks(query: str) -> tuple[list[dict[str, Any]], list[
     return chunks, ids
 
 
-async def _recall_keys(query: str) -> list[dict[str, Any]]:
-    """Find recall keys that may point to broader related evidence."""
+async def _recall_keys(query: str, extracted_subjects: list[str]) -> list[dict[str, Any]]:
+    """Find recall keys by term search and by extracted subject names.
+
+    Term search works when the query contains explicit names. Subject name lookup
+    covers queries that describe subjects by relationship rather than by name —
+    the subjects node extracts those names before the search runs.
+    """
     keys = await asyncio.to_thread(recall.find_candidate_keys, _terms(query), 8)
     has_keys = await asyncio.to_thread(recall.has_keys)
     if has_keys:
+        # Direct name lookup for subjects the query implied but did not name.
+        if extracted_subjects:
+            subject_keys = await asyncio.to_thread(recall.find_keys_by_names, extracted_subjects)
+            keys = [*keys, *subject_keys]
         try:
             vector_ids = [
                 hit["object_id"]
