@@ -107,13 +107,17 @@ async def _recall_keys(query: str, extracted_subjects: list[str]) -> list[dict[s
     Path 2+3b handle queries that describe subjects by relationship rather than
     by explicit name — the subjects node extracts those names before search runs.
     """
-    keys = await asyncio.to_thread(recall.find_candidate_keys, _terms(query), 8)
+    term_keys = await asyncio.to_thread(recall.find_candidate_keys, _terms(query), 8)
     has_keys = await asyncio.to_thread(recall.has_keys)
+    
+    all_keys = []
+    
     if has_keys:
-        # Direct FTS name lookup for implied subjects.
+        # Direct FTS name lookup for implied subjects (Highest priority)
         if extracted_subjects:
             subject_keys = await asyncio.to_thread(recall.find_keys_by_names, extracted_subjects)
-            keys = [*keys, *subject_keys]
+            all_keys.extend(subject_keys)
+            
         try:
             # Run sub-query vector search and subject-name vector search concurrently.
             searches = [asyncio.to_thread(recall_key_vectors.search, query, 8)]
@@ -131,10 +135,14 @@ async def _recall_keys(query: str, extracted_subjects: list[str]) -> list[dict[s
                 )
             if vector_ids:
                 vector_keys = await asyncio.to_thread(recall.find_keys_by_ids, list(dict.fromkeys(vector_ids)))
-                keys = [*keys, *vector_keys]
+                all_keys.extend(vector_keys)
         except Exception as exc:
             logger.warning("query_recall_vector_search_failed error=%s", exc)
-    return _merge_keys(keys)[:8]
+            
+    # Add generic term matches last (Lowest priority)
+    all_keys.extend(term_keys)
+    
+    return _merge_keys(all_keys)[:8]
 
 
 
