@@ -234,13 +234,13 @@ class DurableIngestRunner:
             raise
 
 
-def _index_recall_key(key: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    recall_key_vectors.index([key])
+async def _index_recall_key(key: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    await asyncio.to_thread(recall_key_vectors.index, [key])
     return key["id"], {}
 
 
-def _index_source_chunk(chunk: SourceChunk) -> tuple[str, dict[str, Any]]:
-    source_chunk_vectors.index([chunk])
+async def _index_source_chunk(chunk: SourceChunk) -> tuple[str, dict[str, Any]]:
+    await asyncio.to_thread(source_chunk_vectors.index, [chunk])
     return chunk["id"], {}
 
 
