@@ -3,35 +3,34 @@ from __future__ import annotations
 import asyncio
 
 from src.routes import dev as dev_route
-from src.routes import ingest as ingest_route
+from src.routes import notes as notes_route
 from src.routes import retrieval as retrieval_route
 
 
-def test_ingest_route_returns_processing_and_schedules(monkeypatch):
-    calls = []
+def test_notes_route_creates_note_and_triggers_event(monkeypatch):
+    class FakeNotesService:
+        async def create_note(self, text: str, user_id: str, directory_id: str | None = None, tag_names: list[str] | None = None) -> str:
+            return "note-1"
 
-    class FakeRag:
-        async def ingest(self, text: str, job_id: str) -> dict:
-            calls.append((text, job_id))
-            return {"job_id": "durable-job-1"}
+    monkeypatch.setattr(notes_route, "get_notes_service", lambda: FakeNotesService())
 
-    monkeypatch.setattr(ingest_route, "get_rag_service", lambda: FakeRag())
+    response = asyncio.run(notes_route.create_note(
+        notes_route.NoteCreateRequest(text="hello", tags=["test"]), 
+        "user-1"
+    ))
 
-    response = asyncio.run(ingest_route.process_text(ingest_route.IngestRequest(text="hello")))
-
-    assert response["status"] == "processing"
-    assert response["job_id"] == "durable-job-1"
-    assert calls[0][0] == "hello"
+    assert response["status"] == "created"
+    assert response["note_id"] == "note-1"
 
 
 def test_retrieval_route_returns_current_query_shape(monkeypatch):
     class FakeRag:
-        async def query(self, data: str, reporter=None) -> dict:
+        async def query(self, data: str, user_id: str, reporter=None) -> dict:
             return {"answer": "Retrieval rewrite pending.", "citations": [], "source_chunks": [], "retrieval_trace": {"query": data}}
 
     monkeypatch.setattr(retrieval_route, "get_rag_service", lambda: FakeRag())
 
-    response = asyncio.run(retrieval_route.query_endpoint(retrieval_route.QueryRequest(query="hello")))
+    response = asyncio.run(retrieval_route.query_endpoint(retrieval_route.QueryRequest(query="hello"), "user-1"))
 
     assert response["answer"] == "Retrieval rewrite pending."
     assert response["source_chunks"] == []

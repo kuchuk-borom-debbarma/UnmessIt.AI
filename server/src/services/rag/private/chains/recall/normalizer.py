@@ -24,6 +24,7 @@ class RecallNormalizerChain:
         self,
         data: dict[str, Any],
         source_chunks: list[SourceChunk],
+        user_id: str,
         candidates: list[dict[str, Any]],
     ) -> tuple[RecallIndex, list[str]]:
         """Return normalized recall index data and validation errors."""
@@ -66,7 +67,7 @@ class RecallNormalizerChain:
                 continue
 
             if not existing:
-                existing = _exact_existing_key(name, _as_strings(draft.get("aliases")), errors)
+                existing = _exact_existing_key(name, _as_strings(draft.get("aliases")), user_id, errors)
             kind, metadata = _allowed(draft.get("kind"), KINDS, draft.get("metadata"))
             if existing and existing.get("kind") != "other":
                 # Existing coarse type wins unless it was unknown, so later text does not drift identity.
@@ -134,9 +135,9 @@ def _as_list(value: Any) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
-def _exact_existing_key(name: str, aliases: list[str], errors: list[str]) -> dict[str, Any] | None:
+def _exact_existing_key(name: str, aliases: list[str], user_id: str, errors: list[str]) -> dict[str, Any] | None:
     """Reuse only one unambiguous exact name/alias match from the whole key store."""
-    matches = recall.find_exact_term_matches([name, *aliases], limit=5)
+    matches = recall.find_exact_term_matches([name, *aliases], user_id, limit=5)
     unique = {match["id"]: match for match in matches}
     if len(unique) == 1:
         # Exact normalized text is safe to auto-reuse; semantic matches are not.

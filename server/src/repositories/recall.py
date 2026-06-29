@@ -8,21 +8,21 @@ from src.infra.sqlite import get_connection
 from src.services.rag.models import RecallIndex
 
 
-def find_candidate_keys(terms: list[str], limit: int = 20) -> list[dict[str, Any]]:
+def find_candidate_keys(terms: list[str], user_id: str, limit: int = 20) -> list[dict[str, Any]]:
     """Find existing keys by exact term and keyword search before creating new ones."""
     terms = _clean_terms(terms)
     if not terms:
         return []
-    exact = _merge_candidates(find_exact_term_matches(terms, limit=limit), limit)
+    exact = _merge_candidates(find_exact_term_matches(terms, user_id, limit=limit), limit)
     remaining = max(0, limit - len(exact))
-    fts = find_fts_matches(terms, limit=remaining) if remaining else []
+    fts = find_fts_matches(terms, user_id, limit=remaining) if remaining else []
     return _merge_candidates([*exact, *fts], limit)
 
 
 
 
 
-def find_exact_term_matches(terms: list[str], limit: int = 20) -> list[dict[str, Any]]:
+def find_exact_term_matches(terms: list[str], user_id: str, limit: int = 20) -> list[dict[str, Any]]:
     """Find keys whose saved name or alias exactly matches a normalized term."""
     normalized_terms = _normalized_terms(terms)
     if not normalized_terms:
@@ -34,16 +34,16 @@ def find_exact_term_matches(terms: list[str], limit: int = 20) -> list[dict[str,
                k.created_at, k.updated_at, t.term AS match_text, t.term_type
         FROM recall_key_terms t
         JOIN recall_keys k ON k.id = t.recall_key_id
-        WHERE t.normalized_term IN ({placeholders})
+        WHERE t.normalized_term IN ({placeholders}) AND k.user_id = ?
         ORDER BY CASE t.term_type WHEN 'name' THEN 0 ELSE 1 END, k.updated_at DESC
         LIMIT ?
         """,
-        [*normalized_terms, limit],
+        [*normalized_terms, user_id, limit],
     ).fetchall()
     return [_candidate(row, "exact", f"exact {row['term_type']} match: {row['match_text']}") for row in rows]
 
 
-def find_fts_matches(terms: list[str], limit: int = 20) -> list[dict[str, Any]]:
+def find_fts_matches(terms: list[str], user_id: str, limit: int = 20) -> list[dict[str, Any]]:
     """Find keyword matches without scanning every recall key row."""
     if limit <= 0:
         return []
@@ -57,16 +57,16 @@ def find_fts_matches(terms: list[str], limit: int = 20) -> list[dict[str, Any]]:
                k.created_at, k.updated_at
         FROM recall_keys_fts f
         JOIN recall_keys k ON k.id = f.recall_key_id
-        WHERE recall_keys_fts MATCH ?
+        WHERE recall_keys_fts MATCH ? AND k.user_id = ?
         ORDER BY bm25(recall_keys_fts), k.updated_at DESC
         LIMIT ?
         """,
-        [query, limit],
+        [query, user_id, limit],
     ).fetchall()
     return [_candidate(row, "keyword", "keyword match in name, aliases, summary, or label") for row in rows]
 
 
-def find_keys_by_ids(ids: list[str]) -> list[dict[str, Any]]:
+def find_keys_by_ids(ids: list[str], user_id: str) -> list[dict[str, Any]]:
     """Load recall keys by ID while preserving the requested order."""
     clean_ids = [str(item) for item in ids if str(item)]
     if not clean_ids:
@@ -76,15 +76,15 @@ def find_keys_by_ids(ids: list[str]) -> list[dict[str, Any]]:
         f"""
         SELECT id, name, kind, kind_label, aliases, summary, metadata, created_at, updated_at
         FROM recall_keys
-        WHERE id IN ({placeholders})
+        WHERE id IN ({placeholders}) AND user_id = ?
         """,
-        clean_ids,
+        [*clean_ids, user_id],
     ).fetchall()
     key_by_id = {row["id"]: _key_from_row(row) for row in rows}
     return [key_by_id[item] for item in clean_ids if item in key_by_id]
 
 
-def find_keys_by_names(names: list[str]) -> list[dict[str, Any]]:
+def find_keys_by_names(names: list[str], user_id: str) -> list[dict[str, Any]]:
     """Find recall keys whose name or aliases match any of the given subject names.
 
     Uses FTS5 search so diacritic variants match: 'Helene' finds 'Hélène',
@@ -105,9 +105,9 @@ def find_keys_by_names(names: list[str]) -> list[dict[str, Any]]:
                        rk.summary, rk.metadata, rk.created_at, rk.updated_at
                 FROM recall_keys_fts fts
                 JOIN recall_keys rk ON rk.id = fts.recall_key_id
-                WHERE recall_keys_fts MATCH ?
+                WHERE recall_keys_fts MATCH ? AND rk.user_id = ?
                 """,
-                (safe,),
+                (safe, user_id),
             ).fetchall()
             for row in rows:
                 seen.setdefault(row["id"], _key_from_row(row))
@@ -117,20 +117,20 @@ def find_keys_by_names(names: list[str]) -> list[dict[str, Any]]:
 
 
 
-def source_chunks_with_links(source_chunk_ids: list[str]) -> set[str]:
+def source_chunks_with_links(source_chunk_ids: list[str], user_id: str) -> set[str]:
     """Return source chunk IDs that already have recall evidence links."""
     clean_ids = [chunk_id for chunk_id in dict.fromkeys(source_chunk_ids) if chunk_id]
     if not clean_ids:
         return set()
     placeholders = ", ".join("?" for _ in clean_ids)
     rows = get_connection().execute(
-        f"SELECT DISTINCT source_chunk_id FROM recall_links WHERE source_chunk_id IN ({placeholders})",
-        clean_ids,
+        f"SELECT DISTINCT l.source_chunk_id FROM recall_links l JOIN recall_keys k ON k.id = l.recall_key_id WHERE l.source_chunk_id IN ({placeholders}) AND k.user_id = ?",
+        [*clean_ids, user_id],
     ).fetchall()
     return {row["source_chunk_id"] for row in rows}
 
 
-def keys_for_source_chunks(source_chunk_ids: list[str]) -> list[dict[str, Any]]:
+def keys_for_source_chunks(source_chunk_ids: list[str], user_id: str) -> list[dict[str, Any]]:
     """Load recall keys connected to the given source chunks."""
     clean_ids = [chunk_id for chunk_id in dict.fromkeys(source_chunk_ids) if chunk_id]
     if not clean_ids:
@@ -142,15 +142,15 @@ def keys_for_source_chunks(source_chunk_ids: list[str]) -> list[dict[str, Any]]:
                k.metadata, k.created_at, k.updated_at
         FROM recall_keys k
         JOIN recall_links l ON l.recall_key_id = k.id
-        WHERE l.source_chunk_id IN ({placeholders})
+        WHERE l.source_chunk_id IN ({placeholders}) AND k.user_id = ?
         ORDER BY k.updated_at DESC
         """,
-        clean_ids,
+        [*clean_ids, user_id],
     ).fetchall()
     return [_key_from_row(row) for row in rows]
 
 
-def linked_source_chunk_ids(recall_key_ids: list[str], limit: int = 12) -> list[str]:
+def linked_source_chunk_ids(recall_key_ids: list[str], user_id: str, limit: int = 12) -> list[str]:
     """Return chunks connected to recall keys for one-hop query expansion."""
     clean_ids = [key_id for key_id in dict.fromkeys(recall_key_ids) if key_id]
     if not clean_ids or limit <= 0:
@@ -164,17 +164,17 @@ def linked_source_chunk_ids(recall_key_ids: list[str], limit: int = 12) -> list[
         FROM recall_links l
         JOIN source_chunks sc ON sc.id = l.source_chunk_id
         JOIN raw_inputs ri ON ri.id = sc.raw_input_id
-        WHERE l.recall_key_id IN ({placeholders}) AND ri.deleted_at IS NULL
+        WHERE l.recall_key_id IN ({placeholders}) AND sc.user_id = ? AND ri.deleted_at IS NULL
         GROUP BY l.source_chunk_id
         ORDER BY match_count DESC, first_seen ASC
         LIMIT ?
         """,
-        [*clean_ids, 24],
+        [*clean_ids, user_id, limit],
     ).fetchall()
     return [row["id"] for row in rows]
 
 
-def save_index(index: RecallIndex) -> int:
+def save_index(index: RecallIndex, user_id: str) -> int:
     """Save keys and append only new key-to-chunk evidence links."""
     keys = index.get("recall_keys", [])
     links = index.get("recall_links", [])
@@ -186,8 +186,8 @@ def save_index(index: RecallIndex) -> int:
         # Upsert by key ID: reused keys are updated, while truly new keys are inserted.
         conn.execute(
             """
-            INSERT INTO recall_keys (id, name, kind, kind_label, aliases, summary, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO recall_keys (id, name, kind, kind_label, aliases, summary, user_id, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 name = recall_keys.name,
                 kind = CASE WHEN recall_keys.kind = 'other' THEN excluded.kind ELSE recall_keys.kind END,
@@ -204,6 +204,7 @@ def save_index(index: RecallIndex) -> int:
                 key.get("kind_label"),
                 json.dumps(key.get("aliases", []), ensure_ascii=False),
                 key.get("summary", ""),
+                user_id,
                 json.dumps(key.get("metadata", {}), ensure_ascii=False),
             ),
         )
@@ -216,8 +217,8 @@ def save_index(index: RecallIndex) -> int:
             """
             INSERT OR IGNORE INTO recall_links
                 (id, recall_key_id, source_chunk_id, relation, relation_label,
-                 confidence, reason, event_time, time_label, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 confidence, reason, event_time, time_label, user_id, metadata)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 link["id"],
@@ -229,6 +230,7 @@ def save_index(index: RecallIndex) -> int:
                 link.get("reason", ""),
                 link.get("event_time"),
                 link.get("time_label"),
+                user_id,
                 json.dumps(link.get("metadata", {}), ensure_ascii=False),
             ),
         )

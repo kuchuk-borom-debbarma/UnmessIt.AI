@@ -11,10 +11,10 @@ from src.services.rag.private.rag_service_impl import RagServiceImpl
 class RagService(Protocol):
     """Methods exposed to HTTP routes."""
 
-    async def ingest(self, data: str, job_id: str | None = None) -> IngestResult:
+    async def ingest(self, data: str, user_id: str, job_id: str | None = None) -> IngestResult:
         ...
 
-    async def query(self, data: str, reporter: ProgressReporter | None = None) -> QueryResult:
+    async def query(self, data: str, user_id: str, reporter: ProgressReporter | None = None) -> QueryResult:
         ...
 
     async def resume_pending_jobs(self) -> None:

@@ -7,8 +7,18 @@ CREATE TABLE IF NOT EXISTS raw_inputs (
     job_id TEXT NOT NULL,
     content_hash TEXT,
     content TEXT NOT NULL,
+    user_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    deleted_at DATETIME
+    deleted_at DATETIME,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    identifier TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS ingest_jobs (
@@ -26,7 +36,8 @@ CREATE TABLE IF NOT EXISTS ingest_jobs (
     FOREIGN KEY(raw_input_id) REFERENCES raw_inputs(id) ON DELETE SET NULL
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_jobs_content_hash ON ingest_jobs(content_hash);
+
+CREATE INDEX IF NOT EXISTS idx_ingest_jobs_content_hash ON ingest_jobs(content_hash);
 CREATE INDEX IF NOT EXISTS idx_ingest_jobs_status_next_run ON ingest_jobs(status, next_run_at);
 
 CREATE TABLE IF NOT EXISTS ingest_checkpoints (
@@ -52,12 +63,15 @@ CREATE TABLE IF NOT EXISTS source_chunks (
     summary TEXT NOT NULL,
     spans JSON NOT NULL,
     source_time TEXT,
+    user_id TEXT,
     metadata JSON NOT NULL DEFAULT '{}',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(raw_input_id) REFERENCES raw_inputs(id) ON DELETE CASCADE
+    FOREIGN KEY(raw_input_id) REFERENCES raw_inputs(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_source_chunks_raw_input ON source_chunks(raw_input_id);
+
 CREATE INDEX IF NOT EXISTS idx_source_chunks_created_at ON source_chunks(created_at);
 CREATE INDEX IF NOT EXISTS idx_source_chunks_source_time ON source_chunks(source_time);
 
@@ -68,12 +82,15 @@ CREATE TABLE IF NOT EXISTS recall_keys (
     kind_label TEXT,
     aliases JSON NOT NULL,
     summary TEXT NOT NULL,
+    user_id TEXT,
     metadata JSON NOT NULL DEFAULT '{}',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_recall_keys_name ON recall_keys(name);
+
 CREATE INDEX IF NOT EXISTS idx_recall_keys_updated_at ON recall_keys(updated_at);
 
 CREATE TABLE IF NOT EXISTS recall_key_terms (
@@ -107,14 +124,65 @@ CREATE TABLE IF NOT EXISTS recall_links (
     reason TEXT NOT NULL,
     event_time TEXT,
     time_label TEXT,
+    user_id TEXT,
     metadata JSON NOT NULL DEFAULT '{}',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(recall_key_id) REFERENCES recall_keys(id) ON DELETE CASCADE,
     FOREIGN KEY(source_chunk_id) REFERENCES source_chunks(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
     UNIQUE(recall_key_id, source_chunk_id, relation, relation_label)
 );
 
 CREATE INDEX IF NOT EXISTS idx_recall_links_key ON recall_links(recall_key_id);
+
 CREATE INDEX IF NOT EXISTS idx_recall_links_source_chunk ON recall_links(source_chunk_id);
 CREATE INDEX IF NOT EXISTS idx_recall_links_created_at ON recall_links(created_at);
 CREATE INDEX IF NOT EXISTS idx_recall_links_event_time ON recall_links(event_time);
+
+-- ==============================================================
+-- UNMESSIT AI: Notes and Organization Schema
+-- ==============================================================
+
+CREATE TABLE IF NOT EXISTS directories (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    parent_id TEXT,
+    path TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(parent_id) REFERENCES directories(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_directories_user ON directories(user_id);
+CREATE INDEX IF NOT EXISTS idx_directories_path ON directories(path);
+
+CREATE TABLE IF NOT EXISTS notes (
+    id TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    directory_id TEXT,
+    user_id TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(directory_id) REFERENCES directories(id) ON DELETE SET NULL,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_notes_user ON notes(user_id);
+
+CREATE TABLE IF NOT EXISTS tags (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE(name, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tags_user ON tags(user_id);
+
+CREATE TABLE IF NOT EXISTS note_tags (
+    note_id TEXT NOT NULL,
+    tag_id TEXT NOT NULL,
+    PRIMARY KEY(note_id, tag_id),
+    FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE,
+    FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
+);

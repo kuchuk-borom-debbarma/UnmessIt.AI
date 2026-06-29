@@ -33,6 +33,7 @@ class SourceChunk(TypedDict):
     summary: str
     spans: list[Span]
     source_time: str | None
+    user_id: str
     metadata: dict[str, object]
 
 

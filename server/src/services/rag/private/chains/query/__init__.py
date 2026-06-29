@@ -24,12 +24,13 @@ class QueryEvidenceChain:
         self.json_client = json_client
         self._graph = build_retrieval_graph(json_client)
 
-    async def run(self, query: str, reporter: ProgressReporter | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    async def run(self, query: str, user_id: str, reporter: ProgressReporter | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Return context-packed source chunks plus a trace of how they were found."""
         result = await self._graph.ainvoke({
             "query": query,
             "sub_queries": [],
             "extracted_subjects": [],
+            "user_id": user_id,
             "reporter": reporter,
             "chunks": [],
             "trace_parts": [],
@@ -97,12 +98,14 @@ class QueryAnswerChain:
 
 def build_query_result(query: str, chunks: list[dict[str, Any]], answer: dict[str, Any], trace: dict[str, Any]) -> dict[str, Any]:
     """Build the route response shape expected by the UI."""
-    citation_ids = answer["citation_ids"] or [chunk["id"] for chunk in chunks[:3]]
+    citation_ids = answer.get("citations") or [chunk["id"] for chunk in chunks[:3]]
     cited_chunks = [chunk for chunk in chunks if chunk["id"] in set(citation_ids)]
     return {
         "answer": answer["answer"],
         "citations": [_citation(chunk, index + 1) for index, chunk in enumerate(cited_chunks)],
         "source_chunks": [_public_chunk(chunk) for chunk in chunks],
+        "directories": answer.get("directories", []),
+        "notes": answer.get("notes", []),
         "retrieval_trace": {**trace, "citation_count": len(cited_chunks)},
     }
 

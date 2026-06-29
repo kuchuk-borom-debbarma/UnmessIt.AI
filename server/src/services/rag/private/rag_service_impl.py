@@ -4,7 +4,8 @@ from uuid import uuid4
 
 from src.services.rag.models import IngestResult, QueryResult, ProgressReporter, NullProgressReporter
 from src.services.rag.private.chains.preprocess import NoopPreprocessChain
-from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, build_query_result
+from src.services.rag.private.chains.query import build_query_result
+from src.services.rag.private.chains.query.agent import QueryAgentChain
 from src.services.rag.private.chains.recall.index import RecallIndexChain
 from src.services.rag.private.chains.source_chunk_assembler import SourceChunkAssemblerChain
 from src.services.rag.private.chains.source_chunk_drafts import SourceChunkDraftChain
@@ -32,8 +33,7 @@ class RagServiceImpl:
         self.source_chunk_drafts = SourceChunkDraftChain(json_client)
         self.source_chunk_assembler = SourceChunkAssemblerChain()
         self.recall_index = RecallIndexChain(json_client)
-        self.query_evidence = QueryEvidenceChain(json_client)
-        self.query_answer = QueryAnswerChain(json_client)
+        self.query_agent = QueryAgentChain(json_client)
         self.durability = DurableIngest(
             self.preprocess,
             self.source_windows,
@@ -42,10 +42,10 @@ class RagServiceImpl:
             self.recall_index,
         )
 
-    async def ingest(self, data: str, job_id: str | None = None) -> IngestResult:
+    async def ingest(self, data: str, user_id: str, job_id: str | None = None) -> IngestResult:
         """Submit durable ingestion and return the durable job id."""
         job_id = job_id or str(uuid4())
-        job = await self.durability.submit(data, job_id)
+        job = await self.durability.submit(data, user_id, job_id)
         return {
             "job_id": job["id"],
             "status": job["status"],
@@ -74,20 +74,17 @@ class RagServiceImpl:
         """Delete one durable job."""
         return self.durability.delete_job(job_id)
 
-    async def query(self, data: str, reporter: ProgressReporter | None = None) -> QueryResult:
+    async def query(self, data: str, user_id: str, reporter: ProgressReporter | None = None) -> QueryResult:
         """Search source chunks, expand through recall links, then answer."""
         reporter = reporter or NullProgressReporter()
         query = " ".join(data.split())
         
         if not query:
             trace = {"mode": "empty_query", "query": query, "source_chunk_count": 0}
-            answer = {"answer": "Ask a question to search your source chunks.", "citation_ids": []}
+            answer = {"answer": "Ask a question to search your source chunks.", "citations": [], "directories": [], "notes": []}
             return build_query_result(query, [], answer, trace)
             
-        await reporter.report("Decomposing query...")
-        chunks, trace = await self.query_evidence.run(query, reporter)
-        
-        await reporter.report("Generating final answer...")
-        answer = await self.query_answer.run(query, chunks)
+        await reporter.report("Running query agent...")
+        answer, chunks, trace = await self.query_agent.run(query, user_id, reporter)
         
         return build_query_result(query, chunks, answer, trace)

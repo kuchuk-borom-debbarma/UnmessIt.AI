@@ -41,7 +41,15 @@ def init_db() -> None:
     conn.executescript(schema_path.read_text())
     _migrate_ingest_job_status(conn)
     _add_column_if_missing(conn, "raw_inputs", "content_hash", "TEXT")
+    _add_column_if_missing(conn, "raw_inputs", "user_id", "TEXT REFERENCES users(id) ON DELETE CASCADE")
+    _add_column_if_missing(conn, "recall_keys", "user_id", "TEXT REFERENCES users(id) ON DELETE CASCADE")
+    _add_column_if_missing(conn, "source_chunks", "user_id", "TEXT REFERENCES users(id) ON DELETE CASCADE")
+    _add_column_if_missing(conn, "recall_links", "user_id", "TEXT REFERENCES users(id) ON DELETE CASCADE")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_inputs_content_hash ON raw_inputs(content_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_inputs_user_id ON raw_inputs(user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_source_chunks_user_id ON source_chunks(user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_recall_keys_user_id ON recall_keys(user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_recall_links_user_id ON recall_links(user_id)")
     conn.commit()
 
 
