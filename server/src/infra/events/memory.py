@@ -8,6 +8,8 @@ class MemoryEventBus(EventBus):
     def subscribe(self, topic: str, handler: Callable[[dict[str, Any]], None]) -> None:
         if topic not in self._subscribers:
             self._subscribers[topic] = []
+        if handler in self._subscribers[topic]:
+            return
         self._subscribers[topic].append(handler)
         
     def publish(self, topic: str, payload: dict[str, Any]) -> None:

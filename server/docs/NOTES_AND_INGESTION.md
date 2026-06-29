@@ -26,8 +26,8 @@ To keep the Notes API responses fast and the bounded contexts decoupled, the two
 2. **Persistence**: The `NotesService` writes the data to the SQLite `notes` and `note_tags` tables.
 3. **Event Emitted**: The `NotesService` publishes a `note.created` event to the `EventBus`, carrying the `note_id`, `text`, and `user_id`.
 4. **Immediate Response**: The API responds with `200 OK` and the `note_id`.
-5. **Background Listener**: The RAG listener (`server/src/services/rag/listener.py`), which subscribed to `note.created` on startup, catches the event.
-6. **Async Ingestion**: The listener spawns an `asyncio.create_task()` background worker that calls `rag_service.ingest(text, user_id, job_id=note_id)`.
+5. **Background Listener**: The RAG listener (`server/src/services/rag/private/listener/listener.py`), which subscribed to `note.created` on startup, catches the event.
+6. **Async Ingestion**: The listener spawns an `asyncio.create_task()` background worker that calls `submit_ingest_job(text, user_id, job_id=note_id)`.
 7. **Durable Processing**: The `rag_service` creates a durable ingestion job to process the raw text into source chunks and vectors. (See `RAG_DURABILITY.md` and `SEAI_INDEXING_FLOW.md` for details).
 
 ## 3. Directory Materialized Paths
@@ -45,4 +45,4 @@ This is heavily optimized by the `idx_directories_path` index.
 
 ## 4. Updates
 
-When a note is updated (`PUT /notes/{id}`), a `note.updated` event is emitted. The RAG listener catches this and submits the new text to `rag_service.ingest()` using the same `note_id` as the `job_id`. Currently, this acts as a re-ingestion, maintaining the system's "append-only" philosophy for recall links, but allowing the source chunks to reflect the updated text.
+When a note is updated (`PUT /notes/{id}`), a `note.updated` event is emitted. The RAG listener catches this and submits the new text using the same `note_id` as the `job_id`. If the text changed, stale raw inputs, source chunks, vectors, checkpoints, and job rows for that note are removed before the new durable job is queued.

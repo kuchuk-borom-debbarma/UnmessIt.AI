@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import axios from 'axios'
-import { Search, Loader, Bot, FileText, X, ChevronDown, ChevronRight } from 'lucide-react'
+import { Search, Loader, Bot, FileText, X } from 'lucide-react'
 
 // A small component to cleanly truncate long arrays
 const TruncatedList = ({ items, maxStart = 3, maxEnd = 2, renderItem }) => {

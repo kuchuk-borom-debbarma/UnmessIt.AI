@@ -140,62 +140,31 @@ async def test_query_uses_source_search_and_recall_expansion(monkeypatch):
     chunk_1 = {**_source_chunk("chunk-1", "Grisha inherited the Attack Titan. Unrelated training details continue for a while."), "summary": "Grisha Titan evidence"}
     chunk_2 = {**_source_chunk("chunk-2", "Eren later used inherited Titan powers. Unrelated tail should not be sent."), "summary": "Eren Titan evidence"}
 
-    monkeypatch.setattr(source_chunk_vectors, "search", lambda query, user_id, top_k=8: [{"object_id": "chunk-1", "object_type": "source_chunk"}])
-    monkeypatch.setattr(recall_key_vectors, "search", lambda query, user_id, top_k=8: [])
-    monkeypatch.setattr(source_chunks, "get_by_ids", lambda ids, user_id: [chunk for chunk in [chunk_1, chunk_2] if chunk["id"] in ids])
-    monkeypatch.setattr(source_chunks, "search", lambda query, user_id, limit=8: [])
-    class FakeAgent:
-        async def ainvoke(self, args: dict):
-            # args["messages"] has the human message
-            # simulate calling tools
-            # but wait, tools are defined inside run(), so we can't easily access them from here.
-            # but we can just raise StopAgentException to simulate submit_final_answer!
-            from src.services.rag.private.chains.query.agent import StopAgentException
-            raise StopAgentException({
-                "answer": "Grisha's power later connects to Eren.",
-                "citations": ["chunk-2"],
-                "directories": [],
-                "notes": []
-            })
-            
-    def fake_create_react_agent(*args, **kwargs):
-        # We need to simulate search_knowledge_base side effects (gathering chunks).
-        # We can just call it here? No, it's async and we are synchronous here.
-        # But wait, `run` expects gathered_chunks to be populated. If we don't call the tool, it won't be.
-        # The easiest way is to mock evidence_chain.run on the instance instead!
-        return FakeAgent()
-        
-    monkeypatch.setattr("src.services.rag.private.chains.query.agent.create_react_agent", fake_create_react_agent)
-    
-    # We also need to inject chunk-1 and chunk-2 into the output. 
-    # But since we aren't calling search_knowledge_base, gathered_chunks will be empty.
-    # Let's mock QueryAgentChain.run directly for this test! Wait, the test wants to verify RagServiceImpl.
-    # We can mock QueryAgentChain entirely.
-    
-    class FakeQueryAgentChain:
+    class FakeQueryEvidenceChain:
+        def __init__(self, json_client) -> None:
+            pass
+
         async def run(self, query: str, user_id: str, reporter=None):
-            return (
-                {
-                    "answer": "Grisha's power later connects to Eren.",
-                    "citations": ["chunk-2"],
-                    "directories": [],
-                    "notes": []
-                },
-                [chunk_1, chunk_2],
-                {"mode": "agentic", "tool_traces": [{"sub_query_traces": [{"recall_key_count": 1}], "context_chars_saved": 10}]}
-            )
-            
-    monkeypatch.setattr("src.services.rag.private.rag_service_impl.QueryAgentChain", lambda json_client: FakeQueryAgentChain())
+            return [chunk_1, chunk_2], {"mode": "source_chunks_with_recall_expansion", "sub_query_traces": [{"recall_key_count": 1}], "context_chars_saved": 10}
+
+    class FakeQueryAnswerChain:
+        def __init__(self, json_client) -> None:
+            pass
+
+        async def run(self, query: str, chunks: list[dict], user_id: str):
+            return {"answer": "Grisha's power later connects to Eren.", "citation_ids": ["chunk-2"]}
+
+    monkeypatch.setattr("src.services.rag.private.rag_service_impl.QueryEvidenceChain", FakeQueryEvidenceChain)
+    monkeypatch.setattr("src.services.rag.private.rag_service_impl.QueryAnswerChain", FakeQueryAnswerChain)
 
     result = await RagServiceImpl(FakeJson()).query("Grisha to Eren", user_id="user-1")
 
     assert result["answer"] == "Grisha's power later connects to Eren."
     assert [chunk["id"] for chunk in result["source_chunks"]] == ["chunk-1", "chunk-2"]
     assert result["citations"][0]["source_chunk_id"] == "chunk-2"
-    # Agent wrapper nests traces
-    sub_trace = result["retrieval_trace"]["tool_traces"][0]["sub_query_traces"][0]
+    sub_trace = result["retrieval_trace"]["sub_query_traces"][0]
     assert sub_trace["recall_key_count"] == 1
-    assert result["retrieval_trace"]["tool_traces"][0]["context_chars_saved"] > 0
+    assert result["retrieval_trace"]["context_chars_saved"] > 0
     assert result["source_chunks"][1]["text"] == chunk_2["text"]
 
 
@@ -450,7 +419,7 @@ def test_recall_repository_reused_key_keeps_summary_when_new_summary_empty(monke
 def test_dev_wipe_clears_durability_sqlite_lookup_and_vectors(monkeypatch):
     conn = _patch_memory_db(monkeypatch)
     monkeypatch.setattr(dev, "get_connection", lambda: conn)
-    monkeypatch.setattr(source_chunk_vectors, "reset", lambda: conn.execute("CREATE TABLE IF NOT EXISTS vector_reset_called (ok INTEGER)"))
+    monkeypatch.setattr(source_chunk_vectors, "reset", lambda user_id: conn.execute("CREATE TABLE IF NOT EXISTS vector_reset_called (ok INTEGER)"))
     conn.execute("INSERT INTO raw_inputs (id, job_id, content, user_id) VALUES ('raw-1', 'job-1', 'text', 'user-1')")
     conn.execute("INSERT INTO ingest_jobs (id, content_hash, raw_input_id, status, stage) VALUES ('job-1', 'hash-1', 'raw-1', 'queued', 'raw_input')")
     conn.execute("INSERT INTO ingest_checkpoints (job_id, stage, unit_key, status) VALUES ('job-1', 'raw_input', 'raw_input:raw-1', 'complete')")
@@ -488,7 +457,7 @@ async def test_durable_submit_reuses_same_text_job(monkeypatch):
 async def test_durable_submit_requeues_aborted_same_text_job(monkeypatch):
     _patch_memory_db(monkeypatch)
 
-    content_hash = hashlib.sha256("same text".encode("utf-8")).hexdigest()
+    content_hash = hashlib.sha256("user-1\0same text".encode("utf-8")).hexdigest()
     raw_id = raw_inputs.save_or_reuse("job-1", "same text", "user-1", content_hash)
     durability_repo.create_or_reuse_job("job-1", content_hash, raw_id)
     durability_repo.abort("job-1", "raw input missing")

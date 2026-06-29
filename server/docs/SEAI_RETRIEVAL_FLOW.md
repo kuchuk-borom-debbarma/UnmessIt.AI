@@ -1,34 +1,27 @@
 # SEAI Retrieval Flow
 
-Retrieval runs as an **Agentic AI** (`QueryAgentChain`) driven by a LangGraph ReAct tool-calling loop. This allows the system to answer both structural questions (about notes and directories) and semantic questions (RAG).
+Retrieval runs as a source-backed semantic pipeline. It selects source chunks, expands through recall links, packs focused snippets, and generates an answer from source chunks only.
 
 ```txt
 query
-→ Agentic Tool Loop: LLM decides which tools to call
-    ├─ list_directories (lists folder structure)
-    ├─ list_notes_in_directory (lists notes metadata)
-    ├─ read_note (fetches raw text of a specific note)
-    └─ search_knowledge_base (runs the RAG Semantic Pipeline)
-        → breakdown: LLM decomposes query into ≤4 focused sub-queries
-        → search (per sub-query):
-            → source chunk vector search
-            → source chunk lexical search
-            → recall key search
-            → linked source chunk expansion
-        → merge + dedup all sub-query evidence
-        → re-rank merged chunks against original query
-        → context-pack focused snippets
-→ Agent gathers evidence from tools
-→ Agent calls submit_final_answer to terminate the loop and output structured JSON
+→ breakdown: LLM decomposes query into ≤4 focused sub-queries
+→ search (per sub-query):
+    → source chunk vector search
+    → source chunk lexical search
+    → recall key search
+    → linked source chunk expansion
+→ merge + dedup all sub-query evidence
+→ re-rank merged chunks against original query
+→ context-pack focused snippets
+→ answer from selected source chunks
 ```
 
-The semantic search (`QueryEvidenceChain`) is now a tool available to the agent. Its breakdown step is a no-op pass-through for simple queries, only fanning out when the LLM detects a multi-hop or compound question.
+The breakdown step is a no-op pass-through for simple queries, only fanning out when the LLM detects a multi-hop or compound question.
 
 Context engineering: instead of sending whole chunk text to the answer model, each chunk is reduced to its summary plus the most query-relevant passages (≤3 snippets × ≤420 chars each). This keeps token usage low and protects local model context windows.
 
 ## Rules
 
-- The `QueryAgentChain` uses a ReAct loop but forces a clean exit via a `StopAgentException` inside the `submit_final_answer` tool. This preserves structured output without serialization loss.
 - Source chunks are the only citable evidence for semantic facts.
 - Recall keys and recall links are navigation hints, not factual authority.
 - The semantic search pipeline caps evidence before returning it to the agent (`MAX_EVIDENCE_CHUNKS = 12` after merge).
@@ -47,18 +40,13 @@ Context engineering: instead of sending whole chunk text to the answer model, ea
   "notes": [],
   "source_chunks": [],
   "retrieval_trace": {
-    "mode": "agentic",
+    "mode": "source_chunks_with_recall_expansion",
     "query": "...",
-    "tool_traces": [
-      {
-        "mode": "source_chunks_with_recall_expansion",
-        "sub_queries": ["original", "sub-query 1"],
-        "sub_query_count": 2,
-        "sub_query_traces": [{"sub_query": "...", "recall_key_count": 0}],
-        "ranked_source_chunk_ids": [],
-        "context_chars_saved": 0
-      }
-    ]
+    "sub_queries": ["original", "sub-query 1"],
+    "sub_query_count": 2,
+    "sub_query_traces": [{"sub_query": "...", "recall_key_count": 0}],
+    "ranked_source_chunk_ids": [],
+    "context_chars_saved": 0
   }
 }
 ```
@@ -67,7 +55,7 @@ Context engineering: instead of sending whole chunk text to the answer model, ea
 
 ## Current Limits
 
-This agent currently uses simple zero-shot tool usage. It is not a graph traversal engine, or temporal ordering engine.
+Retrieval is not a graph traversal engine or temporal ordering engine.
 
 The next temporal step should be:
 
@@ -79,7 +67,7 @@ detect timeline-style query
 
 ## Future Improvements (Cross-Domain "Smart" Queries)
 
-Currently, the structural tools (`list_directories`, `list_notes_in_directory`) and the semantic tool (`search_knowledge_base`) are isolated. The agent cannot answer questions like *"In which folders are my love letters?"* because it requires intersecting semantic search with structural metadata.
+Currently, structural note/directory APIs and semantic retrieval are isolated. The system cannot answer questions like *"In which folders are my love letters?"* because it requires intersecting semantic search with structural metadata.
 
 To support these "smart" cross-domain questions in the future:
 1. **Metadata-Aware Vectors:** Inject `directory_id` and tags into ChromaDB vectors during ingestion. This will allow the agent to issue metadata-filtered semantic searches (e.g., `where={"directory_id": "uuid"}`).

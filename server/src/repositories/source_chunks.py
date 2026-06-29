@@ -103,18 +103,36 @@ def search(query: str, user_id: str, limit: int = 8) -> list[dict[str, Any]]:
     return [_from_row(row) for row in rows]
 
 
-def list_with_raw_inputs() -> dict[str, Any]:
+def list_with_raw_inputs(user_id: str | None = None) -> dict[str, Any]:
     """Dev view: raw inputs with nested source chunks."""
     conn = get_connection()
-    raw_inputs = [dict(row) for row in conn.execute("SELECT id, job_id, content, created_at FROM raw_inputs WHERE deleted_at IS NULL ORDER BY created_at DESC")]
+    raw_where = "WHERE deleted_at IS NULL"
+    raw_params: list[Any] = []
+    if user_id:
+        raw_where += " AND user_id = ?"
+        raw_params.append(user_id)
+    raw_inputs = [
+        dict(row)
+        for row in conn.execute(
+            f"SELECT id, job_id, content, user_id, created_at FROM raw_inputs {raw_where} ORDER BY created_at DESC",
+            raw_params,
+        )
+    ]
+    chunk_where = ""
+    chunk_params: list[Any] = []
+    if user_id:
+        chunk_where = "WHERE user_id = ?"
+        chunk_params.append(user_id)
     chunks = [
         _from_row(row)
         for row in conn.execute(
-            """
+            f"""
             SELECT id, raw_input_id, text, summary, spans, source_time, user_id, metadata, created_at
             FROM source_chunks
+            {chunk_where}
             ORDER BY created_at ASC
-            """
+            """,
+            chunk_params,
         )
     ]
     chunks_by_raw: dict[str, list[dict[str, Any]]] = {}

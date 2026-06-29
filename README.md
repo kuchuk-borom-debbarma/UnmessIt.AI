@@ -1,48 +1,131 @@
 # UnmessIt.AI
 
-UnmessIt.AI is an AI knowledge base for information that keeps growing.
+UnmessIt.AI turns your notes into an AI-searchable knowledge base.
 
-Add notes, documents, research, logs, plans, decisions, story material, or messy thoughts over time. Later, ask AI questions and get answers grounded in what you saved.
-
-## Why It Exists
-
-Most knowledge tools treat information like a static folder of files. Real work is messier: ideas change, new details arrive, decisions evolve, and related notes may be spread across many inputs.
-
-UnmessIt.AI is built for that kind of living knowledge base.
+Save messy thoughts, research, decisions, logs, plans, or project notes. The app indexes them, connects related ideas, and lets you ask questions with answers grounded in the sources you saved.
 
 ## What You Can Do
 
-- Save text whenever you want.
-- Ask questions about saved information.
-- Get answers with source-backed citations.
-- Inspect the original source behind an answer.
-- Browse saved memory, related topics, and ingestion jobs.
-- Use local or hosted AI model providers.
+- Write and organize notes.
+- Put notes into directories and tags.
+- Configure your AI model from the app.
+- Ask AI questions about your saved knowledge.
+- See citations and source chunks behind each answer.
+- Check indexing status so you know when new notes are ready.
+- Inspect the memory the app built from your notes.
 
-## App Screens
+## Fast Start
 
-- **Ingest Journal**: paste text into the knowledge base.
-- **Memory Explorer**: browse saved sources and related memory links.
-- **Ask AI**: ask questions and inspect citations.
-- **Database**: clear local development data when needed.
+The easiest way to run UnmessIt.AI is Docker.
 
-## Source-Grounded Answers
+```bash
+docker compose up --build
+```
 
-The app keeps your original input as the source of truth. AI-generated summaries and links help find relevant information, but answers are grounded in saved source text.
+Open:
 
-That means you can inspect where an answer came from instead of trusting a disconnected response.
+```txt
+http://localhost:5173
+```
 
-## Model Providers
+Then:
 
-UnmessIt.AI can work with local or hosted model endpoints. Provider settings are currently configured through environment variables.
+1. Create an account.
+2. Open **Settings** and add your AI model preset.
+3. Create a note.
+4. Wait for indexing to finish.
+5. Ask AI a question.
 
-User-facing provider configuration is planned for a future version.
+That is the main flow.
 
-## Project Status
+## Configure AI
 
-This is an active early-stage project. The current version focuses on reliable ingestion, source-backed retrieval, and inspection tools.
+AI settings live inside the app.
 
-For engineering details, see:
+Go to **Settings** and create a preset with:
 
-- `current-state.md`
-- `server/docs/`
+- provider
+- text model
+- embedding model
+- provider URL
+- API key
+- chunk and retry settings
+
+Each user can have their own presets. Server environment files are only for server runtime settings like auth secret and CORS.
+
+## Using The App
+
+**Notes**
+Write the information you want the AI to remember. Add tags and directories when it helps.
+
+**Ask AI**
+Ask a question in natural language. The answer includes source-backed evidence so you can check where it came from.
+
+**Memory**
+Browse indexed source text, chunks, and recall keys.
+
+**Indexing**
+See whether notes are queued, running, finished, or failed.
+
+**Settings**
+Manage AI presets for your account.
+
+## Stop Or Reset
+
+Stop Docker:
+
+```bash
+docker compose down
+```
+
+Remove Docker data:
+
+```bash
+docker compose down -v
+```
+
+## Manual Setup
+
+Use this if you are developing the project without Docker.
+
+Backend:
+
+```bash
+cd server
+cp .env.example .env
+uv sync
+uv run uvicorn src.main:app --host 127.0.0.1 --port 8000
+```
+
+Frontend:
+
+```bash
+cd web
+npm install
+npm run dev -- --host 127.0.0.1
+```
+
+Open:
+
+```txt
+http://127.0.0.1:5173
+```
+
+## Developer Notes
+
+Main folders:
+
+```txt
+server/   backend API, auth, notes, indexing, retrieval
+web/      main React frontend
+web-dev/  old development UI kept for reference
+```
+
+Useful checks:
+
+```bash
+cd server && uv run pytest
+cd web && npm run build
+```
+
+More technical docs live in `server/docs/`.

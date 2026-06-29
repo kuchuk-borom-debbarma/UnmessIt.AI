@@ -31,10 +31,24 @@ class NotesService:
         
         return note_id
 
-    async def update_note(self, note_id: str, text: str, user_id: str, directory_id: str | None = None) -> bool:
+    async def update_note(
+        self,
+        note_id: str,
+        text: str,
+        user_id: str,
+        directory_id: str | None = None,
+        tag_names: list[str] | None = None,
+    ) -> bool:
         """Update a note and publish event for ingestion."""
         success = notes.update(note_id, text, user_id, directory_id)
         if success:
+            if tag_names is not None:
+                for tag in tags.get_for_note(note_id):
+                    tags.remove_from_note(note_id, tag["id"])
+                for name in tag_names:
+                    tag = tags.get_by_name(name, user_id)
+                    tag_id = tag["id"] if tag else tags.create(name, user_id)
+                    tags.add_to_note(note_id, tag_id)
             self.event_bus.publish("note.updated", {
                 "note_id": note_id,
                 "text": text,

@@ -72,9 +72,21 @@ def get_by_hash(content_hash: str) -> IngestJob | None:
     return _job(row) if row else None
 
 
-def list_jobs() -> list[IngestJob]:
+def list_jobs(user_id: str | None = None) -> list[IngestJob]:
     """Return jobs newest first for dev inspection."""
-    rows = get_connection().execute("SELECT * FROM ingest_jobs ORDER BY created_at DESC").fetchall()
+    if user_id:
+        rows = get_connection().execute(
+            """
+            SELECT j.*
+            FROM ingest_jobs j
+            JOIN raw_inputs r ON r.id = j.raw_input_id
+            WHERE r.user_id = ?
+            ORDER BY j.created_at DESC
+            """,
+            (user_id,),
+        ).fetchall()
+    else:
+        rows = get_connection().execute("SELECT * FROM ingest_jobs ORDER BY created_at DESC").fetchall()
     return [_job(row) for row in rows]
 
 

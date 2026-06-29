@@ -1,28 +1,27 @@
 # UnmessIt.AI Web
 
-React/Vite frontend for the UnmessIt.AI memory app.
+Beta frontend for UnmessIt.AI.
 
-## Screens
+```bash
+npm install
+npm run dev -- --host 127.0.0.1
+```
 
-- **Ingest Journal** posts text to `POST /ingest/` and shows the queued durable job id.
-- **Memory Explorer** reads `/dev/seai`, `/dev/recall`, and `/dev/ingest_jobs` to inspect saved source chunks, recall links, and job state.
-- **Ask AI** posts to `POST /api/retrieval/query` and displays the answer, citations, full source chunks, and retrieval trace.
-- **Database** calls `DELETE /dev/facts` to wipe local memory, durability rows, lookup indexes, and vectors.
-
-## Backend Assumption
-
-The UI currently points at:
+Default backend:
 
 ```txt
 http://localhost:8000
 ```
 
-Run the FastAPI server before using the UI.
-
-## Commands
+Override with:
 
 ```bash
-npm run dev
-npm run build
+VITE_API_BASE_URL=http://127.0.0.1:8000 npm run dev -- --host 127.0.0.1
+```
+
+Checks:
+
+```bash
 npm run lint
+npm run build
 ```

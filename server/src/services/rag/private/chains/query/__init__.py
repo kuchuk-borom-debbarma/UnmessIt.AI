@@ -99,7 +99,7 @@ class QueryAnswerChain:
 
 def build_query_result(query: str, chunks: list[dict[str, Any]], answer: dict[str, Any], trace: dict[str, Any]) -> dict[str, Any]:
     """Build the route response shape expected by the UI."""
-    citation_ids = answer.get("citations") or [chunk["id"] for chunk in chunks[:3]]
+    citation_ids = answer.get("citation_ids") or answer.get("citations") or [chunk["id"] for chunk in chunks[:3]]
     cited_chunks = [chunk for chunk in chunks if chunk["id"] in set(citation_ids)]
     return {
         "answer": answer["answer"],

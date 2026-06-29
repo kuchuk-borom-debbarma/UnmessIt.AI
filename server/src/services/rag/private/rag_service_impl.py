@@ -3,8 +3,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from src.services.rag.models import IngestResult, QueryResult, ProgressReporter, NullProgressReporter
-from src.services.rag.private.chains.query import build_query_result
-from src.services.rag.private.chains.query.agent import QueryAgentChain
+from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, build_query_result
 from src.services.rag.private.pipeline.ingest import get_durable_ingest
 
 
@@ -23,7 +22,8 @@ class RagServiceImpl:
 
     def __init__(self, json_client) -> None:
         """Create the fixed chains used by every ingest call."""
-        self.query_agent = QueryAgentChain(json_client)
+        self.query_evidence = QueryEvidenceChain(json_client)
+        self.query_answer = QueryAnswerChain(json_client)
 
     async def resume_pending_jobs(self) -> None:
         """Resume durable jobs after app startup."""
@@ -33,9 +33,9 @@ class RagServiceImpl:
         """Resume one durable job from the dev route."""
         return await get_durable_ingest().resume_job(job_id)
 
-    def list_ingest_jobs(self) -> list[dict]:
+    def list_ingest_jobs(self, user_id: str | None = None) -> list[dict]:
         """List durable jobs for the dev route (sync: read-only, cheap)."""
-        return get_durable_ingest().list_jobs()
+        return get_durable_ingest().list_jobs(user_id)
 
     def delete_ingest_job(self, job_id: str) -> bool:
         """Delete one durable job."""
@@ -51,7 +51,8 @@ class RagServiceImpl:
             answer = {"answer": "Ask a question to search your source chunks.", "citations": [], "directories": [], "notes": []}
             return build_query_result(query, [], answer, trace)
             
-        await reporter.report("Running query agent...")
-        answer, chunks, trace = await self.query_agent.run(query, user_id, reporter)
+        await reporter.report("Searching source-backed evidence...")
+        chunks, trace = await self.query_evidence.run(query, user_id, reporter)
+        answer = await self.query_answer.run(query, chunks, user_id)
         
         return build_query_result(query, chunks, answer, trace)

@@ -239,12 +239,14 @@ def save_index(index: RecallIndex, user_id: str) -> int:
     return saved_links
 
 
-def get_view() -> dict[str, Any]:
+def get_view(user_id: str | None = None) -> dict[str, Any]:
     """Dev view: recall keys with their linked source chunk evidence."""
     conn = get_connection()
+    key_where = "WHERE k.user_id = ?" if user_id else ""
+    key_params: list[Any] = [user_id] if user_id else []
     keys = []
     for row in conn.execute(
-        """
+        f"""
         SELECT
             k.id, k.name, k.kind, k.kind_label, k.aliases, k.summary, k.metadata,
             k.created_at, k.updated_at, k.user_id,
@@ -252,9 +254,11 @@ def get_view() -> dict[str, Any]:
             MAX(COALESCE(l.event_time, l.created_at)) AS latest_link_time
         FROM recall_keys k
         LEFT JOIN recall_links l ON l.recall_key_id = k.id
+        {key_where}
         GROUP BY k.id
         ORDER BY latest_link_time DESC, k.updated_at DESC
-        """
+        """,
+        key_params,
     ):
         key = _key_from_row(row)
         key["link_count"] = row["link_count"]
@@ -263,8 +267,10 @@ def get_view() -> dict[str, Any]:
         keys.append(key)
 
     key_by_id = {key["id"]: key for key in keys}
+    link_where = "WHERE l.user_id = ?" if user_id else ""
+    link_params: list[Any] = [user_id] if user_id else []
     for row in conn.execute(
-        """
+        f"""
         SELECT
             l.id, l.recall_key_id, l.source_chunk_id, l.relation, l.relation_label,
             l.confidence, l.reason, l.event_time, l.time_label, l.metadata, l.created_at,
@@ -273,8 +279,10 @@ def get_view() -> dict[str, Any]:
             c.metadata AS source_chunk_metadata
         FROM recall_links l
         JOIN source_chunks c ON c.id = l.source_chunk_id
+        {link_where}
         ORDER BY COALESCE(l.event_time, l.created_at) DESC
-        """
+        """,
+        link_params,
     ):
         link = dict(row)
         link["metadata"] = _json(link.get("metadata"), {})

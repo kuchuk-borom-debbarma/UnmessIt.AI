@@ -87,7 +87,7 @@ def _get_chat_llm(user_id: str):
         llm = ChatOpenAI(
             model=settings.llm_model,
             base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key or "dummy-key-for-local-llm",
+            api_key=settings.llm_api_key or "dummy-key",
             temperature=settings.llm_temperature,
             max_tokens=settings.llm_max_tokens,
             model_kwargs={"response_format": _json_response_format(settings.llm_base_url or "")},

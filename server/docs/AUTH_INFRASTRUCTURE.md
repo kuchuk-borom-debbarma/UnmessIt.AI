@@ -5,9 +5,10 @@ Per `@server/docs/rules/codebase_rules.md`, this architecture follows strict pro
 
 ## The State Machine API Pattern
 
-The `AuthService` interface exposes only two surface methods:
+The `AuthService` interface exposes the auth flow methods plus token verification:
 - `sign_up(payload: dict) -> dict`
 - `sign_in(payload: dict) -> dict`
+- `verify_token(token: str) -> dict | None`
 
 Rather than exposing distinct methods for `verify_otp`, `resend_link`, or `check_status`, all authentication flows are modelled as state machines handled internally by the implementation. The client iteratively posts to the same route, passing whatever state (like an `otp` code) it has. 
 
@@ -42,4 +43,4 @@ Currently, the `ConsoleNotificationService` listens to this event and simply log
 ## Stateless Sessions (JWT)
 
 We use `PyJWT` for fully stateless authentication. There is no `sessions` table in the database.
-When a user authenticates, the server signs a JWT payload (containing `sub` and `exp`) with an HMAC secret. The client stores this token and passes it in the `Authorization` header for subsequent requests.
+When a user authenticates, the server signs a JWT payload (containing `sub` and `exp`) with an HMAC secret. The client stores this token and passes it in the `Authorization` header for subsequent requests. `GET /api/auth/me` validates the token, and `POST /api/auth/logout` is a no-op acknowledgement because logout is client-side token removal.

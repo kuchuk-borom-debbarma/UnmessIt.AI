@@ -1,14 +1,14 @@
 import time
 import uuid
+import os
 import jwt
 import bcrypt
 import logging
 from typing import Any
 from src.infra.sqlite import get_connection
 
-# A simple secret key for local development JWTs.
-# In production, this should be an environment variable.
-JWT_SECRET = "local_secret_key"
+# ponytail: env secret for beta deploy; fallback only keeps local first-run working.
+JWT_SECRET = os.getenv("JWT_SECRET", "local_beta_secret_change_me_32_bytes")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_SECONDS = 86400 * 30  # 30 days
 
@@ -69,3 +69,17 @@ class LocalAuthService:
             "exp": int(time.time()) + JWT_EXPIRATION_SECONDS
         }
         return jwt.encode(token_payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+    def verify_token(self, token: str) -> dict[str, Any] | None:
+        try:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        except jwt.PyJWTError:
+            return None
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+        row = get_connection().execute(
+            "SELECT id, identifier, created_at FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        return dict(row) if row else None

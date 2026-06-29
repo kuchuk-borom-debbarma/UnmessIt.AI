@@ -61,11 +61,26 @@ def get(input_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def list_by_job(job_id: str, user_id: str) -> list[dict]:
+    """Return raw inputs created by one user-owned ingest job."""
+    rows = get_connection().execute(
+        "SELECT id, job_id, content_hash, content, user_id, created_at, deleted_at FROM raw_inputs WHERE job_id = ? AND user_id = ?",
+        (job_id, user_id),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def list_active() -> list[dict]:
     """Return all active raw inputs."""
     conn = get_connection()
     rows = conn.execute("SELECT id, job_id, content_hash, content, user_id, created_at FROM raw_inputs WHERE deleted_at IS NULL ORDER BY created_at DESC").fetchall()
     return [dict(r) for r in rows]
+
+
+def list_user_ids() -> list[str]:
+    """Return users that currently have raw inputs."""
+    rows = get_connection().execute("SELECT DISTINCT user_id FROM raw_inputs WHERE user_id IS NOT NULL").fetchall()
+    return [row["user_id"] for row in rows]
 
 
 def list_trash() -> list[dict]:

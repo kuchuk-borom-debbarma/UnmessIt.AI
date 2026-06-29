@@ -2,7 +2,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from src.routes.dependencies import get_current_user_id
+from src.routes.auth_utils import get_current_user_id
 from src.repositories import config_presets
 
 router = APIRouter(prefix="/configs", tags=["Config"])

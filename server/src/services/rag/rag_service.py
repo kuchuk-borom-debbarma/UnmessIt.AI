@@ -20,7 +20,7 @@ class RagService(Protocol):
     async def resume_ingest_job(self, job_id: str) -> dict | None:
         ...
 
-    def list_ingest_jobs(self) -> list[dict]:
+    def list_ingest_jobs(self, user_id: str | None = None) -> list[dict]:
         ...
 
     def delete_ingest_job(self, job_id: str) -> bool:
