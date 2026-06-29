@@ -5,46 +5,46 @@ from uuid import uuid4
 from src.infra.sqlite import get_connection
 
 
-def save(job_id: str, content: str, content_hash: str | None = None) -> str:
+def save(job_id: str, content: str, user_id: str, content_hash: str | None = None) -> str:
     """Persist the exact user input before any LLM-derived work starts."""
     raw_input_id = str(uuid4())
     conn = get_connection()
     _ensure_content_hash_column(conn)
     conn.execute(
-        "INSERT INTO raw_inputs (id, job_id, content_hash, content) VALUES (?, ?, ?, ?)",
-        (raw_input_id, job_id, content_hash, content),
+        "INSERT INTO raw_inputs (id, job_id, content_hash, content, user_id) VALUES (?, ?, ?, ?, ?)",
+        (raw_input_id, job_id, content_hash, content, user_id),
     )
     conn.commit()
     return raw_input_id
 
 
-def save_or_reuse(job_id: str, content: str, content_hash: str) -> str:
+def save_or_reuse(job_id: str, content: str, user_id: str, content_hash: str) -> str:
     """Return the existing exact raw input or save it once.
 
     Content hash reuse is safe because it is computed after preprocessing, so
     the same user text resumes the same durable source record.
     """
-    existing = find_by_hash(content_hash, content)
+    existing = find_by_hash_and_user(content_hash, user_id, content)
     if existing:
         return existing["id"]
-    return save(job_id, content, content_hash)
+    return save(job_id, content, user_id, content_hash)
 
 
-def find_by_hash(content_hash: str, content: str | None = None) -> dict | None:
-    """Find a raw input by content hash, with lazy backfill for old rows."""
+def find_by_hash_and_user(content_hash: str, user_id: str, content: str | None = None) -> dict | None:
+    """Find a raw input by content hash and user_id, with lazy backfill for old rows."""
     conn = get_connection()
     _ensure_content_hash_column(conn)
     row = conn.execute(
-        "SELECT id, job_id, content_hash, content, created_at FROM raw_inputs WHERE content_hash = ? ORDER BY created_at ASC LIMIT 1",
-        (content_hash,),
+        "SELECT id, job_id, content_hash, content, user_id, created_at FROM raw_inputs WHERE content_hash = ? AND user_id = ? ORDER BY created_at ASC LIMIT 1",
+        (content_hash, user_id),
     ).fetchone()
     if row:
         return dict(row)
     if content is None:
         return None
     old_row = conn.execute(
-        "SELECT id, job_id, content_hash, content, created_at FROM raw_inputs WHERE content = ? ORDER BY created_at ASC LIMIT 1",
-        (content,),
+        "SELECT id, job_id, content_hash, content, user_id, created_at FROM raw_inputs WHERE content = ? AND user_id = ? ORDER BY created_at ASC LIMIT 1",
+        (content, user_id),
     ).fetchone()
     if not old_row:
         return None
@@ -57,21 +57,21 @@ def get(input_id: str) -> dict | None:
     """Return one raw input for dev inspection."""
     conn = get_connection()
     _ensure_content_hash_column(conn)
-    row = conn.execute("SELECT id, job_id, content_hash, content, created_at, deleted_at FROM raw_inputs WHERE id = ?", (input_id,)).fetchone()
+    row = conn.execute("SELECT id, job_id, content_hash, content, user_id, created_at, deleted_at FROM raw_inputs WHERE id = ?", (input_id,)).fetchone()
     return dict(row) if row else None
 
 
 def list_active() -> list[dict]:
     """Return all active raw inputs."""
     conn = get_connection()
-    rows = conn.execute("SELECT id, job_id, content_hash, content, created_at FROM raw_inputs WHERE deleted_at IS NULL ORDER BY created_at DESC").fetchall()
+    rows = conn.execute("SELECT id, job_id, content_hash, content, user_id, created_at FROM raw_inputs WHERE deleted_at IS NULL ORDER BY created_at DESC").fetchall()
     return [dict(r) for r in rows]
 
 
 def list_trash() -> list[dict]:
     """Return all soft-deleted raw inputs."""
     conn = get_connection()
-    rows = conn.execute("SELECT id, job_id, content_hash, content, created_at, deleted_at FROM raw_inputs WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC").fetchall()
+    rows = conn.execute("SELECT id, job_id, content_hash, content, user_id, created_at, deleted_at FROM raw_inputs WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC").fetchall()
     return [dict(r) for r in rows]
 
 

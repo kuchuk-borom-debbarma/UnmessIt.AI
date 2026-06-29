@@ -24,12 +24,13 @@ class QueryEvidenceChain:
         self.json_client = json_client
         self._graph = build_retrieval_graph(json_client)
 
-    async def run(self, query: str, reporter: ProgressReporter | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    async def run(self, query: str, user_id: str, reporter: ProgressReporter | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Return context-packed source chunks plus a trace of how they were found."""
         result = await self._graph.ainvoke({
             "query": query,
             "sub_queries": [],
             "extracted_subjects": [],
+            "user_id": user_id,
             "reporter": reporter,
             "chunks": [],
             "trace_parts": [],

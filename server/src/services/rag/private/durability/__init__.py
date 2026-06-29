@@ -24,11 +24,11 @@ class DurableIngest:
         self.runner = DurableIngestRunner(source_windows, source_chunk_drafts, source_chunk_assembler, recall_index)
         self.scheduler = DurableScheduler(self.runner)
 
-    async def submit(self, text: str, requested_job_id: str) -> dict:
+    async def submit(self, text: str, user_id: str, requested_job_id: str) -> dict:
         """Create/reuse a durable job and schedule it in the background."""
         raw_text = self.preprocessor.run(text)
         content_hash = _hash(raw_text)
-        raw_input_id = await asyncio.to_thread(raw_inputs.save_or_reuse, requested_job_id, raw_text, content_hash)
+        raw_input_id = await asyncio.to_thread(raw_inputs.save_or_reuse, requested_job_id, raw_text, user_id, content_hash)
         job = await asyncio.to_thread(repository.create_or_reuse_job, requested_job_id, content_hash, raw_input_id)
         await asyncio.to_thread(repository.set_raw_input, job["id"], raw_input_id)
         response_job = await asyncio.to_thread(repository.get, job["id"]) or {**job, "raw_input_id": raw_input_id}

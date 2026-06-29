@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS ingest_jobs (
     FOREIGN KEY(raw_input_id) REFERENCES raw_inputs(id) ON DELETE SET NULL
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_jobs_content_hash ON ingest_jobs(content_hash);
+
+CREATE INDEX IF NOT EXISTS idx_ingest_jobs_content_hash ON ingest_jobs(content_hash);
 CREATE INDEX IF NOT EXISTS idx_ingest_jobs_status_next_run ON ingest_jobs(status, next_run_at);
 
 CREATE TABLE IF NOT EXISTS ingest_checkpoints (
@@ -62,12 +63,15 @@ CREATE TABLE IF NOT EXISTS source_chunks (
     summary TEXT NOT NULL,
     spans JSON NOT NULL,
     source_time TEXT,
+    user_id TEXT,
     metadata JSON NOT NULL DEFAULT '{}',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(raw_input_id) REFERENCES raw_inputs(id) ON DELETE CASCADE
+    FOREIGN KEY(raw_input_id) REFERENCES raw_inputs(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_source_chunks_raw_input ON source_chunks(raw_input_id);
+
 CREATE INDEX IF NOT EXISTS idx_source_chunks_created_at ON source_chunks(created_at);
 CREATE INDEX IF NOT EXISTS idx_source_chunks_source_time ON source_chunks(source_time);
 
@@ -86,6 +90,7 @@ CREATE TABLE IF NOT EXISTS recall_keys (
 );
 
 CREATE INDEX IF NOT EXISTS idx_recall_keys_name ON recall_keys(name);
+
 CREATE INDEX IF NOT EXISTS idx_recall_keys_updated_at ON recall_keys(updated_at);
 
 CREATE TABLE IF NOT EXISTS recall_key_terms (
@@ -119,14 +124,17 @@ CREATE TABLE IF NOT EXISTS recall_links (
     reason TEXT NOT NULL,
     event_time TEXT,
     time_label TEXT,
+    user_id TEXT,
     metadata JSON NOT NULL DEFAULT '{}',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(recall_key_id) REFERENCES recall_keys(id) ON DELETE CASCADE,
     FOREIGN KEY(source_chunk_id) REFERENCES source_chunks(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
     UNIQUE(recall_key_id, source_chunk_id, relation, relation_label)
 );
 
 CREATE INDEX IF NOT EXISTS idx_recall_links_key ON recall_links(recall_key_id);
+
 CREATE INDEX IF NOT EXISTS idx_recall_links_source_chunk ON recall_links(source_chunk_id);
 CREATE INDEX IF NOT EXISTS idx_recall_links_created_at ON recall_links(created_at);
 CREATE INDEX IF NOT EXISTS idx_recall_links_event_time ON recall_links(event_time);

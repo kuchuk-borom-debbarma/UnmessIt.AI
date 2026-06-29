@@ -21,6 +21,7 @@ def index(chunks: list[SourceChunk]) -> None:
             "object_id": chunk["id"],
             "source_chunk_id": chunk["id"],
             "raw_input_id": chunk["raw_input_id"],
+            "user_id": chunk["user_id"],
             "spans": json.dumps(chunk["spans"], ensure_ascii=False),
         })
     chroma.upsert(ids, texts, metadatas)
@@ -42,9 +43,9 @@ def exists(chunk_id: str) -> bool:
     return vector_id(chunk_id) in chroma.existing_ids([vector_id(chunk_id)])
 
 
-def search(query: str, top_k: int = 8) -> list[dict[str, Any]]:
+def search(query: str, user_id: str, top_k: int = 8) -> list[dict[str, Any]]:
     """Search the rebuildable Chroma source chunk index."""
-    return chroma.search(query, top_k=top_k, where={"object_type": "source_chunk"})
+    return chroma.search(query, top_k=top_k, where={"$and": [{"object_type": "source_chunk"}, {"user_id": user_id}]})
 
 
 def reset() -> None:

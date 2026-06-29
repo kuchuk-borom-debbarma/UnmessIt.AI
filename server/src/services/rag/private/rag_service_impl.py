@@ -42,10 +42,10 @@ class RagServiceImpl:
             self.recall_index,
         )
 
-    async def ingest(self, data: str, job_id: str | None = None) -> IngestResult:
+    async def ingest(self, data: str, user_id: str, job_id: str | None = None) -> IngestResult:
         """Submit durable ingestion and return the durable job id."""
         job_id = job_id or str(uuid4())
-        job = await self.durability.submit(data, job_id)
+        job = await self.durability.submit(data, user_id, job_id)
         return {
             "job_id": job["id"],
             "status": job["status"],
@@ -74,7 +74,7 @@ class RagServiceImpl:
         """Delete one durable job."""
         return self.durability.delete_job(job_id)
 
-    async def query(self, data: str, reporter: ProgressReporter | None = None) -> QueryResult:
+    async def query(self, data: str, user_id: str, reporter: ProgressReporter | None = None) -> QueryResult:
         """Search source chunks, expand through recall links, then answer."""
         reporter = reporter or NullProgressReporter()
         query = " ".join(data.split())
@@ -85,7 +85,7 @@ class RagServiceImpl:
             return build_query_result(query, [], answer, trace)
             
         await reporter.report("Decomposing query...")
-        chunks, trace = await self.query_evidence.run(query, reporter)
+        chunks, trace = await self.query_evidence.run(query, user_id, reporter)
         
         await reporter.report("Generating final answer...")
         answer = await self.query_answer.run(query, chunks)
