@@ -162,7 +162,9 @@ def linked_source_chunk_ids(recall_key_ids: list[str], limit: int = 12) -> list[
                COUNT(DISTINCT l.recall_key_id) AS match_count,
                MIN(l.created_at) AS first_seen
         FROM recall_links l
-        WHERE l.recall_key_id IN ({placeholders})
+        JOIN source_chunks sc ON sc.id = l.source_chunk_id
+        JOIN raw_inputs ri ON ri.id = sc.raw_input_id
+        WHERE l.recall_key_id IN ({placeholders}) AND ri.deleted_at IS NULL
         GROUP BY l.source_chunk_id
         ORDER BY match_count DESC, first_seen ASC
         LIMIT ?

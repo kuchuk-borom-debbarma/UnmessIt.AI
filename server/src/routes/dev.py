@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from src.repositories import dev
+from src.repositories import dev, raw_inputs as raw_inputs_repo, source_chunks, source_chunk_vectors
 from src.services.rag.rag_service import get_rag_service
 
 router = APIRouter(prefix="/dev", tags=["dev"])
@@ -19,8 +19,16 @@ def get_facts() -> dict:
 
 @router.get("/seai")
 def get_seai() -> dict:
-    """Return raw inputs with nested source chunks."""
+    """Return active raw inputs with nested source chunks."""
+    # The list_with_raw_inputs repo method already filters deleted_at IS NULL
     return {"status": "success", **dev.memory_view()}
+
+
+@router.get("/trash")
+def get_trash() -> dict:
+    """Return all soft-deleted raw inputs."""
+    trashed = raw_inputs_repo.list_trash()
+    return {"status": "success", "total_trash": len(trashed), "data": trashed}
 
 
 @router.get("/raw_inputs/{input_id}")
@@ -30,6 +38,45 @@ def get_raw_input(input_id: str) -> dict:
     if not raw_input:
         raise HTTPException(status_code=404, detail="Raw input not found")
     return {"status": "success", "data": raw_input}
+
+
+@router.delete("/raw_inputs/{input_id}")
+def soft_delete_raw_input(input_id: str) -> dict:
+    """Soft delete a raw input and remove its chunks from ChromaDB."""
+    raw_input = raw_inputs_repo.get(input_id)
+    if not raw_input:
+        raise HTTPException(status_code=404, detail="Raw input not found")
+    raw_inputs_repo.soft_delete(input_id)
+    chunks = source_chunks.get_by_raw_input_id(input_id)
+    if chunks:
+        source_chunk_vectors.delete([c["id"] for c in chunks])
+    return {"status": "success"}
+
+
+@router.post("/raw_inputs/{input_id}/restore")
+def restore_raw_input(input_id: str) -> dict:
+    """Restore a soft-deleted raw input and re-index its chunks to ChromaDB."""
+    raw_input = raw_inputs_repo.get(input_id)
+    if not raw_input:
+        raise HTTPException(status_code=404, detail="Raw input not found")
+    raw_inputs_repo.restore(input_id)
+    chunks = source_chunks.get_by_raw_input_id(input_id)
+    if chunks:
+        source_chunk_vectors.index(chunks)
+    return {"status": "success"}
+
+
+@router.delete("/raw_inputs/{input_id}/hard")
+def hard_delete_raw_input(input_id: str) -> dict:
+    """Permanently delete a raw input."""
+    raw_input = raw_inputs_repo.get(input_id)
+    if not raw_input:
+        raise HTTPException(status_code=404, detail="Raw input not found")
+    chunks = source_chunks.get_by_raw_input_id(input_id)
+    if chunks:
+        source_chunk_vectors.delete([c["id"] for c in chunks])
+    raw_inputs_repo.hard_delete(input_id)
+    return {"status": "success"}
 
 
 @router.get("/recall")

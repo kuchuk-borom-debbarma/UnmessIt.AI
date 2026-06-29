@@ -57,8 +57,43 @@ def get(input_id: str) -> dict | None:
     """Return one raw input for dev inspection."""
     conn = get_connection()
     _ensure_content_hash_column(conn)
-    row = conn.execute("SELECT id, job_id, content_hash, content, created_at FROM raw_inputs WHERE id = ?", (input_id,)).fetchone()
+    row = conn.execute("SELECT id, job_id, content_hash, content, created_at, deleted_at FROM raw_inputs WHERE id = ?", (input_id,)).fetchone()
     return dict(row) if row else None
+
+
+def list_active() -> list[dict]:
+    """Return all active raw inputs."""
+    conn = get_connection()
+    rows = conn.execute("SELECT id, job_id, content_hash, content, created_at FROM raw_inputs WHERE deleted_at IS NULL ORDER BY created_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_trash() -> list[dict]:
+    """Return all soft-deleted raw inputs."""
+    conn = get_connection()
+    rows = conn.execute("SELECT id, job_id, content_hash, content, created_at, deleted_at FROM raw_inputs WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def soft_delete(input_id: str) -> None:
+    """Move a raw input to the trash."""
+    conn = get_connection()
+    conn.execute("UPDATE raw_inputs SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?", (input_id,))
+    conn.commit()
+
+
+def restore(input_id: str) -> None:
+    """Restore a raw input from the trash."""
+    conn = get_connection()
+    conn.execute("UPDATE raw_inputs SET deleted_at = NULL WHERE id = ?", (input_id,))
+    conn.commit()
+
+
+def hard_delete(input_id: str) -> None:
+    """Permanently delete a raw input and cascade to chunks/links."""
+    conn = get_connection()
+    conn.execute("DELETE FROM raw_inputs WHERE id = ?", (input_id,))
+    conn.commit()
 
 
 def _ensure_content_hash_column(conn) -> None:

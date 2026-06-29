@@ -26,6 +26,12 @@ def index(chunks: list[SourceChunk]) -> None:
     chroma.upsert(ids, texts, metadatas)
 
 
+def delete(chunk_ids: list[str]) -> None:
+    """Delete source chunk vectors from Chroma."""
+    ids = [vector_id(cid) for cid in chunk_ids if cid]
+    chroma.delete(ids)
+
+
 def vector_id(chunk_id: str) -> str:
     """Return the deterministic Chroma ID for a source chunk."""
     return f"{chunk_id}:source_chunk"

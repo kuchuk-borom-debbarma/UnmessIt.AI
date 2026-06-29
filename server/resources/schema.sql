@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS raw_inputs (
     job_id TEXT NOT NULL,
     content_hash TEXT,
     content TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    deleted_at DATETIME
 );
 
 CREATE TABLE IF NOT EXISTS ingest_jobs (
