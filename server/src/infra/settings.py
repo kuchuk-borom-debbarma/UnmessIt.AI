@@ -43,6 +43,7 @@ def get_settings() -> Settings:
     return Settings()
 
 
+@lru_cache(maxsize=128)
 def get_user_settings(user_id: str) -> Settings:
     """Return the active settings for a specific user, falling back to global defaults."""
     from src.repositories.config_presets import get_active

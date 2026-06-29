@@ -101,6 +101,9 @@ def save(preset: dict[str, Any], user_id: str) -> str:
         ),
     )
     conn.commit()
+    
+    from src.infra.settings import get_user_settings
+    get_user_settings.cache_clear()
     return preset_id
 
 
@@ -114,6 +117,8 @@ def set_active(preset_id: str, user_id: str) -> bool:
     conn.execute("UPDATE user_config_presets SET is_active = 0 WHERE user_id = ?", (user_id,))
     conn.execute("UPDATE user_config_presets SET is_active = 1 WHERE id = ?", (preset_id,))
     conn.commit()
+    from src.infra.settings import get_user_settings
+    get_user_settings.cache_clear()
     return True
 
 
@@ -132,4 +137,6 @@ def delete(preset_id: str, user_id: str) -> bool:
             conn.execute("UPDATE user_config_presets SET is_active = 1 WHERE id = ?", (next_preset["id"],))
             
     conn.commit()
+    from src.infra.settings import get_user_settings
+    get_user_settings.cache_clear()
     return True
