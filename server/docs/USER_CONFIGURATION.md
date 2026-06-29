@@ -17,6 +17,11 @@ Configuration for any given user request is resolved in the following sequence:
 3. **Fallback (`.env`)**
    If a user has no active preset defined in the database (e.g., a newly created user), the system falls back to the global `.env` definitions to ensure immediate usability out-of-the-box.
 
+## Late-Binding Architecture (LangChain & Embeddings)
+Because configuration is dynamic, we do not initialize global LLM or embedding clients on application startup. Instead, we use a **late-binding** approach.
+
+Components like `JsonLLMClient` and `get_embedding_function` are instantiated per-request. By passing `user_id` down the entire call stack (from the API route, through the LangGraph chains, down to the clients), the system fetches the user's specific `Settings` from the LRU cache just milliseconds before making the provider API call.
+
 ## RAG Isolation Strategy
 
 Because API keys and configuration define the context window and the embedding models, we must strictly isolate user data across the entire RAG pipeline:
