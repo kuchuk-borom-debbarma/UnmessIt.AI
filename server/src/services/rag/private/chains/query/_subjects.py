@@ -33,7 +33,18 @@ def subjects_node(json_client) -> callable:
 
 
 async def _extract(json_client, query: str, sub_queries: list[str]) -> list[str]:
-    """Ask the LLM for subjects the query refers to by description; fall back to []."""
+    """Ask the LLM for subjects the query refers to by description; fall back to [].
+
+    CRITICAL INSIGHT:
+    For multi-hop relational queries (e.g., "the man who helped the young officer"),
+    generic lexical extraction only yields nouns ("man", "officer"). FTS search will 
+    fail to match these to the actual entity keys ("Prince Vasili", "Boris").
+    
+    The only way to bridge this gap in a single-pass graph is to explicitly ask the LLM
+    to use its general knowledge to resolve descriptions into specific proper names.
+    If the LLM knows the subject, it returns the exact name, allowing the downstream
+    FTS to perfectly hit the recall keys for those entities.
+    """
     try:
         data = await json_client.async_invoke_json(
             (

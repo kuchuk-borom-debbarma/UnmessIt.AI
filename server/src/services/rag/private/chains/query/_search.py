@@ -114,6 +114,10 @@ async def _recall_keys(query: str, extracted_subjects: list[str]) -> list[dict[s
     
     if has_keys:
         # Direct FTS name lookup for implied subjects (Highest priority)
+        # CRITICAL INSIGHT: If the LLM successfully resolved a description (e.g. "the man") 
+        # into a specific entity name ("Prince Vasili"), we MUST put these keys at the 
+        # front of the list. Otherwise, they get pushed behind generic term matches like 
+        # "Officer" or "Guards" and truncated by the [:8] cap at the end.
         if extracted_subjects:
             subject_keys = await asyncio.to_thread(recall.find_keys_by_names, extracted_subjects)
             all_keys.extend(subject_keys)
