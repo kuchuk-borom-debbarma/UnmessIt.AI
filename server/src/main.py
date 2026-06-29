@@ -9,7 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.infra.logging import setup_logging
 from src.infra.settings import get_settings
 from src.infra.sqlite import init_db
-from src.routes import dev, health, ingest, retrieval
+from src.routes import dev, health
+from src.routes.ingest import router as ingest_router
+from src.routes.retrieval import router as retrieval_router
+from src.routes.auth import router as auth_router
 from src.services.rag.rag_service import get_rag_service
 
 
@@ -25,6 +28,12 @@ def create_app() -> FastAPI:
     setup_logging(settings)
     init_db()
 
+    # Initialize event bus and notification service to register listeners
+    from src.infra.events import get_event_bus
+    from src.services.notification import get_notification_service
+    get_event_bus()
+    get_notification_service()
+
     app = FastAPI(title="UnmessIt.AI Server", lifespan=lifespan)
     # ponytail: local app, open CORS keeps Vite/dev clients simple.
     app.add_middleware(
@@ -35,9 +44,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(health.router)
-    app.include_router(ingest.router)
+    app.include_router(ingest_router)
+    app.include_router(retrieval_router)
+    app.include_router(auth_router)
     app.include_router(dev.router)
-    app.include_router(retrieval.router)
     return app
 
 
