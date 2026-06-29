@@ -49,7 +49,7 @@ def soft_delete_raw_input(input_id: str) -> dict:
     raw_inputs_repo.soft_delete(input_id)
     chunks = source_chunks.get_by_raw_input_id(input_id)
     if chunks:
-        source_chunk_vectors.delete([c["id"] for c in chunks])
+        source_chunk_vectors.delete([c["id"] for c in chunks], raw_input["user_id"])
     return {"status": "success"}
 
 
@@ -74,7 +74,7 @@ def hard_delete_raw_input(input_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Raw input not found")
     chunks = source_chunks.get_by_raw_input_id(input_id)
     if chunks:
-        source_chunk_vectors.delete([c["id"] for c in chunks])
+        source_chunk_vectors.delete([c["id"] for c in chunks], raw_input["user_id"])
     raw_inputs_repo.hard_delete(input_id)
     return {"status": "success"}
 

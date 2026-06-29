@@ -21,8 +21,11 @@ def index(keys: list[dict[str, Any]]) -> None:
             "object_id": key["id"],
             "recall_key_id": key["id"],
             "name": key["name"],
+            "user_id": key["user_id"],
         })
-    chroma.upsert(ids, texts, metadatas)
+    if keys:
+        user_id = keys[0]["user_id"]
+        chroma.upsert(ids, texts, metadatas, user_id)
 
 
 def vector_id(recall_key_id: str) -> str:
@@ -30,14 +33,14 @@ def vector_id(recall_key_id: str) -> str:
     return f"{recall_key_id}:recall_key"
 
 
-def exists(recall_key_id: str) -> bool:
+def exists(recall_key_id: str, user_id: str) -> bool:
     """Check if a recall key vector already exists."""
-    return vector_id(recall_key_id) in chroma.existing_ids([vector_id(recall_key_id)])
+    return vector_id(recall_key_id) in chroma.existing_ids([vector_id(recall_key_id)], user_id)
 
 
-def search(query: str, top_k: int = 20) -> list[dict[str, Any]]:
+def search(query: str, user_id: str, top_k: int = 20) -> list[dict[str, Any]]:
     """Search only recall-key vectors, not source-chunk vectors."""
-    return chroma.search(query, top_k=top_k, where={"object_type": "recall_key"})
+    return chroma.search(query, user_id, top_k=top_k, where={"$and": [{"object_type": "recall_key"}, {"user_id": user_id}]})
 
 
 def _text(key: dict[str, Any]) -> str:

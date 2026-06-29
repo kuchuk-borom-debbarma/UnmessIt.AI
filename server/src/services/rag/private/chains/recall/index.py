@@ -19,6 +19,7 @@ class RecallGraphState(TypedDict, total=False):
     """State shared by the recall indexing subgraph."""
 
     raw_text: str
+    user_id: str
     source_chunks: list[SourceChunk]
     candidates: list[dict[str, Any]]
     draft: dict[str, Any]
@@ -46,10 +47,10 @@ class RecallIndexChain:
         self.normalizer = RecallNormalizerChain()
         self.graph = self._build_graph()
 
-    async def run(self, raw_text: str, source_chunks: list[SourceChunk]) -> RecallIndex:
+    async def run(self, raw_text: str, user_id: str, source_chunks: list[SourceChunk]) -> RecallIndex:
         """Return normalized recall keys and links for saved source chunks."""
         logger.info("recall_index_start chunks=%s chunk_ids=%s", len(source_chunks), [chunk["id"] for chunk in source_chunks])
-        state = await self.graph.ainvoke({"raw_text": raw_text, "source_chunks": source_chunks, "retry_used": False})
+        state = await self.graph.ainvoke({"raw_text": raw_text, "user_id": user_id, "source_chunks": source_chunks, "retry_used": False})
         recall_index = state["recall_index"]
         errors = state.get("errors", [])
         logger.info(
@@ -77,17 +78,17 @@ class RecallIndexChain:
 
     async def _find_candidates(self, state: RecallGraphState) -> RecallGraphState:
         """Find existing recall keys before asking the LLM to create new ones."""
-        candidates = await self.candidates.run(state["raw_text"], state["source_chunks"])
+        candidates = await self.candidates.run(state["raw_text"], state["user_id"], state["source_chunks"])
         return {**state, "candidates": candidates}
 
     async def _draft(self, state: RecallGraphState) -> RecallGraphState:
         """Ask the LLM for recall keys/links, including retry errors when present."""
-        draft = await self.drafts.run(state["source_chunks"], state.get("candidates", []), state.get("errors") if state.get("retry_ready") else None)
+        draft = await self.drafts.run(state["source_chunks"], state.get("candidates", []), state["user_id"], state.get("errors") if state.get("retry_ready") else None)
         return {**state, "draft": draft, "retry_ready": False}
 
     async def _normalize(self, state: RecallGraphState) -> RecallGraphState:
         """Validate LLM output and prepare the graph branch decision."""
-        recall_index, errors = await self.normalizer.run(state.get("draft", {}), state["source_chunks"], state.get("candidates", []))
+        recall_index, errors = await self.normalizer.run(state.get("draft", {}), state["source_chunks"], state["user_id"], state.get("candidates", []))
         if errors and not state.get("retry_used"):
             logger.info(
                 "recall_index_retry validation_errors=%s normalized_keys=%s normalized_links=%s errors=%s",

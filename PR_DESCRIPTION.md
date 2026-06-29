@@ -1,43 +1,39 @@
 # Pull Request Description
 
-**Branch:** `enhancement/async-io`
+**Branch:** `feature/auth`
 **Target:** `staging`
 
 ## Overview
-This PR started as a simple async migration but evolved into a comprehensive overhaul of the RAG ingestion, retrieval, and document lifecycle architectures. We've significantly improved how the system handles concurrency, resolves vague queries, deduplicates knowledge entities, and manages document deletion.
+This PR introduces a massive architectural upgrade to the system, transforming a raw single-user RAG script into a multi-tenant, event-driven, agentic note-taking backend. It implements full user authentication and data isolation, extracts a dedicated user-facing Notes/Organization bounded context, completely decouples RAG ingestion via an event bus, and upgrades the query pipeline into a dynamic LangGraph ReAct agent.
 
 ## Major Changes
 
-### 1. Complete Async Overhaul & Concurrency Fixes
-- Migrated the codebase to be fully asynchronous.
-- **SQLite Concurrency:** Fixed a severe concurrency crash where parallel `asyncio.to_thread()` calls shared a single SQLite connection. Replaced the global connection with a thread-local proxy (`threading.local()`) so every thread safely manages its own connection.
-- **Durable Runner Fix:** Resolved a `TypeError: object tuple can't be used in 'await' expression` crash in the `recall_vectors` stage of the ingestion background worker by properly converting the Chroma indexing functions to coroutines.
+### 1. Multi-Tenant Auth & Strict Data Isolation
+- **User IDs Everywhere:** Added `user_id` to all core tables (`raw_inputs`, `source_chunks`, `recall_keys`, `recall_links`, etc.) in `schema.sql`.
+- **Repository Enforcement:** Every single repository and RAG pipeline method now explicitly requires and filters by `user_id`, guaranteeing cross-tenant data isolation.
+- **Auth State Machine:** Unified the authentication service state machine and decoupled notifications. Migrated old data to a default user automatically.
+- **Route Protection:** FastApi routes are now protected via JWT authentication (`Depends(get_current_user_id)`).
 
-### 2. "Subject Extraction" Query Enhancement
-- **New LangGraph Node:** Added a `subjects` node to the retrieval graph. For vague queries like "what did the man do?", the LLM extracts the implied subject names (e.g., "Prince Vasili") using the query and context.
-- **FTS5 Diacritic Support:** Subject names are searched using SQLite FTS5 to safely handle diacritic variants (e.g., "Helene" matches "Hélène").
-- **Search Re-Prioritization:** Explicit subject name matches are now forcefully injected at the front of the candidate list, preventing generic keyword hits (like "officer") from pushing critical entities out of the Top-K bounds.
-- **Parallel Vector Expansion:** The retrieval graph now fires a secondary vector search explicitly against the extracted subject names concurrently with the main sub-query vector search.
+### 2. New "Notes" Bounded Context & Organization
+- **Dedicated Service:** Replaced the raw RAG `POST /ingest` endpoint with a proper `NotesService` for user-facing CRUD operations on notes, tags, and directories.
+- **Materialized Path Directories:** Implemented a hierarchical folder structure using the Materialized Path pattern (`/parent-uuid/child-uuid/`), allowing extremely fast sub-tree SQL lookups without recursive queries.
+- **Tags Integration:** Added robust Tag management and `note_tags` associations.
 
-### 3. Strict 4-Layer Knowledge Deduplication
-Rewrote the ingestion deduplication pipeline to aggressively prevent "entity fragmentation" (e.g., creating 50 separate recall keys for "Prince Andrew"). 
-- **Salient Entity Pre-Retrieval:** Instead of basic regex matching, chunks now instruct the LLM to output `salient_entities`. These are used to retrieve existing candidates *before* new extractions happen.
-- **In-Memory Batch Dedup:** Collapses identical names within a single LLM batch to prevent UUID duplication.
-- **Exact Match Resolution:** Fallback SQLite check to forcefully override the LLM if it misses an exact existing name.
-- **Structural Database Lock:** Added a `UNIQUE` constraint on `recall_key_terms(normalized_term)` for `term_type='name'`. Concurrent race conditions now cleanly abort and auto-retry via the durable worker, safely reusing the winner's key.
+### 3. Event-Driven Async Ingestion
+- **Domain Decoupling:** The RAG backend is completely decoupled from the Notes API. 
+- **EventBus Architecture:** Creating or updating a note instantly returns success to the user and fires a `note.created` event via an internal `EventBus`. 
+- **Background Processing:** A dedicated `RagListener` catches these events and quietly handles the heavy LLM summarization, chunking, and vector embedding asynchronously as a background task.
 
-### 4. Trash Bin / Document Lifecycle (Soft & Hard Delete)
-- Added a `deleted_at` column to `raw_inputs`.
-- **Query Isolation:** All RAG retrieval queries now enforce a strict SQL `JOIN` filter (`deleted_at IS NULL`). This guarantees soft-deleted knowledge is instantly invisible to the LLM.
-- **ChromaDB Synchronization:** Moving a document to the Trash instantly deletes its chunks from ChromaDB, preventing the vector store from wasting its Top-K slots on deleted evidence. Restoring the document re-indexes them.
-- **Cross-Document Stability:** Deleting a document safely orphans its recall links without destroying the global recall key, ensuring knowledge continuity for other documents that mention the same entities.
-- **Frontend Upgrades:** `ExplorerView.jsx` now features a dedicated **Trash** tab with options to Restore or Permanently Hard Delete documents.
+### 4. Agentic Query Pipeline (Tool-Calling ReAct Agent)
+- **Agent Orchestration:** Upgraded the static retrieval chain to a dynamic LangGraph ReAct tool-calling agent (`QueryAgentChain`).
+- **New Tools:** The LLM now has explicit tools to browse directories (`list_directories`), list note metadata (`list_notes_in_directory`), read full note content (`read_note`), and run semantic RAG pipelines (`search_knowledge_base`).
+- **Structured Outputs via Exceptions:** Used a `StopAgentException` inside a `submit_final_answer` tool to instantly short-circuit the LangGraph loop. This cleanly returns a heavily structured payload (directories, notes, citations, and markdown answers) directly to the UI without error-prone LLM string parsing.
 
-### 5. Dev UI & Documentation
-- **Job Management:** Added the ability to manually delete stuck durable ingest jobs from the Memory Explorer UI.
-- **Docs Update:** Rewrote `server/docs/SEAI_INDEXING_FLOW.md` to document the new 4-Layer Deduplication pipeline and the Document Lifecycle / Trash Bin rules. 
-- **Clean up:** Removed redundant `has_keys` logic and optimized SQL joins under the "ponytail" rule.
+### 5. Documentation & Developer Experience
+- **Architecture Docs:** Created `server/docs/NOTES_AND_INGESTION.md` and thoroughly updated `SEAI_RETRIEVAL_FLOW.md` and `SEAI_INDEXING_FLOW.md` to reflect the agentic, event-driven architecture.
+- **Future Planning:** Documented the blueprint for "Smart Cross-Domain Queries" (intersecting semantic search with structural metadata via SQL tools and vector filtering) directly in the retrieval docs.
 
 ## Verification
-- Staging environment tested. All 30 Pytest unit and architecture tests pass cleanly. 
-- Verified that local SQLite database migrations (adding `deleted_at`) ran successfully without corrupting existing RAG indexes.
+- Fully tested in the staging environment.
+- All 23 Pytest unit, integration, and architecture tests pass flawlessly.
+- Verified the local SQLite database migrations and materialized path directory tree lookups operate at expected speeds.

@@ -20,6 +20,7 @@ class RecallDraftChain:
         self,
         source_chunks: list[SourceChunk],
         candidates: list[dict[str, Any]],
+        user_id: str,
         errors: list[str] | None = None,
     ) -> dict[str, Any]:
         """Return raw LLM output before code validates IDs and duplicate links."""
@@ -66,6 +67,7 @@ class RecallDraftChain:
                 f"EXISTING_CANDIDATES:\n{json.dumps(candidates[:12], ensure_ascii=False)}\n\n"
                 f"SOURCE_CHUNKS:\n{json.dumps(_chunk_payload(source_chunks), ensure_ascii=False)}"
             ),
+            user_id=user_id,
         )
         if not isinstance(data, dict):
             logger.info("recall_draft_response invalid_type=%s", type(data).__name__)

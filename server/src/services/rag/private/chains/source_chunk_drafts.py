@@ -15,7 +15,7 @@ class SourceChunkDraftChain:
         """Keep the JSON client at the chain boundary."""
         self.json_client = json_client
 
-    async def run(self, window: SourceWindow) -> list[SourceChunkDraft]:
+    async def run(self, window: SourceWindow, user_id: str) -> list[SourceChunkDraft]:
         """Return summary metadata while keeping source text selection deterministic."""
         try:
             data = await self.json_client.async_invoke_json(
@@ -26,6 +26,7 @@ class SourceChunkDraftChain:
                     "Extract 2-8 of the most important people, places, topics, or events into salient_entities to aid later retrieval.\n\n"
                     f"SOURCE_TEXT:\n{window['text']}"
                 ),
+                user_id=user_id,
             )
             return [_draft(window, data if isinstance(data, dict) else {})]
         except Exception as exc:

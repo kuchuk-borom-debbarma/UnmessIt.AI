@@ -25,12 +25,13 @@ def subjects_node(json_client) -> callable:
     async def _node(state: QueryState) -> dict[str, Any]:
         query = state["query"]
         sub_queries = state.get("sub_queries", [])
+        user_id = state.get("user_id")
         reporter = state.get("reporter")
         
         if reporter:
             await reporter.report("Extracting implicit subjects from query...")
             
-        subjects = await _extract(json_client, query, sub_queries)
+        subjects = await _identify_subjects(json_client, query, sub_queries, user_id)
         logger.info("query_subjects query_len=%s extracted=%s", len(query), len(subjects))
         
         if reporter and subjects:
@@ -41,7 +42,7 @@ def subjects_node(json_client) -> callable:
     return _node
 
 
-async def _extract(json_client, query: str, sub_queries: list[str]) -> list[str]:
+async def _identify_subjects(json_client, query: str, sub_queries: list[str], user_id: str | None) -> list[str]:
     """Ask the LLM for subjects the query refers to by description; fall back to [].
 
     CRITICAL INSIGHT:

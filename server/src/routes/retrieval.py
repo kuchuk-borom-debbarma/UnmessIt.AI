@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from src.routes.auth_utils import get_current_user_id
 
 from src.infra.sse import get_sse_service
 from src.services.rag.rag_service import get_rag_service
@@ -51,9 +53,12 @@ async def sse_events(client_id: str, request: Request) -> StreamingResponse:
 
 
 @router.post("/query")
-async def query_endpoint(request: QueryRequest) -> dict:
+async def query_endpoint(
+    request: QueryRequest,
+    user_id: str = Depends(get_current_user_id),
+) -> dict:
     """Return the current query response."""
     reporter = None
     if request.client_id:
         reporter = SseProgressReporter(get_sse_service(), f"retrieval:{request.client_id}")
-    return await get_rag_service().query(request.query, reporter)
+    return await get_rag_service().query(request.query, user_id, reporter)

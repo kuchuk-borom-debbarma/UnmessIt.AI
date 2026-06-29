@@ -14,13 +14,13 @@ logger = logging.getLogger(__name__)
 class RecallCandidateChain:
     """Find already-known names/topics that the new chunks may mention."""
 
-    async def run(self, raw_text: str, source_chunks: list[SourceChunk]) -> list[dict[str, Any]]:
+    async def run(self, raw_text: str, user_id: str, source_chunks: list[SourceChunk]) -> list[dict[str, Any]]:
         """Return top possible matches so the LLM can reuse them instead of inventing duplicates."""
         terms = _important_terms(raw_text, source_chunks)
         text = _search_text(raw_text, source_chunks)
 
-        candidates = await asyncio.to_thread(recall.find_candidate_keys, terms, limit=20)
-        vector_candidates = await _vector_candidates(text, limit=20)
+        candidates = await asyncio.to_thread(recall.find_candidate_keys, terms, user_id, limit=20)
+        vector_candidates = await _vector_candidates(text, user_id, limit=20)
         merged = _merge_candidates([*candidates, *vector_candidates], limit=20)
         logger.info(
             "recall_candidates chunks=%s terms=%s sqlite=%s vector=%s merged=%s sources=%s",
@@ -54,11 +54,11 @@ def _search_text(raw_text: str, source_chunks: list[SourceChunk]) -> str:
     return "\n".join(str(value) for value in values if str(value).strip())
 
 
-async def _vector_candidates(text: str, limit: int) -> list[dict[str, Any]]:
+async def _vector_candidates(text: str, user_id: str, limit: int) -> list[dict[str, Any]]:
     """Load recall keys found by semantic vector search."""
-    hits = await asyncio.to_thread(recall_key_vectors.search, text, limit) if text.strip() else []
+    hits = await asyncio.to_thread(recall_key_vectors.search, text, user_id, limit) if text.strip() else []
     ids = [hit["object_id"] for hit in hits if hit.get("object_type") == "recall_key"]
-    keys = await asyncio.to_thread(recall.find_keys_by_ids, ids)
+    keys = await asyncio.to_thread(recall.find_keys_by_ids, ids, user_id)
     distance_by_id = {hit["object_id"]: hit.get("distance") for hit in hits}
     for key in keys:
         key["match_source"] = "vector"

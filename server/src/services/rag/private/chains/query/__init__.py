@@ -24,12 +24,13 @@ class QueryEvidenceChain:
         self.json_client = json_client
         self._graph = build_retrieval_graph(json_client)
 
-    async def run(self, query: str, reporter: ProgressReporter | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    async def run(self, query: str, user_id: str, reporter: ProgressReporter | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Return context-packed source chunks plus a trace of how they were found."""
         result = await self._graph.ainvoke({
             "query": query,
             "sub_queries": [],
             "extracted_subjects": [],
+            "user_id": user_id,
             "reporter": reporter,
             "chunks": [],
             "trace_parts": [],
@@ -63,14 +64,14 @@ class QueryAnswerChain:
     def __init__(self, json_client) -> None:
         self.json_client = json_client
 
-    async def run(self, query: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    async def run(self, query: str, chunks: list[dict[str, Any]], user_id: str) -> dict[str, Any]:
         """Return an answer and source chunk ids used as citations."""
         if not chunks:
             return {"answer": "I could not find relevant source chunks for that query.", "citation_ids": []}
 
         try:
             data = await self.json_client.async_invoke_json(
-                (
+                system=(
                     "Answer the user query using only SOURCE_CHUNKS. "
                     "Return only valid JSON. No markdown. "
                     "SOURCE_CHUNKS are the only evidence; recall metadata is not evidence. "
@@ -79,11 +80,12 @@ class QueryAnswerChain:
                     "For broad or timeline questions, combine relevant chunks in source/time order. "
                     "Citations must be source_chunk ids from SOURCE_CHUNKS."
                 ),
-                (
+                human=(
                     f"QUERY:\n{query}\n\n"
                     f"SOURCE_CHUNKS:\n{json.dumps(_chunk_payload(chunks), ensure_ascii=False)}\n\n"
                     'Return JSON with keys: {"answer":"string","citation_ids":["source_chunk_id"]}'
                 ),
+                user_id=user_id,
             )
         except Exception as exc:
             logger.warning("query_answer_failed error=%s", exc)
@@ -97,12 +99,14 @@ class QueryAnswerChain:
 
 def build_query_result(query: str, chunks: list[dict[str, Any]], answer: dict[str, Any], trace: dict[str, Any]) -> dict[str, Any]:
     """Build the route response shape expected by the UI."""
-    citation_ids = answer["citation_ids"] or [chunk["id"] for chunk in chunks[:3]]
+    citation_ids = answer.get("citation_ids") or answer.get("citations") or [chunk["id"] for chunk in chunks[:3]]
     cited_chunks = [chunk for chunk in chunks if chunk["id"] in set(citation_ids)]
     return {
         "answer": answer["answer"],
         "citations": [_citation(chunk, index + 1) for index, chunk in enumerate(cited_chunks)],
         "source_chunks": [_public_chunk(chunk) for chunk in chunks],
+        "directories": answer.get("directories", []),
+        "notes": answer.get("notes", []),
         "retrieval_trace": {**trace, "citation_count": len(cited_chunks)},
     }
 

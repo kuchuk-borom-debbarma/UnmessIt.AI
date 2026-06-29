@@ -15,8 +15,8 @@ def save_many(chunks: list[SourceChunk]) -> None:
     conn = get_connection()
     conn.executemany(
         """
-        INSERT INTO source_chunks (id, raw_input_id, text, summary, spans, source_time, metadata)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO source_chunks (id, raw_input_id, text, summary, spans, source_time, user_id, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO NOTHING
         """,
         [
@@ -27,6 +27,7 @@ def save_many(chunks: list[SourceChunk]) -> None:
                 chunk["summary"],
                 json.dumps(chunk["spans"], ensure_ascii=False),
                 chunk.get("source_time"),
+                chunk["user_id"],
                 json.dumps(chunk.get("metadata", {}), ensure_ascii=False),
             )
             for chunk in chunks
@@ -35,7 +36,7 @@ def save_many(chunks: list[SourceChunk]) -> None:
     conn.commit()
 
 
-def get_by_ids(chunk_ids: list[str]) -> list[dict[str, Any]]:
+def get_by_ids(chunk_ids: list[str], user_id: str) -> list[dict[str, Any]]:
     """Load chunks in caller-provided order.
 
     Retrieval will need this later when vector search returns IDs in ranked order.
@@ -46,12 +47,12 @@ def get_by_ids(chunk_ids: list[str]) -> list[dict[str, Any]]:
     placeholders = ",".join(["?"] * len(ids))
     rows = get_connection().execute(
         f"""
-        SELECT sc.id, sc.raw_input_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.metadata, sc.created_at
+        SELECT sc.id, sc.raw_input_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at
         FROM source_chunks sc
         JOIN raw_inputs ri ON ri.id = sc.raw_input_id
-        WHERE sc.id IN ({placeholders}) AND ri.deleted_at IS NULL
+        WHERE sc.id IN ({placeholders}) AND sc.user_id = ? AND ri.deleted_at IS NULL
         """,
-        ids,
+        [*ids, user_id],
     ).fetchall()
     by_id = {_from_row(row)["id"]: _from_row(row) for row in rows}
     return [by_id[chunk_id] for chunk_id in ids if chunk_id in by_id]
@@ -61,7 +62,7 @@ def get_by_raw_input_id(raw_input_id: str) -> list[dict[str, Any]]:
     """Load all chunks already saved for one raw input."""
     rows = get_connection().execute(
         """
-        SELECT sc.id, sc.raw_input_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.metadata, sc.created_at
+        SELECT sc.id, sc.raw_input_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at
         FROM source_chunks sc
         JOIN raw_inputs ri ON ri.id = sc.raw_input_id
         WHERE sc.raw_input_id = ? AND ri.deleted_at IS NULL
@@ -79,41 +80,59 @@ def delete_by_raw_input_id(raw_input_id: str) -> None:
     conn.commit()
 
 
-def search(query: str, limit: int = 8) -> list[dict[str, Any]]:
+def search(query: str, user_id: str, limit: int = 8) -> list[dict[str, Any]]:
     """Small lexical fallback over source text and summaries."""
     terms = _terms(query)
     if not terms:
         return []
-    where = " OR ".join(["(text LIKE ? OR summary LIKE ?)"] * len(terms))
+    where = " OR ".join(["(sc.text LIKE ? OR sc.summary LIKE ?)"] * len(terms))
     params = []
     for term in terms:
         params.extend([f"%{term}%", f"%{term}%"])
     rows = get_connection().execute(
         f"""
-        SELECT sc.id, sc.raw_input_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.metadata, sc.created_at
+        SELECT sc.id, sc.raw_input_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at
         FROM source_chunks sc
         JOIN raw_inputs ri ON ri.id = sc.raw_input_id
-        WHERE ({where}) AND ri.deleted_at IS NULL
+        WHERE ({where}) AND sc.user_id = ? AND ri.deleted_at IS NULL
         ORDER BY sc.created_at DESC
         LIMIT ?
         """,
-        [*params, limit],
+        [*params, user_id, limit],
     ).fetchall()
     return [_from_row(row) for row in rows]
 
 
-def list_with_raw_inputs() -> dict[str, Any]:
+def list_with_raw_inputs(user_id: str | None = None) -> dict[str, Any]:
     """Dev view: raw inputs with nested source chunks."""
     conn = get_connection()
-    raw_inputs = [dict(row) for row in conn.execute("SELECT id, job_id, content, created_at FROM raw_inputs WHERE deleted_at IS NULL ORDER BY created_at DESC")]
+    raw_where = "WHERE deleted_at IS NULL"
+    raw_params: list[Any] = []
+    if user_id:
+        raw_where += " AND user_id = ?"
+        raw_params.append(user_id)
+    raw_inputs = [
+        dict(row)
+        for row in conn.execute(
+            f"SELECT id, job_id, content, user_id, created_at FROM raw_inputs {raw_where} ORDER BY created_at DESC",
+            raw_params,
+        )
+    ]
+    chunk_where = ""
+    chunk_params: list[Any] = []
+    if user_id:
+        chunk_where = "WHERE user_id = ?"
+        chunk_params.append(user_id)
     chunks = [
         _from_row(row)
         for row in conn.execute(
-            """
-            SELECT id, raw_input_id, text, summary, spans, source_time, metadata, created_at
+            f"""
+            SELECT id, raw_input_id, text, summary, spans, source_time, user_id, metadata, created_at
             FROM source_chunks
+            {chunk_where}
             ORDER BY created_at ASC
-            """
+            """,
+            chunk_params,
         )
     ]
     chunks_by_raw: dict[str, list[dict[str, Any]]] = {}
