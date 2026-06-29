@@ -7,8 +7,10 @@ CREATE TABLE IF NOT EXISTS raw_inputs (
     job_id TEXT NOT NULL,
     content_hash TEXT,
     content TEXT NOT NULL,
+    user_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    deleted_at DATETIME
+    deleted_at DATETIME,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -76,9 +78,11 @@ CREATE TABLE IF NOT EXISTS recall_keys (
     kind_label TEXT,
     aliases JSON NOT NULL,
     summary TEXT NOT NULL,
+    user_id TEXT,
     metadata JSON NOT NULL DEFAULT '{}',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_recall_keys_name ON recall_keys(name);
