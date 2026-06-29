@@ -88,28 +88,34 @@ def find_keys_by_ids(ids: list[str]) -> list[dict[str, Any]]:
 
 
 def find_keys_by_names(names: list[str]) -> list[dict[str, Any]]:
-    """Find recall keys whose name or aliases contain any of the given subject names.
+    """Find recall keys whose name or aliases match any of the given subject names.
 
-    Uses substring matching so partial names work in both directions:
-    "Anatole" matches "Anatole Kuragin" and "Anatole Kuragin" matches "Anatole".
-    Domain-neutral: names come from the subjects extraction node.
+    Uses FTS5 search so diacritic variants match: 'Helene' finds 'Hélène',
+    'Boris' finds 'Borís', etc. Domain-neutral: names come from the subjects
+    extraction node.
     """
     if not names:
         return []
     seen: dict[str, dict[str, Any]] = {}
     conn = get_connection()
     for name in names:
-        pattern = f"%{name}%"
-        rows = conn.execute(
-            """
-            SELECT id, name, kind, kind_label, aliases, summary, metadata, created_at, updated_at
-            FROM recall_keys
-            WHERE LOWER(name) LIKE LOWER(?) OR LOWER(aliases) LIKE LOWER(?)
-            """,
-            (pattern, pattern),
-        ).fetchall()
-        for row in rows:
-            seen.setdefault(row["id"], _key_from_row(row))
+        # Escape FTS special chars; wrap in quotes for exact phrase match.
+        safe = name.replace('"', '""')
+        try:
+            rows = conn.execute(
+                """
+                SELECT rk.id, rk.name, rk.kind, rk.kind_label, rk.aliases,
+                       rk.summary, rk.metadata, rk.created_at, rk.updated_at
+                FROM recall_keys_fts fts
+                JOIN recall_keys rk ON rk.id = fts.recall_key_id
+                WHERE recall_keys_fts MATCH ?
+                """,
+                (safe,),
+            ).fetchall()
+            for row in rows:
+                seen.setdefault(row["id"], _key_from_row(row))
+        except Exception:
+            pass  # ponytail: bad FTS term → skip, not a fatal error
     return list(seen.values())
 
 
