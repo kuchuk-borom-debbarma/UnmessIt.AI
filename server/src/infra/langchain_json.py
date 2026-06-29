@@ -8,7 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 
 from src.infra.rate_limit import RateLimitedModel, get_limiter
-from src.infra.settings import get_settings
+from src.infra.settings import get_user_settings
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +24,13 @@ class JsonLLMClient:
         """Allow tests to inject a fake `llm` without touching LangChain."""
         self.llm = llm
 
-    def invoke_json(self, system: str, human: str) -> dict[str, Any]:
+    def invoke_json(self, system: str, human: str, user_id: str) -> dict[str, Any]:
         """Invoke the chat model and parse a JSON object."""
-        llm = self.llm or _get_chat_llm()
+        llm = self.llm or _get_chat_llm(user_id)
+        settings = get_user_settings(user_id)
         messages = [SystemMessage(content=system), HumanMessage(content=human)]
         last_error: Exception | None = None
-        for attempt in range(1, get_settings().llm_max_retries + 2):
+        for attempt in range(1, settings.llm_max_retries + 2):
             content = ""
             try:
                 response = llm.invoke(messages)
@@ -41,12 +42,13 @@ class JsonLLMClient:
                 messages = _repair_messages(content, str(exc)) if content.strip() else messages
         raise ValueError(f"LLM returned invalid JSON: {last_error}")
 
-    async def async_invoke_json(self, system: str, human: str) -> dict[str, Any]:
+    async def async_invoke_json(self, system: str, human: str, user_id: str) -> dict[str, Any]:
         """Async variant: awaits ainvoke() so the event loop stays free during LLM I/O."""
-        llm = self.llm or _get_chat_llm()
+        llm = self.llm or _get_chat_llm(user_id)
+        settings = get_user_settings(user_id)
         messages = [SystemMessage(content=system), HumanMessage(content=human)]
         last_error: Exception | None = None
-        for attempt in range(1, get_settings().llm_max_retries + 2):
+        for attempt in range(1, settings.llm_max_retries + 2):
             content = ""
             try:
                 response = await llm.ainvoke(messages)
@@ -66,10 +68,10 @@ def get_json_client() -> JsonLLMClient:
     return JsonLLMClient()
 
 
-@lru_cache(maxsize=1)
-def _get_chat_llm():
-    """Create the provider-specific LangChain chat model lazily, cached for the process lifetime."""
-    settings = get_settings()
+@lru_cache(maxsize=100)
+def _get_chat_llm(user_id: str):
+    """Create the provider-specific LangChain chat model lazily, cached per user."""
+    settings = get_user_settings(user_id)
     if settings.llm_provider == "ollama":
         from langchain_ollama import ChatOllama
 

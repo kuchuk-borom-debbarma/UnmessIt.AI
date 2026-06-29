@@ -8,56 +8,57 @@ import chromadb
 from chromadb.utils import embedding_functions
 
 from src.infra.rate_limit import RateLimitedEmbeddingFunction, get_limiter
-from src.infra.settings import get_settings
+from src.infra.settings import get_user_settings
 from src.infra.sqlite import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
 
-@lru_cache(maxsize=1)
-def _collection():
-    """Create or reuse the persistent Chroma collection."""
-    settings = get_settings()
-    embedding_function = _embedding_function()
+@lru_cache(maxsize=100)
+def _collection(user_id: str):
+    """Create or reuse the persistent Chroma collection for a specific user."""
+    settings = get_user_settings(user_id)
+    embedding_function = _embedding_function(user_id)
     client = chromadb.PersistentClient(path=str(DATA_DIR / "chroma_db"))
+    collection_name = f"statements_{user_id}"
     try:
-        return client.get_or_create_collection("statements", embedding_function=embedding_function)
+        return client.get_or_create_collection(collection_name, embedding_function=embedding_function)
     except ValueError as exc:
         if "embedding function" not in str(exc).lower():
             raise
         # ponytail: provider changes invalidate stored vectors; reset instead of migration machinery.
-        client.delete_collection("statements")
-        return client.create_collection("statements", embedding_function=embedding_function)
+        client.delete_collection(collection_name)
+        return client.create_collection(collection_name, embedding_function=embedding_function)
 
 
-def upsert(ids: list[str], texts: list[str], metadatas: list[dict[str, Any]]) -> None:
+def upsert(ids: list[str], texts: list[str], metadatas: list[dict[str, Any]], user_id: str) -> None:
     """Insert or replace vector documents."""
     if not ids:
         return
-    _collection().upsert(ids=ids, documents=texts, metadatas=metadatas)
+    _collection(user_id).upsert(ids=ids, documents=texts, metadatas=metadatas)
 
 
-def existing_ids(ids: list[str]) -> set[str]:
+def existing_ids(ids: list[str], user_id: str) -> set[str]:
     """Return vector IDs already present in the collection."""
     if not ids:
         return set()
-    result = _collection().get(ids=ids)
+    result = _collection(user_id).get(ids=ids)
     return set(result.get("ids") or [])
 
 
-def delete(ids: list[str]) -> None:
+def delete(ids: list[str], user_id: str) -> None:
     """Delete vector documents by ID."""
     if not ids:
         return
-    _collection().delete(ids=ids)
+    _collection(user_id).delete(ids=ids)
 
 
-def search(query: str, top_k: int = 8, where: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def search(query: str, user_id: str, top_k: int = 8, where: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Return normalized search hits from Chroma's nested result shape."""
     kwargs = {"query_texts": [query], "n_results": top_k}
     if where:
         kwargs["where"] = where
-    results = _collection().query(**kwargs)
+    results = _collection(user_id).query(**kwargs)
     if not results["ids"] or not results["ids"][0]:
         return []
 
@@ -76,21 +77,21 @@ def search(query: str, top_k: int = 8, where: dict[str, Any] | None = None) -> l
     return hits
 
 
-def reset() -> None:
-    """Drop the vector collection and clear the cached handle."""
-    settings = get_settings()
+def reset(user_id: str) -> None:
+    """Drop the vector collection and clear the cached handle for a user."""
     client = chromadb.PersistentClient(path=str(DATA_DIR / "chroma_db"))
+    collection_name = f"statements_{user_id}"
     try:
-        client.delete_collection("statements")
+        client.delete_collection(collection_name)
     except Exception:
         pass
     _collection.cache_clear()
-    client.get_or_create_collection("statements", embedding_function=_embedding_function())
+    client.get_or_create_collection(collection_name, embedding_function=_embedding_function(user_id))
 
 
-def _embedding_function():
+def _embedding_function(user_id: str):
     """Build the configured embedding function for Chroma."""
-    settings = get_settings()
+    settings = get_user_settings(user_id)
     if settings.embedding_provider == "ollama":
         fn = embedding_functions.OllamaEmbeddingFunction(
             url=settings.embedding_base_url or "http://localhost:11434/api/embeddings",

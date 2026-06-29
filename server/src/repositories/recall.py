@@ -31,7 +31,7 @@ def find_exact_term_matches(terms: list[str], user_id: str, limit: int = 20) -> 
     rows = get_connection().execute(
         f"""
         SELECT k.id, k.name, k.kind, k.kind_label, k.aliases, k.summary, k.metadata,
-               k.created_at, k.updated_at, t.term AS match_text, t.term_type
+               k.created_at, k.updated_at, k.user_id, t.term AS match_text, t.term_type
         FROM recall_key_terms t
         JOIN recall_keys k ON k.id = t.recall_key_id
         WHERE t.normalized_term IN ({placeholders}) AND k.user_id = ?
@@ -54,7 +54,7 @@ def find_fts_matches(terms: list[str], user_id: str, limit: int = 20) -> list[di
     rows = get_connection().execute(
         """
         SELECT k.id, k.name, k.kind, k.kind_label, k.aliases, k.summary, k.metadata,
-               k.created_at, k.updated_at
+               k.created_at, k.updated_at, k.user_id
         FROM recall_keys_fts f
         JOIN recall_keys k ON k.id = f.recall_key_id
         WHERE recall_keys_fts MATCH ? AND k.user_id = ?
@@ -74,7 +74,7 @@ def find_keys_by_ids(ids: list[str], user_id: str) -> list[dict[str, Any]]:
     placeholders = ", ".join("?" for _ in clean_ids)
     rows = get_connection().execute(
         f"""
-        SELECT id, name, kind, kind_label, aliases, summary, metadata, created_at, updated_at
+        SELECT id, name, kind, kind_label, aliases, summary, metadata, created_at, updated_at, user_id
         FROM recall_keys
         WHERE id IN ({placeholders}) AND user_id = ?
         """,
@@ -102,7 +102,7 @@ def find_keys_by_names(names: list[str], user_id: str) -> list[dict[str, Any]]:
             rows = conn.execute(
                 """
                 SELECT rk.id, rk.name, rk.kind, rk.kind_label, rk.aliases,
-                       rk.summary, rk.metadata, rk.created_at, rk.updated_at
+                       rk.summary, rk.metadata, rk.created_at, rk.updated_at, rk.user_id
                 FROM recall_keys_fts fts
                 JOIN recall_keys rk ON rk.id = fts.recall_key_id
                 WHERE recall_keys_fts MATCH ? AND rk.user_id = ?
@@ -139,7 +139,7 @@ def keys_for_source_chunks(source_chunk_ids: list[str], user_id: str) -> list[di
     rows = get_connection().execute(
         f"""
         SELECT DISTINCT k.id, k.name, k.kind, k.kind_label, k.aliases, k.summary,
-               k.metadata, k.created_at, k.updated_at
+               k.metadata, k.created_at, k.updated_at, k.user_id
         FROM recall_keys k
         JOIN recall_links l ON l.recall_key_id = k.id
         WHERE l.source_chunk_id IN ({placeholders}) AND k.user_id = ?
@@ -247,7 +247,7 @@ def get_view() -> dict[str, Any]:
         """
         SELECT
             k.id, k.name, k.kind, k.kind_label, k.aliases, k.summary, k.metadata,
-            k.created_at, k.updated_at,
+            k.created_at, k.updated_at, k.user_id,
             COUNT(l.id) AS link_count,
             MAX(COALESCE(l.event_time, l.created_at)) AS latest_link_time
         FROM recall_keys k
@@ -295,6 +295,7 @@ def _key_from_row(row) -> dict[str, Any]:
         "aliases": _json(row["aliases"], []),
         "summary": row["summary"],
         "metadata": _json(row["metadata"], {}),
+        "user_id": row["user_id"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }

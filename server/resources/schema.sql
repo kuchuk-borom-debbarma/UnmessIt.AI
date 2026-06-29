@@ -186,3 +186,37 @@ CREATE TABLE IF NOT EXISTS note_tags (
     FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE,
     FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
 );
+
+-- ==============================================================
+-- UNMESSIT AI: Configuration Schema
+-- ==============================================================
+
+CREATE TABLE IF NOT EXISTS user_config_presets (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 0,
+    
+    llm_provider TEXT NOT NULL,
+    llm_model TEXT NOT NULL,
+    llm_base_url TEXT,
+    llm_api_key TEXT,
+    llm_temperature REAL NOT NULL,
+    llm_max_retries INTEGER NOT NULL,
+    llm_max_tokens INTEGER NOT NULL,
+    
+    embedding_provider TEXT NOT NULL,
+    embedding_model TEXT NOT NULL,
+    embedding_base_url TEXT,
+    embedding_api_key TEXT,
+    
+    chunk_size INTEGER NOT NULL DEFAULT 1000,
+    chunk_overlap INTEGER NOT NULL DEFAULT 200,
+    
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_presets_active ON user_config_presets(user_id) WHERE is_active = 1;

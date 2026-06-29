@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from src.infra.events import get_event_bus
-from src.services.rag.rag_service import get_rag_service
+from src.services.rag.private.pipeline.ingest import submit_ingest_job
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ async def _handle_note_created(payload: dict[str, Any]) -> None:
     user_id = payload["user_id"]
     
     try:
-        await get_rag_service().ingest(text, user_id, note_id)
+        await submit_ingest_job(text, user_id, note_id)
         logger.info(f"Triggered RAG ingest for new note {note_id}")
     except Exception as e:
         logger.error(f"Failed to trigger RAG ingest for new note {note_id}: {e}")
@@ -29,7 +29,7 @@ async def _handle_note_updated(payload: dict[str, Any]) -> None:
     
     try:
         # Since ingest uses job_id = note_id, it will reuse or restart the job for this note
-        await get_rag_service().ingest(text, user_id, note_id)
+        await submit_ingest_job(text, user_id, note_id)
         logger.info(f"Triggered RAG ingest for updated note {note_id}")
     except Exception as e:
         logger.error(f"Failed to trigger RAG ingest for updated note {note_id}: {e}")

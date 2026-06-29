@@ -11,9 +11,6 @@ from src.services.rag.private.rag_service_impl import RagServiceImpl
 class RagService(Protocol):
     """Methods exposed to HTTP routes."""
 
-    async def ingest(self, data: str, user_id: str, job_id: str | None = None) -> IngestResult:
-        ...
-
     async def query(self, data: str, user_id: str, reporter: ProgressReporter | None = None) -> QueryResult:
         ...
 
@@ -31,7 +28,12 @@ class RagService(Protocol):
 
 
 @lru_cache(maxsize=1)
-def get_rag_service() -> RagService:
-    """Build and cache the RAG service with its chain dependencies."""
+def get_rag_service_impl() -> RagServiceImpl:
+    """Build and cache the internal RAG service implementation."""
     json_client = get_json_client()
     return RagServiceImpl(json_client)
+
+
+def get_rag_service() -> RagService:
+    """Return the public protocol for HTTP routes."""
+    return get_rag_service_impl()

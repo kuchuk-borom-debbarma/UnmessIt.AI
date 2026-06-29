@@ -155,7 +155,7 @@ class DurableIngestRunner:
 
     async def _build_source_piece(self, raw_input_id: str, raw_text: str, user_id: str, text_piece: SourceWindow, unit_key: str) -> tuple[str, dict[str, Any]]:
         """Summarize one text piece, then save the full piece as evidence."""
-        drafts: list[SourceChunkDraft] = await self.source_chunk_drafts.run(text_piece)
+        drafts: list[SourceChunkDraft] = await self.source_chunk_drafts.run(text_piece, user_id)
         chunks = await self.source_chunk_assembler.run(raw_input_id, raw_text, user_id, drafts)
         for index, chunk in enumerate(chunks):
             chunk["id"] = _stable_id("source_chunk", unit_key, str(index), chunk["text"])
@@ -198,7 +198,7 @@ class DurableIngestRunner:
         for key in keys:
             unit_key = f"recall_key_vector:{key['id']}"
             is_done = await asyncio.to_thread(repository.checkpoint_complete, job_id, STAGE_RECALL_VECTORS, unit_key)
-            exists = await asyncio.to_thread(recall_key_vectors.exists, key["id"])
+            exists = await asyncio.to_thread(recall_key_vectors.exists, key["id"], key["user_id"])
             if is_done or exists:
                 await asyncio.to_thread(repository.complete_checkpoint, job_id, STAGE_RECALL_VECTORS, unit_key, key["id"], {"reused": True})
                 continue
@@ -210,7 +210,7 @@ class DurableIngestRunner:
         for chunk in chunks:
             unit_key = f"source_vector:{chunk['id']}"
             is_done = await asyncio.to_thread(repository.checkpoint_complete, job_id, STAGE_SOURCE_VECTORS, unit_key)
-            exists = await asyncio.to_thread(source_chunk_vectors.exists, chunk["id"])
+            exists = await asyncio.to_thread(source_chunk_vectors.exists, chunk["id"], chunk["user_id"])
             if is_done or exists:
                 await asyncio.to_thread(repository.complete_checkpoint, job_id, STAGE_SOURCE_VECTORS, unit_key, chunk["id"], {"reused": True})
                 continue

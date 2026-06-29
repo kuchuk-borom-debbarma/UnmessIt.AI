@@ -22,8 +22,9 @@ def breakdown_node(json_client) -> callable:
     async def _node(state: QueryState) -> dict[str, Any]:
         query = state["query"]
         reporter = state.get("reporter")
+        user_id = state.get("user_id")
         
-        sub_queries = await _decompose(json_client, query)
+        sub_queries = await _decompose(json_client, query, user_id)
         logger.info("query_breakdown query_len=%s sub_queries=%s", len(query), len(sub_queries))
         
         if reporter and len(sub_queries) > 1:
@@ -34,7 +35,7 @@ def breakdown_node(json_client) -> callable:
     return _node
 
 
-async def _decompose(json_client, query: str) -> list[str]:
+async def _decompose(json_client, query: str, user_id: str) -> list[str]:
     """Ask the LLM to break the query into focused sub-queries; fall back on failure."""
     try:
         data = await json_client.async_invoke_json(

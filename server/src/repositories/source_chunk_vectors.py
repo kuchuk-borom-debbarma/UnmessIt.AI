@@ -24,13 +24,15 @@ def index(chunks: list[SourceChunk]) -> None:
             "user_id": chunk["user_id"],
             "spans": json.dumps(chunk["spans"], ensure_ascii=False),
         })
-    chroma.upsert(ids, texts, metadatas)
+    if chunks:
+        user_id = chunks[0]["user_id"]
+        chroma.upsert(ids, texts, metadatas, user_id)
 
 
-def delete(chunk_ids: list[str]) -> None:
+def delete(chunk_ids: list[str], user_id: str) -> None:
     """Delete source chunk vectors from Chroma."""
     ids = [vector_id(cid) for cid in chunk_ids if cid]
-    chroma.delete(ids)
+    chroma.delete(ids, user_id)
 
 
 def vector_id(chunk_id: str) -> str:
@@ -38,16 +40,16 @@ def vector_id(chunk_id: str) -> str:
     return f"{chunk_id}:source_chunk"
 
 
-def exists(chunk_id: str) -> bool:
+def exists(chunk_id: str, user_id: str) -> bool:
     """Check if a source chunk vector already exists."""
-    return vector_id(chunk_id) in chroma.existing_ids([vector_id(chunk_id)])
+    return vector_id(chunk_id) in chroma.existing_ids([vector_id(chunk_id)], user_id)
 
 
 def search(query: str, user_id: str, top_k: int = 8) -> list[dict[str, Any]]:
     """Search the rebuildable Chroma source chunk index."""
-    return chroma.search(query, top_k=top_k, where={"$and": [{"object_type": "source_chunk"}, {"user_id": user_id}]})
+    return chroma.search(query, user_id, top_k=top_k, where={"$and": [{"object_type": "source_chunk"}, {"user_id": user_id}]})
 
 
-def reset() -> None:
-    """Clear vectors during dev wipe."""
-    chroma.reset()
+def reset(user_id: str) -> None:
+    """Clear vectors during dev wipe for a specific user."""
+    chroma.reset(user_id)

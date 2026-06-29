@@ -18,6 +18,7 @@ from src.services.rag.private.durability import DurableIngest
 from src.services.rag.private.durability import repository as durability_repo
 from src.services.rag.private.durability.models import STAGE_SOURCE_CHUNKS, STATUS_ABORTED, STATUS_FAILED, STATUS_QUEUED, STATUS_WAITING_RETRY
 from src.services.rag.private.durability.runner import DurableIngestRunner
+from src.services.rag.private.pipeline.ingest import submit_ingest_job, get_durable_ingest
 from src.services.rag.private.rag_service_impl import RagServiceImpl
 
 
@@ -35,18 +36,21 @@ class FakeJson:
             "recall_links": [{"recall_key_ref": "k1", "source_chunk_id": "chunk-1", "relation": "about", "confidence": 1}],
         }
 
-    async def async_invoke_json(self, system: str, human: str) -> dict:
+    async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
         return self.invoke_json(system, human)
 
 
-async def test_ingest_submits_durable_job():
-    service = RagServiceImpl(FakeJson())
-
-    async def _fake_submit(text, user_id, job_id):
+async def test_ingest_submits_durable_job(monkeypatch):
+    async def _fake_submit(data, user_id, job_id):
         return {"id": job_id, "status": "queued", "raw_input_id": "raw-1", "stage": "source_chunks", "attempt_count": 0, "metadata": {}}
 
-    service.durability.submit = _fake_submit
-    result = await service.ingest("  Grisha inherited the Attack Titan.  ", user_id="user-1", job_id="job-1")
+    class FakeDurability:
+        async def submit(self, data, user_id, job_id):
+            return await _fake_submit(data, user_id, job_id)
+
+    monkeypatch.setattr("src.services.rag.private.pipeline.ingest.get_durable_ingest", lambda: FakeDurability())
+
+    result = await submit_ingest_job("  Grisha inherited the Attack Titan.  ", user_id="user-1", job_id="job-1")
 
     assert result["job_id"] == "job-1"
     assert result["status"] == "queued"
@@ -56,7 +60,7 @@ async def test_ingest_submits_durable_job():
 async def test_source_chunk_steps_preserve_source_bound_spans():
     raw_text = "Before the walls, Grisha inherited the Attack Titan. Kruger watched."
     windows = SourceWindowChain().run(raw_text)
-    drafts = await SourceChunkDraftChain(FakeJson()).run(windows[0])
+    drafts = await SourceChunkDraftChain(FakeJson()).run(windows[0], "user-1")
     chunks = await SourceChunkAssemblerChain().run("raw-1", raw_text, "user-1", drafts)
 
     assert chunks[0]["text"] == raw_text
@@ -65,11 +69,11 @@ async def test_source_chunk_steps_preserve_source_bound_spans():
 
 async def test_source_chunk_llm_failure_is_retryable():
     class BrokenJson:
-        async def async_invoke_json(self, system: str, human: str) -> dict:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
             raise RuntimeError("provider forbidden")
 
     with pytest.raises(RuntimeError, match="provider forbidden"):
-        await SourceChunkDraftChain(BrokenJson()).run({"text": "hello", "start": 0, "end": 5})
+        await SourceChunkDraftChain(BrokenJson()).run({"text": "hello", "start": 0, "end": 5}, "user-1")
 
 
 async def test_recall_index_chain_retries_once_after_invalid_output(monkeypatch):
@@ -79,7 +83,7 @@ async def test_recall_index_chain_retries_once_after_invalid_output(monkeypatch)
             self.prompts = []
             self.systems = []
 
-        async def async_invoke_json(self, system: str, human: str) -> dict:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
             self.calls += 1
             self.systems.append(system)
             self.prompts.append(human)
@@ -207,7 +211,7 @@ async def test_query_context_packer_ranks_and_falls_back(monkeypatch):
     monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda key_ids, user_id, limit=12: ["linked"])
 
     class PassthroughBreakdownJson:
-        async def async_invoke_json(self, system: str, human: str) -> dict:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
             if "Decompose the user query" in system:
                 return {"sub_queries": ["Attack Titan"]}
             return {"answer": "ok", "citation_ids": []}
@@ -228,10 +232,10 @@ async def test_query_breakdown_falls_back_to_original_query_on_llm_failure():
     from src.services.rag.private.chains.query._breakdown import _decompose
 
     class FailJson:
-        async def async_invoke_json(self, system: str, human: str) -> dict:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
             raise RuntimeError("provider unavailable")
 
-    result = await _decompose(FailJson(), "what happened to the project")
+    result = await _decompose(FailJson(), "what happened to the project", "user-1")
 
     assert result == ["what happened to the project"]
 
@@ -241,7 +245,7 @@ async def test_query_breakdown_caps_and_deduplicates_sub_queries():
     from src.services.rag.private.chains.query._breakdown import _decompose
 
     class OverflowJson:
-        async def async_invoke_json(self, system: str, human: str) -> dict:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
             return {"sub_queries": [
                 "original",
                 "sub-query 1",
@@ -251,7 +255,7 @@ async def test_query_breakdown_caps_and_deduplicates_sub_queries():
                 "sub-query 4",  # 6th — should be cut
             ]}
 
-    result = await _decompose(OverflowJson(), "original")
+    result = await _decompose(OverflowJson(), "original", "user-1")
 
     assert result[0] == "original"
     assert len(result) == 4
@@ -519,8 +523,8 @@ async def test_durable_runner_aborts_job_missing_raw_input(monkeypatch):
 
 async def test_durable_source_chunks_resume_from_next_unfinished_piece(monkeypatch):
     _patch_memory_db(monkeypatch)
-    monkeypatch.setattr(recall_key_vectors, "exists", lambda key_id: True)
-    monkeypatch.setattr(source_chunk_vectors, "exists", lambda chunk_id: True)
+    monkeypatch.setattr(recall_key_vectors, "exists", lambda key_id, user_id: True)
+    monkeypatch.setattr(source_chunk_vectors, "exists", lambda chunk_id, user_id: True)
 
     raw_id = raw_inputs.save_or_reuse("job-1", "one two", "user-1", "hash-1")
     job = durability_repo.create_or_reuse_job("job-1", "hash-1", raw_id)
@@ -629,7 +633,7 @@ class FakeDrafts:
         self.fail_on = fail_on
         self.calls = []
 
-    async def run(self, window: dict) -> list[dict]:
+    async def run(self, window: dict, user_id: str) -> list[dict]:
         self.calls.append(window["text"])
         if window["text"] == self.fail_on:
             raise RuntimeError("draft failed")
@@ -641,7 +645,7 @@ class FakeRecallIndex:
         chunk = chunks[0]
         key_id = f"key-{chunk['id']}"
         return {
-            "recall_keys": [{"id": key_id, "name": f"Thing {chunk['id']}", "kind": "entity", "kind_label": None, "aliases": [], "summary": "", "metadata": {}}],
+            "recall_keys": [{"id": key_id, "name": f"Thing {chunk['id']}", "kind": "entity", "kind_label": None, "aliases": [], "summary": "", "metadata": {}, "user_id": user_id}],
             "recall_links": [{
                 "id": f"link-{chunk['id']}",
                 "recall_key_id": key_id,

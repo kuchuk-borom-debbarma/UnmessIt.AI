@@ -64,14 +64,14 @@ class QueryAnswerChain:
     def __init__(self, json_client) -> None:
         self.json_client = json_client
 
-    async def run(self, query: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    async def run(self, query: str, chunks: list[dict[str, Any]], user_id: str) -> dict[str, Any]:
         """Return an answer and source chunk ids used as citations."""
         if not chunks:
             return {"answer": "I could not find relevant source chunks for that query.", "citation_ids": []}
 
         try:
             data = await self.json_client.async_invoke_json(
-                (
+                system=(
                     "Answer the user query using only SOURCE_CHUNKS. "
                     "Return only valid JSON. No markdown. "
                     "SOURCE_CHUNKS are the only evidence; recall metadata is not evidence. "
@@ -80,11 +80,12 @@ class QueryAnswerChain:
                     "For broad or timeline questions, combine relevant chunks in source/time order. "
                     "Citations must be source_chunk ids from SOURCE_CHUNKS."
                 ),
-                (
+                human=(
                     f"QUERY:\n{query}\n\n"
                     f"SOURCE_CHUNKS:\n{json.dumps(_chunk_payload(chunks), ensure_ascii=False)}\n\n"
                     'Return JSON with keys: {"answer":"string","citation_ids":["source_chunk_id"]}'
                 ),
+                user_id=user_id,
             )
         except Exception as exc:
             logger.warning("query_answer_failed error=%s", exc)

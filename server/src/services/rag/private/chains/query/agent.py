@@ -123,7 +123,7 @@ When you have enough information to answer the user's query, you MUST call the `
 Never output the final answer directly as a plain text message; ALWAYS use `submit_final_answer`.
 """
 
-        llm = _get_chat_llm()
+        llm = _get_chat_llm(user_id)
         agent = create_react_agent(llm, tools=tools, prompt=system)
         
         final_result = None

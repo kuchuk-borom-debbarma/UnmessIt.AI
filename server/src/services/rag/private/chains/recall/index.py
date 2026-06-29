@@ -83,7 +83,7 @@ class RecallIndexChain:
 
     async def _draft(self, state: RecallGraphState) -> RecallGraphState:
         """Ask the LLM for recall keys/links, including retry errors when present."""
-        draft = await self.drafts.run(state["source_chunks"], state.get("candidates", []), state.get("errors") if state.get("retry_ready") else None)
+        draft = await self.drafts.run(state["source_chunks"], state.get("candidates", []), state["user_id"], state.get("errors") if state.get("retry_ready") else None)
         return {**state, "draft": draft, "retry_ready": False}
 
     async def _normalize(self, state: RecallGraphState) -> RecallGraphState:
