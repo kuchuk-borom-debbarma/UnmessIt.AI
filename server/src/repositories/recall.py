@@ -161,15 +161,17 @@ def linked_source_chunk_ids(recall_key_ids: list[str], limit: int = 12) -> list[
     placeholders = ", ".join("?" for _ in clean_ids)
     rows = get_connection().execute(
         f"""
-        SELECT c.id, MIN(c.created_at) AS first_seen
+        SELECT c.id, 
+               COUNT(DISTINCT l.recall_key_id) AS match_count,
+               MIN(c.created_at) AS first_seen
         FROM source_chunks c
         JOIN recall_links l ON l.source_chunk_id = c.id
         WHERE l.recall_key_id IN ({placeholders})
         GROUP BY c.id
-        ORDER BY first_seen ASC
+        ORDER BY match_count DESC, first_seen ASC
         LIMIT ?
         """,
-        [*clean_ids, limit],
+        [*clean_ids, 24],
     ).fetchall()
     return [row["id"] for row in rows]
 

@@ -37,12 +37,12 @@ async def _extract(json_client, query: str, sub_queries: list[str]) -> list[str]
     try:
         data = await json_client.async_invoke_json(
             (
-                "Extract the subjects this query refers to by description rather than by name. "
-                "A subject is any concept, item, or topic the query implies but does not state directly. "
-                "Return only subjects that a knowledge base index would store as a named entry. "
+                "Identify the specific named entities (people, characters, places, items, concepts) that the query refers to by description rather than by explicit name. "
+                "Use your general knowledge to resolve the descriptions into specific proper names whenever possible. "
+                "If the query describes a subject (e.g., 'the man who...', 'the young officer', 'the company'), figure out who or what it is and return their exact name. "
                 "Return only valid JSON. No markdown. "
                 f"Return at most {_MAX_SUBJECTS} subjects. "
-                "If every subject is already stated by name in the query, return []."
+                "If every subject is already stated by explicit proper name in the query, return []."
             ),
             (
                 f"QUERY:\n{query}\n\n"
