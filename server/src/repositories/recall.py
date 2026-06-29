@@ -88,29 +88,25 @@ def find_keys_by_ids(ids: list[str]) -> list[dict[str, Any]]:
 
 
 def find_keys_by_names(names: list[str]) -> list[dict[str, Any]]:
-    """Find recall keys whose name or aliases match any of the given subject names.
+    """Find recall keys whose name or aliases contain any of the given subject names.
 
-    Used by retrieval when the query describes subjects by relationship rather
-    than by explicit name. Matches name exactly or as a substring of aliases.
-    Domain-neutral: names come from the subjects extraction node, not from a
-    fixed schema or entity type.
+    Uses substring matching so partial names work in both directions:
+    "Anatole" matches "Anatole Kuragin" and "Anatole Kuragin" matches "Anatole".
+    Domain-neutral: names come from the subjects extraction node.
     """
     if not names:
         return []
     seen: dict[str, dict[str, Any]] = {}
     conn = get_connection()
     for name in names:
-        # Exact name match (case-insensitive via LIKE).
+        pattern = f"%{name}%"
         rows = conn.execute(
-            "SELECT id, name, kind, kind_label, aliases, summary, metadata, created_at, updated_at FROM recall_keys WHERE name LIKE ?",
-            (name,),
-        ).fetchall()
-        for row in rows:
-            seen.setdefault(row["id"], _key_from_row(row))
-        # Alias match — aliases column is a JSON array stored as text.
-        rows = conn.execute(
-            "SELECT id, name, kind, kind_label, aliases, summary, metadata, created_at, updated_at FROM recall_keys WHERE aliases LIKE ?",
-            (f'%"{name}"%',),
+            """
+            SELECT id, name, kind, kind_label, aliases, summary, metadata, created_at, updated_at
+            FROM recall_keys
+            WHERE LOWER(name) LIKE LOWER(?) OR LOWER(aliases) LIKE LOWER(?)
+            """,
+            (pattern, pattern),
         ).fetchall()
         for row in rows:
             seen.setdefault(row["id"], _key_from_row(row))
