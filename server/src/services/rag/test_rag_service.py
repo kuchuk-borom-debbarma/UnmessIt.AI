@@ -602,7 +602,7 @@ class FakeRecallIndex:
         chunk = chunks[0]
         key_id = f"key-{chunk['id']}"
         return {
-            "recall_keys": [{"id": key_id, "name": "Thing", "kind": "entity", "kind_label": None, "aliases": [], "summary": "", "metadata": {}}],
+            "recall_keys": [{"id": key_id, "name": f"Thing {chunk['id']}", "kind": "entity", "kind_label": None, "aliases": [], "summary": "", "metadata": {}}],
             "recall_links": [{
                 "id": f"link-{chunk['id']}",
                 "recall_key_id": key_id,
