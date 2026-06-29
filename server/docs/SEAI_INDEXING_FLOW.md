@@ -74,6 +74,16 @@ The implementation lives under `server/src/services/rag/`. The public ingest rou
 
 Durable job details live in `server/docs/RAG_DURABILITY.md`.
 
+## Trash Bin & Document Lifecycle
+
+To support safe deletion of knowledge without fragmenting cross-document entities, the system implements a strict "Trash Bin" lifecycle for `raw_inputs`:
+
+- **Soft Delete**: When a document is soft-deleted, it is marked with `deleted_at` in the SQLite database and its source chunk vectors are synchronously removed from ChromaDB.
+- **Query Isolation**: All RAG queries explicitly filter out chunks where `deleted_at IS NOT NULL`. This instantly excludes the document's knowledge from the LLM context.
+- **Recall Key Stability**: Soft-deleting a document does *not* delete cross-document recall keys (e.g., "Eren Yeager"), ensuring knowledge continuity for other documents. However, the system simply ignores the links from the soft-deleted document.
+- **Restore**: Restoring a document clears the `deleted_at` flag and immediately re-indexes its chunks into ChromaDB, restoring its exact previous state.
+- **Hard Delete**: Hard deleting permanently removes the raw input and cascades to drop all its `source_chunks` and `recall_links` forever.
+
 ## Recall Deduplication & Matching
 
 To prevent knowledge fragmentation (e.g., creating 50 separate nodes for "Prince Andrew"), the system employs a strict 4-layer deduplication flow during ingestion.
