@@ -74,31 +74,37 @@ The implementation lives under `server/src/services/rag/`. The public ingest rou
 
 Durable job details live in `server/docs/RAG_DURABILITY.md`.
 
-## Recall Matching
+## Trash Bin & Document Lifecycle
 
-Recall matching should prefer reuse when a new chunk clearly refers to an existing key by name, alias, summary, or candidate match.
+To support safe deletion of knowledge without fragmenting cross-document entities, the system implements a strict "Trash Bin" lifecycle for `raw_inputs`:
 
-Recall indexing is coordinated by a small LangGraph subgraph:
+- **Soft Delete**: When a document is soft-deleted, it is marked with `deleted_at` in the SQLite database and its source chunk vectors are synchronously removed from ChromaDB.
+- **Query Isolation**: All RAG queries explicitly filter out chunks where `deleted_at IS NOT NULL`. This instantly excludes the document's knowledge from the LLM context.
+- **Recall Key Stability**: Soft-deleting a document does *not* delete cross-document recall keys (e.g., "Eren Yeager"), ensuring knowledge continuity for other documents. However, the system simply ignores the links from the soft-deleted document.
+- **Restore**: Restoring a document clears the `deleted_at` flag and immediately re-indexes its chunks into ChromaDB, restoring its exact previous state.
+- **Hard Delete**: Hard deleting permanently removes the raw input and cascades to drop all its `source_chunks` and `recall_links` forever.
 
-```txt
-find_candidates
--> draft
--> normalize
-   -> retry once if validation failed
-   -> done
-```
+## Recall Deduplication & Matching
 
-The subgraph is only orchestration. Existing chains still do candidate lookup,
-LLM drafting, and code normalization.
+To prevent knowledge fragmentation (e.g., creating 50 separate nodes for "Prince Andrew"), the system employs a strict 4-layer deduplication flow during ingestion.
 
-Candidate lookup is bounded before the LLM sees it:
+### 1. Candidate Retrieval (Pre-LLM)
+Before the LLM extracts any entities, the system searches the database for existing keys so the LLM can reuse them.
+**How it knows what to search:**
+The `candidates.py` step extracts search hints from the raw text and chunk summaries:
+- **Keyword Terms:** It extracts up to 12 important words (≥4 chars, filtering stop words) to query SQLite for exact name/alias matches and FTS keyword matches.
+- **Semantic Text:** It concatenates the text and summaries to run a Chroma vector search against existing recall keys (skipped if the DB is empty).
+These candidates (merged and capped at 20) are passed in the LLM prompt. The LLM is instructed to output the `existing_recall_key_id` if a new extraction matches a candidate.
 
-1. Exact saved name/alias matches.
-2. SQLite FTS keyword matches over saved recall keys.
-3. Chroma semantic recall-key matches, only when at least one recall key exists.
-4. Merge and cap candidates before prompting the LLM.
+### 2. In-Memory Batch Deduplication
+If the LLM's response contains multiple extractions with the exact same normalized name in a single batch (e.g., hallucinating "Prince Andrew" twice for the same chunk), `normalizer.py` intercepts this. It maintains an in-memory dictionary and collapses identical names into a single key object before it touches the database, preventing batch-level UUID duplication.
 
-The semantic lookup is skipped when there are no saved recall keys yet. That avoids embedding calls during first-ingest recall retries where there is nothing to semantically match.
+### 3. Exact Match Resolution
+If the LLM proposes a new key (without an `existing_recall_key_id`), `normalizer.py` queries the database as a safety net. If it finds an existing key with the exact same normalized name, it forcefully overrides the LLM and reuses the existing ID. This aggressively patches over cases where the LLM was "lazy" or candidate retrieval missed the exact match.
+
+### 4. Structural Database Lock
+To structurally prevent concurrency race conditions (e.g., two background workers processing chunks at the exact same millisecond, finding nothing, and both trying to insert "Prince Andrew"), SQLite enforces a `UNIQUE` constraint on `recall_key_terms(normalized_term)` for `term_type='name'`. 
+If a race condition occurs, the first worker succeeds. The second worker fails with a `UNIQUE constraint failed` error, which safely aborts the unit. The durable ingest system then retries the failed chunk with a backoff, and on the next attempt, it seamlessly finds and reuses the first worker's newly created key at Step 1.
 
 Safe recall key updates:
 

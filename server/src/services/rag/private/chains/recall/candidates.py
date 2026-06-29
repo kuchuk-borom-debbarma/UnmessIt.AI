@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any
@@ -13,15 +14,13 @@ logger = logging.getLogger(__name__)
 class RecallCandidateChain:
     """Find already-known names/topics that the new chunks may mention."""
 
-    def run(self, raw_text: str, source_chunks: list[SourceChunk]) -> list[dict[str, Any]]:
+    async def run(self, raw_text: str, source_chunks: list[SourceChunk]) -> list[dict[str, Any]]:
         """Return top possible matches so the LLM can reuse them instead of inventing duplicates."""
         terms = _important_terms(raw_text, source_chunks)
         text = _search_text(raw_text, source_chunks)
 
-        # Exact and keyword matches run before the LLM so obvious reuse is cheap and bounded.
-        candidates = recall.find_candidate_keys(terms, limit=20)
-        # Semantic recall-key search only helps after at least one recall key exists.
-        vector_candidates = _vector_candidates(text, limit=20) if recall.has_keys() else []
+        candidates = await asyncio.to_thread(recall.find_candidate_keys, terms, limit=20)
+        vector_candidates = await _vector_candidates(text, limit=20)
         merged = _merge_candidates([*candidates, *vector_candidates], limit=20)
         logger.info(
             "recall_candidates chunks=%s terms=%s sqlite=%s vector=%s merged=%s sources=%s",
@@ -36,23 +35,17 @@ class RecallCandidateChain:
 
 
 def _important_terms(raw_text: str, source_chunks: list[SourceChunk]) -> list[str]:
-    """Pull simple search words from the new text and chunk summaries."""
-    values = [
-        raw_text[:1000],
-        *[chunk["summary"] for chunk in source_chunks],
-        *[chunk["text"][:400] for chunk in source_chunks],
-    ]
-    stop = {"what", "with", "from", "that", "this", "they", "them", "were", "have", "about", "source", "chunk"}
+    """Pull search words from the cleanly extracted LLM entities."""
     result = []
     seen = set()
-    for value in values:
-        for term in re.findall(r"[A-Za-z][A-Za-z']+", str(value)):
-            lowered = term.lower().strip("'")
-            if len(lowered) >= 4 and lowered not in stop and lowered not in seen:
-                # These words are only lookup hints; the LLM still decides whether a candidate is the same thing.
-                seen.add(lowered)
-                result.append(term.strip("'"))
-    return result[:12]
+    for chunk in source_chunks:
+        entities = chunk.get("metadata", {}).get("salient_entities", [])
+        for entity in entities:
+            clean = str(entity).strip()
+            if clean and clean.lower() not in seen:
+                seen.add(clean.lower())
+                result.append(clean)
+    return result[:20]
 
 
 def _search_text(raw_text: str, source_chunks: list[SourceChunk]) -> str:
@@ -61,11 +54,11 @@ def _search_text(raw_text: str, source_chunks: list[SourceChunk]) -> str:
     return "\n".join(str(value) for value in values if str(value).strip())
 
 
-def _vector_candidates(text: str, limit: int) -> list[dict[str, Any]]:
+async def _vector_candidates(text: str, limit: int) -> list[dict[str, Any]]:
     """Load recall keys found by semantic vector search."""
-    hits = recall_key_vectors.search(text, top_k=limit) if text.strip() else []
+    hits = await asyncio.to_thread(recall_key_vectors.search, text, limit) if text.strip() else []
     ids = [hit["object_id"] for hit in hits if hit.get("object_type") == "recall_key"]
-    keys = recall.find_keys_by_ids(ids)
+    keys = await asyncio.to_thread(recall.find_keys_by_ids, ids)
     distance_by_id = {hit["object_id"]: hit.get("distance") for hit in hits}
     for key in keys:
         key["match_source"] = "vector"

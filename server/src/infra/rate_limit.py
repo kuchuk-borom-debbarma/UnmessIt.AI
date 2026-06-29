@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from collections import deque
 from functools import lru_cache
@@ -47,6 +48,22 @@ class PerMinuteRateLimiter:
                 delay = 60 - (now - self._calls[0])
             self.sleep(max(delay, 0))
 
+    async def async_wait(self) -> None:
+        """Async variant: suspends the coroutine instead of blocking the thread."""
+        if self.calls_per_minute <= 0:
+            return
+
+        while True:
+            with self._lock:
+                now = self.monotonic()
+                while self._calls and now - self._calls[0] >= 60:
+                    self._calls.popleft()
+                if len(self._calls) < self.calls_per_minute:
+                    self._calls.append(now)
+                    return
+                delay = 60 - (now - self._calls[0])
+            await asyncio.sleep(max(delay, 0))
+
 
 class RateLimitedModel:
     def __init__(self, model, limiter: PerMinuteRateLimiter) -> None:
@@ -56,6 +73,10 @@ class RateLimitedModel:
     def invoke(self, *args, **kwargs):
         self.limiter.wait()
         return self.model.invoke(*args, **kwargs)
+
+    async def ainvoke(self, *args, **kwargs):
+        await self.limiter.async_wait()
+        return await self.model.ainvoke(*args, **kwargs)
 
     def __getattr__(self, name):
         return getattr(self.model, name)

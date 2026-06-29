@@ -19,19 +19,19 @@ def breakdown_node(json_client) -> callable:
     On any LLM failure, falls back to [query] so retrieval still runs.
     """
 
-    def _node(state: QueryState) -> dict[str, Any]:
+    async def _node(state: QueryState) -> dict[str, Any]:
         query = state["query"]
-        sub_queries = _decompose(json_client, query)
+        sub_queries = await _decompose(json_client, query)
         logger.info("query_breakdown query_len=%s sub_queries=%s", len(query), len(sub_queries))
         return {"sub_queries": sub_queries}
 
     return _node
 
 
-def _decompose(json_client, query: str) -> list[str]:
+async def _decompose(json_client, query: str) -> list[str]:
     """Ask the LLM to break the query into focused sub-queries; fall back on failure."""
     try:
-        data = json_client.invoke_json(
+        data = await json_client.async_invoke_json(
             (
                 "Decompose the user query into focused sub-queries for evidence retrieval. "
                 "Return only valid JSON. No markdown. "
@@ -48,7 +48,6 @@ def _decompose(json_client, query: str) -> list[str]:
         sub_queries = data.get("sub_queries") if isinstance(data, dict) else None
         if not isinstance(sub_queries, list) or not sub_queries:
             return [query]
-        # Always anchor to original; dedupe; cap.
         cleaned = [str(q).strip() for q in sub_queries if str(q).strip()]
         seen: set[str] = set()
         result = []

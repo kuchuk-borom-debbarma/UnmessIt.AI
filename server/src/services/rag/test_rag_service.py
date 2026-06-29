@@ -35,51 +35,51 @@ class FakeJson:
             "recall_links": [{"recall_key_ref": "k1", "source_chunk_id": "chunk-1", "relation": "about", "confidence": 1}],
         }
 
+    async def async_invoke_json(self, system: str, human: str) -> dict:
+        return self.invoke_json(system, human)
 
-def test_ingest_submits_durable_job():
+
+async def test_ingest_submits_durable_job():
     service = RagServiceImpl(FakeJson())
-    service.durability.submit = lambda text, job_id: {
-        "id": job_id,
-        "status": "queued",
-        "raw_input_id": "raw-1",
-        "stage": "source_chunks",
-        "attempt_count": 0,
-        "metadata": {},
-    }
-    result = service.ingest("  Grisha inherited the Attack Titan.  ", job_id="job-1")
+
+    async def _fake_submit(text, job_id):
+        return {"id": job_id, "status": "queued", "raw_input_id": "raw-1", "stage": "source_chunks", "attempt_count": 0, "metadata": {}}
+
+    service.durability.submit = _fake_submit
+    result = await service.ingest("  Grisha inherited the Attack Titan.  ", job_id="job-1")
 
     assert result["job_id"] == "job-1"
     assert result["status"] == "queued"
     assert result["raw_input_id"] == "raw-1"
 
 
-def test_source_chunk_steps_preserve_source_bound_spans():
+async def test_source_chunk_steps_preserve_source_bound_spans():
     raw_text = "Before the walls, Grisha inherited the Attack Titan. Kruger watched."
     windows = SourceWindowChain().run(raw_text)
-    drafts = SourceChunkDraftChain(FakeJson()).run(windows[0])
-    chunks = SourceChunkAssemblerChain().run("raw-1", raw_text, drafts)
+    drafts = await SourceChunkDraftChain(FakeJson()).run(windows[0])
+    chunks = await SourceChunkAssemblerChain().run("raw-1", raw_text, drafts)
 
     assert chunks[0]["text"] == raw_text
     assert chunks[0]["spans"] == [{"start": 0, "end": len(raw_text)}]
 
 
-def test_source_chunk_llm_failure_is_retryable():
+async def test_source_chunk_llm_failure_is_retryable():
     class BrokenJson:
-        def invoke_json(self, system: str, human: str) -> dict:
+        async def async_invoke_json(self, system: str, human: str) -> dict:
             raise RuntimeError("provider forbidden")
 
     with pytest.raises(RuntimeError, match="provider forbidden"):
-        SourceChunkDraftChain(BrokenJson()).run({"text": "hello", "start": 0, "end": 5})
+        await SourceChunkDraftChain(BrokenJson()).run({"text": "hello", "start": 0, "end": 5})
 
 
-def test_recall_index_chain_retries_once_after_invalid_output(monkeypatch):
+async def test_recall_index_chain_retries_once_after_invalid_output(monkeypatch):
     class RetryJson:
         def __init__(self) -> None:
             self.calls = 0
             self.prompts = []
             self.systems = []
 
-        def invoke_json(self, system: str, human: str) -> dict:
+        async def async_invoke_json(self, system: str, human: str) -> dict:
             self.calls += 1
             self.systems.append(system)
             self.prompts.append(human)
@@ -92,11 +92,10 @@ def test_recall_index_chain_retries_once_after_invalid_output(monkeypatch):
 
     monkeypatch.setattr(recall, "find_candidate_keys", lambda terms, limit=20: [])
     monkeypatch.setattr(recall, "find_exact_term_matches", lambda terms, limit=3: [])
-    monkeypatch.setattr(recall, "has_keys", lambda: False)
     monkeypatch.setattr(recall_key_vectors, "search", lambda text, top_k=20: [])
 
     json_client = RetryJson()
-    index = RecallIndexChain(json_client).run("Grisha inherited the Attack Titan.", [_source_chunk("chunk-1", "Grisha inherited the Attack Titan.")])
+    index = await RecallIndexChain(json_client).run("Grisha inherited the Attack Titan.", [_source_chunk("chunk-1", "Grisha inherited the Attack Titan.")])
 
     assert json_client.calls == 2
     assert "previous response failed validation" in json_client.prompts[1]
@@ -108,7 +107,7 @@ def test_recall_index_chain_retries_once_after_invalid_output(monkeypatch):
     assert index["recall_links"][0]["source_chunk_id"] == "chunk-1"
 
 
-def test_candidate_lookup_merges_ranks_filters_and_caps(monkeypatch):
+async def test_candidate_lookup_merges_ranks_filters_and_caps(monkeypatch):
     source_chunks_data = [_source_chunk("chunk-1", "Grisha inherited the Attack Titan.")]
     sqlite_candidates = [
         _candidate("exact-1", "Grisha Yeager", "exact"),
@@ -118,7 +117,6 @@ def test_candidate_lookup_merges_ranks_filters_and_caps(monkeypatch):
     extra = [_candidate(f"extra-{index}", f"Extra {index}", "keyword") for index in range(25)]
 
     monkeypatch.setattr(recall, "find_candidate_keys", lambda terms, limit=20: [*sqlite_candidates, *extra])
-    monkeypatch.setattr(recall, "has_keys", lambda: True)
     monkeypatch.setattr(recall_key_vectors, "search", lambda text, top_k=20: [
         {"object_id": "vector-1", "object_type": "recall_key", "distance": 0.2},
         {"object_id": "ignored-source", "object_type": "source_chunk", "distance": 0.1},
@@ -126,7 +124,7 @@ def test_candidate_lookup_merges_ranks_filters_and_caps(monkeypatch):
     ])
     monkeypatch.setattr(recall, "find_keys_by_ids", lambda ids: [key for key in vector_keys if key["id"] in ids])
 
-    candidates = RecallCandidateChain().run("Grisha and the Founding Titan", source_chunks_data)
+    candidates = await RecallCandidateChain().run("Grisha and the Founding Titan", source_chunks_data)
 
     assert len(candidates) == 20
     assert [candidate["id"] for candidate in candidates[:3]] == ["exact-1", "keyword-1", "extra-0"]
@@ -134,30 +132,19 @@ def test_candidate_lookup_merges_ranks_filters_and_caps(monkeypatch):
     assert "semantic vector match" in " ".join(candidates[1]["match_notes"])
 
 
-def test_candidate_lookup_skips_vector_search_when_no_recall_keys(monkeypatch):
-    monkeypatch.setattr(recall, "find_candidate_keys", lambda terms, limit=20: [])
-    monkeypatch.setattr(recall, "has_keys", lambda: False)
-    monkeypatch.setattr(recall_key_vectors, "search", lambda text, top_k=20: pytest.fail("vector search should be skipped"))
-
-    candidates = RecallCandidateChain().run("Eren wants freedom", [_source_chunk("chunk-1", "Eren wants freedom.")])
-
-    assert candidates == []
-
-
-def test_query_uses_source_search_and_recall_expansion(monkeypatch):
+async def test_query_uses_source_search_and_recall_expansion(monkeypatch):
     chunk_1 = {**_source_chunk("chunk-1", "Grisha inherited the Attack Titan. Unrelated training details continue for a while."), "summary": "Grisha Titan evidence"}
     chunk_2 = {**_source_chunk("chunk-2", "Eren later used inherited Titan powers. Unrelated tail should not be sent."), "summary": "Eren Titan evidence"}
 
     monkeypatch.setattr(source_chunk_vectors, "search", lambda query, top_k=8: [{"object_id": "chunk-1", "object_type": "source_chunk"}])
+    monkeypatch.setattr(recall_key_vectors, "search", lambda query, top_k=8: [])
     monkeypatch.setattr(source_chunks, "get_by_ids", lambda ids: [chunk for chunk in [chunk_1, chunk_2] if chunk["id"] in ids])
     monkeypatch.setattr(source_chunks, "search", lambda query, limit=8: [])
     monkeypatch.setattr(recall, "find_candidate_keys", lambda terms, limit=8: [_candidate("key-1", "Grisha Yeager", "keyword")])
-    monkeypatch.setattr(recall, "has_keys", lambda: False)
     monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda key_ids, limit=12: ["chunk-2"])
 
     class QueryJson:
-        def invoke_json(self, system: str, human: str) -> dict:
-            # breakdown call returns original query only (simple pass-through)
+        async def async_invoke_json(self, system: str, human: str) -> dict:
             if "Decompose the user query" in system:
                 return {"sub_queries": ["Grisha to Eren"]}
             assert "SOURCE_CHUNKS" in human
@@ -165,7 +152,7 @@ def test_query_uses_source_search_and_recall_expansion(monkeypatch):
             assert "Unrelated tail should not be sent" not in human
             return {"answer": "Grisha's power later connects to Eren.", "citation_ids": ["chunk-2"]}
 
-    result = RagServiceImpl(QueryJson()).query("Grisha to Eren")
+    result = await RagServiceImpl(QueryJson()).query("Grisha to Eren")
 
     assert result["answer"] == "Grisha's power later connects to Eren."
     assert [chunk["id"] for chunk in result["source_chunks"]] == ["chunk-1", "chunk-2"]
@@ -176,7 +163,7 @@ def test_query_uses_source_search_and_recall_expansion(monkeypatch):
     assert result["source_chunks"][1]["text"] == chunk_2["text"]
 
 
-def test_query_context_packer_ranks_and_falls_back(monkeypatch):
+async def test_query_context_packer_ranks_and_falls_back(monkeypatch):
     vector = {**_source_chunk("vector", "Attack Titan matters here. A different sentence."), "summary": "vector summary"}
     lexical = {**_source_chunk("lexical", "No direct overlap in text."), "summary": "fallback summary"}
     linked = {**_source_chunk("linked", "Attack Titan is also linked through recall."), "summary": "linked summary"}
@@ -185,17 +172,16 @@ def test_query_context_packer_ranks_and_falls_back(monkeypatch):
     monkeypatch.setattr(source_chunks, "get_by_ids", lambda ids: [chunk for chunk in [vector, lexical, linked] if chunk["id"] in ids])
     monkeypatch.setattr(source_chunks, "search", lambda query, limit=8: [lexical])
     monkeypatch.setattr(recall, "find_candidate_keys", lambda terms, limit=8: [_candidate("key-1", "Attack Titan", "keyword")])
-    monkeypatch.setattr(recall, "has_keys", lambda: False)
     monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda key_ids, limit=12: ["linked"])
 
     class PassthroughBreakdownJson:
-        def invoke_json(self, system: str, human: str) -> dict:
+        async def async_invoke_json(self, system: str, human: str) -> dict:
             if "Decompose the user query" in system:
                 return {"sub_queries": ["Attack Titan"]}
             return {"answer": "ok", "citation_ids": []}
 
     chain = QueryEvidenceChain(PassthroughBreakdownJson())
-    chunks, trace = chain.run("Attack Titan")
+    chunks, trace = await chain.run("Attack Titan")
 
     assert {chunk["id"] for chunk in chunks} == {"vector", "lexical", "linked"}
     assert trace["selected_snippet_counts"].keys() == {"vector", "lexical", "linked"}
@@ -205,26 +191,25 @@ def test_query_context_packer_ranks_and_falls_back(monkeypatch):
     assert trace["context_chars_saved"] >= 0
 
 
-def test_query_breakdown_falls_back_to_original_query_on_llm_failure(monkeypatch):
+async def test_query_breakdown_falls_back_to_original_query_on_llm_failure():
     """Breakdown must not block retrieval when the LLM call fails."""
     from src.services.rag.private.chains.query._breakdown import _decompose
 
     class FailJson:
-        def invoke_json(self, system: str, human: str) -> dict:
+        async def async_invoke_json(self, system: str, human: str) -> dict:
             raise RuntimeError("provider unavailable")
 
-    result = _decompose(FailJson(), "what happened to the project")
+    result = await _decompose(FailJson(), "what happened to the project")
 
     assert result == ["what happened to the project"]
 
 
-def test_query_breakdown_caps_and_deduplicates_sub_queries(monkeypatch):
+async def test_query_breakdown_caps_and_deduplicates_sub_queries():
     """Breakdown must cap at 4, always lead with original, and dedup."""
     from src.services.rag.private.chains.query._breakdown import _decompose
 
     class OverflowJson:
-        def invoke_json(self, system: str, human: str) -> dict:
-            # Returns 6 items including duplicates; should be trimmed and deduped
+        async def async_invoke_json(self, system: str, human: str) -> dict:
             return {"sub_queries": [
                 "original",
                 "sub-query 1",
@@ -234,18 +219,18 @@ def test_query_breakdown_caps_and_deduplicates_sub_queries(monkeypatch):
                 "sub-query 4",  # 6th — should be cut
             ]}
 
-    result = _decompose(OverflowJson(), "original")
+    result = await _decompose(OverflowJson(), "original")
 
     assert result[0] == "original"
     assert len(result) == 4
     assert len(set(result)) == 4  # no duplicates
 
 
-def test_normalizer_reuses_single_exact_name_or_alias_match(monkeypatch):
+async def test_normalizer_reuses_single_exact_name_or_alias_match(monkeypatch):
     existing = _candidate("key-1", "Grisha Yeager", "exact")
     monkeypatch.setattr(recall, "find_exact_term_matches", lambda terms, limit=3: [existing])
 
-    index, errors = RecallNormalizerChain().run(
+    index, errors = await RecallNormalizerChain().run(
         {
             "recall_keys": [{"ref": "k1", "name": "Grisha", "kind": "entity", "aliases": ["Grisha Yeager"]}],
             "recall_links": [{"recall_key_ref": "k1", "source_chunk_id": "chunk-1", "relation": "about"}],
@@ -259,7 +244,7 @@ def test_normalizer_reuses_single_exact_name_or_alias_match(monkeypatch):
     assert index["recall_links"][0]["recall_key_id"] == "key-1"
 
 
-def test_normalizer_reused_candidate_preserves_identity_and_merges_aliases():
+async def test_normalizer_reused_candidate_preserves_identity_and_merges_aliases():
     existing = {
         **_candidate("key-1", "Eren Yeager", "exact"),
         "kind": "entity",
@@ -269,7 +254,7 @@ def test_normalizer_reused_candidate_preserves_identity_and_merges_aliases():
         "metadata": {"old": True},
     }
 
-    index, errors = RecallNormalizerChain().run(
+    index, errors = await RecallNormalizerChain().run(
         {
             "recall_keys": [{
                 "ref": "k1",
@@ -298,13 +283,13 @@ def test_normalizer_reused_candidate_preserves_identity_and_merges_aliases():
     assert key["metadata"] == {"old": True, "new": True}
 
 
-def test_normalizer_does_not_auto_merge_ambiguous_exact_match(monkeypatch):
-    monkeypatch.setattr(recall, "find_exact_term_matches", lambda terms, limit=3: [
-        _candidate("key-1", "Alex", "exact"),
-        _candidate("key-2", "Alex", "exact"),
+async def test_normalizer_does_not_auto_merge_ambiguous_exact_match(monkeypatch):
+    monkeypatch.setattr(recall, "find_exact_term_matches", lambda terms, limit=5: [
+        _candidate("key-1", "Alex Smith", "exact"),
+        _candidate("key-2", "Alex Doe", "exact"),
     ])
 
-    index, errors = RecallNormalizerChain().run(
+    index, errors = await RecallNormalizerChain().run(
         {
             "recall_keys": [{"ref": "k1", "name": "Alex", "kind": "entity", "aliases": []}],
             "recall_links": [{"recall_key_ref": "k1", "source_chunk_id": "chunk-1", "relation": "mentions"}],
@@ -384,38 +369,13 @@ def test_recall_repository_reused_key_preserves_name_and_updates_summary(monkeyp
     )
 
     recall.save_index({
-        "recall_keys": [{
-            "id": "key-1",
-            "name": "Eren Yeager",
-            "kind": "entity",
-            "kind_label": "character",
-            "aliases": ["Eren"],
-            "summary": "Broad protagonist summary",
-            "metadata": {"old": True},
-        }],
+        "recall_keys": [{"id": "key-1", "name": "Eren Yeager", "kind": "entity", "kind_label": "character", "aliases": ["Eren"], "summary": "Broad protagonist summary", "metadata": {"old": True}}],
         "recall_links": [],
         "analysis": {},
     })
     recall.save_index({
-        "recall_keys": [{
-            "id": "key-1",
-            "name": "Eren Rumbling Arc",
-            "kind": "topic",
-            "kind_label": "main character",
-            "aliases": ["Attack Titan holder"],
-            "summary": "Broad protagonist summary updated with later evidence",
-            "metadata": {"old": True, "new": True},
-        }],
-        "recall_links": [{
-            "id": "link-1",
-            "recall_key_id": "key-1",
-            "source_chunk_id": "chunk-1",
-            "relation": "about",
-            "relation_label": "",
-            "confidence": 1,
-            "reason": "test",
-            "metadata": {},
-        }],
+        "recall_keys": [{"id": "key-1", "name": "Eren Rumbling Arc", "kind": "topic", "kind_label": "main character", "aliases": ["Attack Titan holder"], "summary": "Broad protagonist summary updated with later evidence", "metadata": {"old": True, "new": True}}],
+        "recall_links": [{"id": "link-1", "recall_key_id": "key-1", "source_chunk_id": "chunk-1", "relation": "about", "relation_label": "", "confidence": 1, "reason": "test", "metadata": {}}],
         "analysis": {},
     })
 
@@ -432,28 +392,12 @@ def test_recall_repository_reused_key_keeps_summary_when_new_summary_empty(monke
     monkeypatch.setattr(recall, "get_connection", lambda: conn)
 
     recall.save_index({
-        "recall_keys": [{
-            "id": "key-1",
-            "name": "Eren Yeager",
-            "kind": "other",
-            "kind_label": None,
-            "aliases": [],
-            "summary": "Existing broad summary",
-            "metadata": {},
-        }],
+        "recall_keys": [{"id": "key-1", "name": "Eren Yeager", "kind": "other", "kind_label": None, "aliases": [], "summary": "Existing broad summary", "metadata": {}}],
         "recall_links": [],
         "analysis": {},
     })
     recall.save_index({
-        "recall_keys": [{
-            "id": "key-1",
-            "name": "Eren",
-            "kind": "entity",
-            "kind_label": None,
-            "aliases": [],
-            "summary": "",
-            "metadata": {},
-        }],
+        "recall_keys": [{"id": "key-1", "name": "Eren", "kind": "entity", "kind_label": None, "aliases": [], "summary": "", "metadata": {}}],
         "recall_links": [],
         "analysis": {},
     })
@@ -471,9 +415,7 @@ def test_dev_wipe_clears_durability_sqlite_lookup_and_vectors(monkeypatch):
     conn.execute("INSERT INTO raw_inputs (id, job_id, content) VALUES ('raw-1', 'job-1', 'text')")
     conn.execute("INSERT INTO ingest_jobs (id, content_hash, raw_input_id, status, stage) VALUES ('job-1', 'hash-1', 'raw-1', 'queued', 'raw_input')")
     conn.execute("INSERT INTO ingest_checkpoints (job_id, stage, unit_key, status) VALUES ('job-1', 'raw_input', 'raw_input:raw-1', 'complete')")
-    conn.execute(
-        "INSERT INTO source_chunks (id, raw_input_id, text, summary, spans, metadata) VALUES ('chunk-1', 'raw-1', 'Grisha text', 'summary', '[]', '{}')"
-    )
+    conn.execute("INSERT INTO source_chunks (id, raw_input_id, text, summary, spans, metadata) VALUES ('chunk-1', 'raw-1', 'Grisha text', 'summary', '[]', '{}')")
     recall.save_index({
         "recall_keys": [{"id": "key-1", "name": "Grisha", "kind": "entity", "kind_label": None, "aliases": ["Grisha Yeager"], "summary": "", "metadata": {}}],
         "recall_links": [{"id": "link-1", "recall_key_id": "key-1", "source_chunk_id": "chunk-1", "relation": "about", "relation_label": "", "confidence": 1, "reason": "", "metadata": {}}],
@@ -487,21 +429,24 @@ def test_dev_wipe_clears_durability_sqlite_lookup_and_vectors(monkeypatch):
     assert conn.execute("SELECT name FROM sqlite_master WHERE name = 'vector_reset_called'").fetchone()
 
 
-def test_durable_submit_reuses_same_text_job(monkeypatch):
+async def test_durable_submit_reuses_same_text_job(monkeypatch):
     _patch_memory_db(monkeypatch)
 
     durable = DurableIngest(NoopPreprocess(), FakeWindows(), FakeDrafts(), SourceChunkAssemblerChain(), FakeRecallIndex())
-    durable.scheduler.schedule = lambda job_id: None
 
-    first = durable.submit("same text", "job-1")
-    second = durable.submit("same text", "job-2")
+    async def _noop_schedule(job_id): pass
+    durable.scheduler.schedule = _noop_schedule  # type: ignore[method-assign]
+
+    first = await durable.submit("same text", "job-1")
+    second = await durable.submit("same text", "job-2")
 
     assert first["id"] == "job-1"
     assert second["id"] == "job-1"
     assert len(durability_repo.list_jobs()) == 1
 
 
-def test_durable_submit_requeues_aborted_same_text_job(monkeypatch):
+
+async def test_durable_submit_requeues_aborted_same_text_job(monkeypatch):
     _patch_memory_db(monkeypatch)
 
     content_hash = hashlib.sha256("same text".encode("utf-8")).hexdigest()
@@ -510,15 +455,17 @@ def test_durable_submit_requeues_aborted_same_text_job(monkeypatch):
     durability_repo.abort("job-1", "raw input missing")
 
     durable = DurableIngest(NoopPreprocess(), FakeWindows(), FakeDrafts(), SourceChunkAssemblerChain(), FakeRecallIndex())
-    durable.scheduler.schedule = lambda job_id: None
-    job = durable.submit("same text", "job-2")
+
+    async def _noop_schedule(job_id): pass
+    durable.scheduler.schedule = _noop_schedule  # type: ignore[method-assign]
+    job = await durable.submit("same text", "job-2")
 
     assert job["id"] == "job-1"
     assert job["status"] == STATUS_QUEUED
     assert job["error"] is None
 
 
-def test_durable_runner_aborts_job_missing_raw_input(monkeypatch):
+async def test_durable_runner_aborts_job_missing_raw_input(monkeypatch):
     conn = _patch_memory_db(monkeypatch)
     conn.execute(
         "INSERT INTO ingest_jobs (id, content_hash, raw_input_id, status, stage) VALUES ('job-1', 'hash-1', NULL, 'queued', 'raw_input')"
@@ -526,7 +473,7 @@ def test_durable_runner_aborts_job_missing_raw_input(monkeypatch):
     durability_repo.complete_checkpoint("job-1", STAGE_SOURCE_CHUNKS, "source_piece:done", "chunk-1")
     runner = DurableIngestRunner(FakeWindows(), FakeDrafts(), SourceChunkAssemblerChain(), FakeRecallIndex())
 
-    runner.run_once("job-1")
+    await runner.run_once("job-1")
 
     job = durability_repo.get("job-1")
     assert job["status"] == STATUS_ABORTED
@@ -535,7 +482,7 @@ def test_durable_runner_aborts_job_missing_raw_input(monkeypatch):
     assert conn.execute("SELECT COUNT(*) FROM ingest_checkpoints WHERE job_id = 'job-1'").fetchone()[0] == 0
 
 
-def test_durable_source_chunks_resume_from_next_unfinished_piece(monkeypatch):
+async def test_durable_source_chunks_resume_from_next_unfinished_piece(monkeypatch):
     _patch_memory_db(monkeypatch)
     monkeypatch.setattr(recall_key_vectors, "exists", lambda key_id: True)
     monkeypatch.setattr(source_chunk_vectors, "exists", lambda chunk_id: True)
@@ -546,12 +493,12 @@ def test_durable_source_chunks_resume_from_next_unfinished_piece(monkeypatch):
     runner = DurableIngestRunner(FakeWindows(), drafts, SourceChunkAssemblerChain(), FakeRecallIndex())
 
     with pytest.raises(RuntimeError):
-        runner.run_once(job["id"])
+        await runner.run_once(job["id"])
     assert durability_repo.get(job["id"])["status"] == STATUS_WAITING_RETRY
     assert drafts.calls == ["one", "two"]
 
     drafts.fail_on = None
-    runner.run_once(job["id"])
+    await runner.run_once(job["id"])
 
     assert drafts.calls == ["one", "two", "two"]
     assert durability_repo.get(job["id"])["status"] == "complete"
@@ -583,15 +530,18 @@ def test_manual_resume_keeps_completed_checkpoints(monkeypatch):
     assert durability_repo.checkpoint_complete("job-1", STAGE_SOURCE_CHUNKS, "source_piece:done") is True
 
 
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+
 def _source_chunk(chunk_id: str, text: str) -> dict:
     return {
         "id": chunk_id,
         "raw_input_id": "raw-1",
         "text": text,
-        "summary": text,
+        "summary": "test chunk summary",
         "spans": [{"start": 0, "end": len(text)}],
         "source_time": None,
-        "metadata": {},
+        "metadata": {"salient_entities": ["Test Entity"]},
     }
 
 
@@ -612,7 +562,7 @@ def _candidate(key_id: str, name: str, source: str) -> dict:
 
 
 def _memory_db():
-    conn = sqlite3.connect(":memory:")
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(Path(__file__).resolve().parents[3].joinpath("resources/schema.sql").read_text())
@@ -641,19 +591,19 @@ class FakeDrafts:
         self.fail_on = fail_on
         self.calls = []
 
-    def run(self, window: dict) -> list[dict]:
+    async def run(self, window: dict) -> list[dict]:
         self.calls.append(window["text"])
         if window["text"] == self.fail_on:
             raise RuntimeError("draft failed")
-        return [{"window": window, "summary": window["text"], "source_time": None, "metadata": {}}]
+        return [{"window": window, "summary": window["text"], "source_time": None, "metadata": {"salient_entities": ["Test Entity"]}}]
 
 
 class FakeRecallIndex:
-    def run(self, raw_text: str, chunks: list[dict]) -> dict:
+    async def run(self, raw_text: str, chunks: list[dict]) -> dict:
         chunk = chunks[0]
         key_id = f"key-{chunk['id']}"
         return {
-            "recall_keys": [{"id": key_id, "name": "Thing", "kind": "entity", "kind_label": None, "aliases": [], "summary": "", "metadata": {}}],
+            "recall_keys": [{"id": key_id, "name": f"Thing {chunk['id']}", "kind": "entity", "kind_label": None, "aliases": [], "summary": "", "metadata": {}}],
             "recall_links": [{
                 "id": f"link-{chunk['id']}",
                 "recall_key_id": key_id,

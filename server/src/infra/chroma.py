@@ -45,6 +45,13 @@ def existing_ids(ids: list[str]) -> set[str]:
     return set(result.get("ids") or [])
 
 
+def delete(ids: list[str]) -> None:
+    """Delete vector documents by ID."""
+    if not ids:
+        return
+    _collection().delete(ids=ids)
+
+
 def search(query: str, top_k: int = 8, where: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Return normalized search hits from Chroma's nested result shape."""
     kwargs = {"query_texts": [query], "n_results": top_k}

@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS raw_inputs (
     job_id TEXT NOT NULL,
     content_hash TEXT,
     content TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    deleted_at DATETIME
 );
 
 CREATE TABLE IF NOT EXISTS ingest_jobs (
@@ -85,6 +86,7 @@ CREATE TABLE IF NOT EXISTS recall_key_terms (
 );
 
 CREATE INDEX IF NOT EXISTS idx_recall_key_terms_normalized ON recall_key_terms(normalized_term);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_recall_key_terms_unique_name ON recall_key_terms(normalized_term) WHERE term_type = 'name';
 CREATE INDEX IF NOT EXISTS idx_recall_key_terms_key ON recall_key_terms(recall_key_id);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS recall_keys_fts USING fts5(

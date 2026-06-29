@@ -46,9 +46,10 @@ def get_by_ids(chunk_ids: list[str]) -> list[dict[str, Any]]:
     placeholders = ",".join(["?"] * len(ids))
     rows = get_connection().execute(
         f"""
-        SELECT id, raw_input_id, text, summary, spans, source_time, metadata, created_at
-        FROM source_chunks
-        WHERE id IN ({placeholders})
+        SELECT sc.id, sc.raw_input_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.metadata, sc.created_at
+        FROM source_chunks sc
+        JOIN raw_inputs ri ON ri.id = sc.raw_input_id
+        WHERE sc.id IN ({placeholders}) AND ri.deleted_at IS NULL
         """,
         ids,
     ).fetchall()
@@ -60,10 +61,11 @@ def get_by_raw_input_id(raw_input_id: str) -> list[dict[str, Any]]:
     """Load all chunks already saved for one raw input."""
     rows = get_connection().execute(
         """
-        SELECT id, raw_input_id, text, summary, spans, source_time, metadata, created_at
-        FROM source_chunks
-        WHERE raw_input_id = ?
-        ORDER BY created_at ASC
+        SELECT sc.id, sc.raw_input_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.metadata, sc.created_at
+        FROM source_chunks sc
+        JOIN raw_inputs ri ON ri.id = sc.raw_input_id
+        WHERE sc.raw_input_id = ? AND ri.deleted_at IS NULL
+        ORDER BY sc.created_at ASC
         """,
         (raw_input_id,),
     ).fetchall()
@@ -88,10 +90,11 @@ def search(query: str, limit: int = 8) -> list[dict[str, Any]]:
         params.extend([f"%{term}%", f"%{term}%"])
     rows = get_connection().execute(
         f"""
-        SELECT id, raw_input_id, text, summary, spans, source_time, metadata, created_at
-        FROM source_chunks
-        WHERE {where}
-        ORDER BY created_at DESC
+        SELECT sc.id, sc.raw_input_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.metadata, sc.created_at
+        FROM source_chunks sc
+        JOIN raw_inputs ri ON ri.id = sc.raw_input_id
+        WHERE ({where}) AND ri.deleted_at IS NULL
+        ORDER BY sc.created_at DESC
         LIMIT ?
         """,
         [*params, limit],
@@ -102,7 +105,7 @@ def search(query: str, limit: int = 8) -> list[dict[str, Any]]:
 def list_with_raw_inputs() -> dict[str, Any]:
     """Dev view: raw inputs with nested source chunks."""
     conn = get_connection()
-    raw_inputs = [dict(row) for row in conn.execute("SELECT id, job_id, content, created_at FROM raw_inputs ORDER BY created_at DESC")]
+    raw_inputs = [dict(row) for row in conn.execute("SELECT id, job_id, content, created_at FROM raw_inputs WHERE deleted_at IS NULL ORDER BY created_at DESC")]
     chunks = [
         _from_row(row)
         for row in conn.execute(

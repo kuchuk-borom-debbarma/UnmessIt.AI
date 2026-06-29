@@ -19,10 +19,7 @@ def find_candidate_keys(terms: list[str], limit: int = 20) -> list[dict[str, Any
     return _merge_candidates([*exact, *fts], limit)
 
 
-def has_keys() -> bool:
-    """Return whether semantic recall-key lookup has anything useful to search."""
-    row = get_connection().execute("SELECT 1 FROM recall_keys LIMIT 1").fetchone()
-    return row is not None
+
 
 
 def find_exact_term_matches(terms: list[str], limit: int = 20) -> list[dict[str, Any]]:
@@ -87,6 +84,39 @@ def find_keys_by_ids(ids: list[str]) -> list[dict[str, Any]]:
     return [key_by_id[item] for item in clean_ids if item in key_by_id]
 
 
+def find_keys_by_names(names: list[str]) -> list[dict[str, Any]]:
+    """Find recall keys whose name or aliases match any of the given subject names.
+
+    Uses FTS5 search so diacritic variants match: 'Helene' finds 'Hélène',
+    'Boris' finds 'Borís', etc. Domain-neutral: names come from the subjects
+    extraction node.
+    """
+    if not names:
+        return []
+    seen: dict[str, dict[str, Any]] = {}
+    conn = get_connection()
+    for name in names:
+        # Escape FTS special chars; wrap in quotes for exact phrase match.
+        safe = name.replace('"', '""')
+        try:
+            rows = conn.execute(
+                """
+                SELECT rk.id, rk.name, rk.kind, rk.kind_label, rk.aliases,
+                       rk.summary, rk.metadata, rk.created_at, rk.updated_at
+                FROM recall_keys_fts fts
+                JOIN recall_keys rk ON rk.id = fts.recall_key_id
+                WHERE recall_keys_fts MATCH ?
+                """,
+                (safe,),
+            ).fetchall()
+            for row in rows:
+                seen.setdefault(row["id"], _key_from_row(row))
+        except Exception:
+            pass  # ponytail: bad FTS term → skip, not a fatal error
+    return list(seen.values())
+
+
+
 def source_chunks_with_links(source_chunk_ids: list[str]) -> set[str]:
     """Return source chunk IDs that already have recall evidence links."""
     clean_ids = [chunk_id for chunk_id in dict.fromkeys(source_chunk_ids) if chunk_id]
@@ -128,15 +158,18 @@ def linked_source_chunk_ids(recall_key_ids: list[str], limit: int = 12) -> list[
     placeholders = ", ".join("?" for _ in clean_ids)
     rows = get_connection().execute(
         f"""
-        SELECT c.id, MIN(c.created_at) AS first_seen
-        FROM source_chunks c
-        JOIN recall_links l ON l.source_chunk_id = c.id
-        WHERE l.recall_key_id IN ({placeholders})
-        GROUP BY c.id
-        ORDER BY first_seen ASC
+        SELECT l.source_chunk_id AS id, 
+               COUNT(DISTINCT l.recall_key_id) AS match_count,
+               MIN(l.created_at) AS first_seen
+        FROM recall_links l
+        JOIN source_chunks sc ON sc.id = l.source_chunk_id
+        JOIN raw_inputs ri ON ri.id = sc.raw_input_id
+        WHERE l.recall_key_id IN ({placeholders}) AND ri.deleted_at IS NULL
+        GROUP BY l.source_chunk_id
+        ORDER BY match_count DESC, first_seen ASC
         LIMIT ?
         """,
-        [*clean_ids, limit],
+        [*clean_ids, 24],
     ).fetchall()
     return [row["id"] for row in rows]
 

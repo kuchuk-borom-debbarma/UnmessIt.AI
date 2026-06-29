@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { ChevronDown, ChevronRight, Clock, Database, FileText, Link2, PlayCircle, RefreshCw, Tags } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, Database, FileText, Link2, PlayCircle, RefreshCw, Tags, Trash2, Trash, RotateCcw, AlertOctagon } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8000';
 
@@ -139,9 +139,10 @@ const JobNode = ({ job, selected, onSelect }) => (
 
 export default function ExplorerView() {
   const [rawInputs, setRawInputs] = useState([]);
+  const [trashInputs, setTrashInputs] = useState([]);
   const [recallKeys, setRecallKeys] = useState([]);
   const [jobs, setJobs] = useState([]);
-  const [totals, setTotals] = useState({ rawInputs: 0, sourceChunks: 0, recallKeys: 0, recallLinks: 0, jobs: 0 });
+  const [totals, setTotals] = useState({ rawInputs: 0, trashInputs: 0, sourceChunks: 0, recallKeys: 0, recallLinks: 0, jobs: 0 });
   const [selected, setSelected] = useState(null);
   const [mode, setMode] = useState('sources');
   const [tab, setTab] = useState('summary');
@@ -149,8 +150,8 @@ export default function ExplorerView() {
   const [error, setError] = useState('');
 
   const rawById = useMemo(() => {
-    return Object.fromEntries(rawInputs.map((raw) => [raw.id, raw]));
-  }, [rawInputs]);
+    return Object.fromEntries([...rawInputs, ...trashInputs].map((raw) => [raw.id, raw]));
+  }, [rawInputs, trashInputs]);
 
   useEffect(() => {
     fetchMemory();
@@ -164,19 +165,23 @@ export default function ExplorerView() {
   const fetchMemory = async () => {
     setLoading(true);
     try {
-      const [sourceRes, recallRes, jobsRes] = await Promise.all([
+      const [sourceRes, trashRes, recallRes, jobsRes] = await Promise.all([
         axios.get(`${API_BASE}/dev/seai`),
+        axios.get(`${API_BASE}/dev/trash`),
         axios.get(`${API_BASE}/dev/recall`),
         axios.get(`${API_BASE}/dev/ingest_jobs`),
       ]);
       const sourceData = sourceRes.data.data || [];
+      const trashData = trashRes.data.data || [];
       const recallData = recallRes.data.data || [];
       const jobData = jobsRes.data.data || [];
       setRawInputs(sourceData);
+      setTrashInputs(trashData);
       setRecallKeys(recallData);
       setJobs(jobData);
       setTotals({
         rawInputs: sourceRes.data.total_raw_inputs || 0,
+        trashInputs: trashRes.data.total_trash || 0,
         sourceChunks: sourceRes.data.total_source_chunks || 0,
         recallKeys: recallRes.data.total_recall_keys || 0,
         recallLinks: recallRes.data.total_recall_links || 0,
@@ -209,6 +214,8 @@ export default function ExplorerView() {
     setMode(nextMode);
     if (nextMode === 'sources') {
       setSelected(rawInputs[0] ? { kind: 'raw', raw: rawInputs[0] } : null);
+    } else if (nextMode === 'trash') {
+      setSelected(trashInputs[0] ? { kind: 'raw', raw: trashInputs[0] } : null);
     } else if (nextMode === 'recall') {
       setSelected(recallKeys[0] ? { kind: 'recall_key', recallKey: recallKeys[0] } : null);
     } else {
@@ -216,8 +223,35 @@ export default function ExplorerView() {
     }
   };
 
+  const softDeleteRaw = async (id) => {
+    if (!window.confirm("Move this document to the trash? It will be excluded from queries.")) return;
+    await axios.delete(`${API_BASE}/dev/raw_inputs/${id}`);
+    setSelected(null);
+    await fetchMemory();
+  };
+
+  const restoreRaw = async (id) => {
+    await axios.post(`${API_BASE}/dev/raw_inputs/${id}/restore`);
+    setSelected(null);
+    await fetchMemory();
+  };
+
+  const hardDeleteRaw = async (id) => {
+    if (!window.confirm("Permanently delete this document and all its chunks? This cannot be undone.")) return;
+    await axios.delete(`${API_BASE}/dev/raw_inputs/${id}/hard`);
+    setSelected(null);
+    await fetchMemory();
+  };
+
   const resumeJob = async (jobId) => {
     await axios.post(`${API_BASE}/dev/ingest_jobs/${jobId}/resume`);
+    await fetchMemory();
+  };
+
+  const deleteJob = async (jobId) => {
+    if (!window.confirm("Are you sure you want to delete this job and all its checkpoints?")) return;
+    await axios.delete(`${API_BASE}/dev/ingest_jobs/${jobId}`);
+    setSelected(null);
     await fetchMemory();
   };
 
@@ -230,15 +264,36 @@ export default function ExplorerView() {
       const chunks = selected.raw.source_chunks || [];
       return (
         <>
-          <DetailHeader title="Raw Input" pills={[`${chunks.length} source chunks`, selected.raw.id]} />
+          <DetailHeader title={selected.raw.deleted_at ? "Trashed Input" : "Raw Input"} pills={[selected.raw.deleted_at ? "Soft Deleted" : `${chunks.length} source chunks`, selected.raw.id]} />
           <Tabs tabs={['source', 'metadata']} tab={tab} setTab={setTab} />
           <div className="detail-body">
-            {tab === 'source' && <div className="evidence-text">{selected.raw.content}</div>}
+            {tab === 'source' && (
+              <>
+                <div style={{ display: 'flex', gap: '12px', marginBottom: 18 }}>
+                  {selected.raw.deleted_at ? (
+                    <>
+                      <button className="btn btn-primary" onClick={() => restoreRaw(selected.raw.id)}>
+                        <RotateCcw size={16} /> Restore
+                      </button>
+                      <button className="btn" style={{ color: '#ef4444', borderColor: '#ef4444' }} onClick={() => hardDeleteRaw(selected.raw.id)}>
+                        <AlertOctagon size={16} /> Hard Delete
+                      </button>
+                    </>
+                  ) : (
+                    <button className="btn" style={{ color: '#ef4444', borderColor: '#ef4444' }} onClick={() => softDeleteRaw(selected.raw.id)}>
+                      <Trash size={16} /> Move to Trash
+                    </button>
+                  )}
+                </div>
+                <div className="evidence-text">{selected.raw.content}</div>
+              </>
+            )}
             {tab === 'metadata' && (
               <Metadata rows={[
                 ['id', selected.raw.id],
                 ['job_id', selected.raw.job_id],
                 ['created_at', selected.raw.created_at],
+                ['deleted_at', selected.raw.deleted_at || ''],
               ]} />
             )}
           </div>
@@ -336,11 +391,16 @@ export default function ExplorerView() {
                     <div className="evidence-text" style={{ color: '#ef4444' }}>{job.error}</div>
                   </>
                 )}
-                {canResume && (
-                  <button className="btn btn-primary" style={{ marginTop: 18 }} onClick={() => resumeJob(job.id)}>
-                    <PlayCircle size={16} /> Resume Job
+                <div style={{ display: 'flex', gap: '12px', marginTop: 18 }}>
+                  {canResume && (
+                    <button className="btn btn-primary" onClick={() => resumeJob(job.id)}>
+                      <PlayCircle size={16} /> Resume Job
+                    </button>
+                  )}
+                  <button className="btn" style={{ color: '#ef4444', borderColor: '#ef4444' }} onClick={() => deleteJob(job.id)}>
+                    <Trash2 size={16} /> Delete Job
                   </button>
-                )}
+                </div>
                 <h3 className="detail-heading" style={{ marginTop: 18 }}>Counts</h3>
                 <div className="evidence-text">{formatJson(job.metadata) || 'No counts yet.'}</div>
               </>
@@ -423,6 +483,8 @@ export default function ExplorerView() {
                 <Pill>{totals.rawInputs} raw inputs</Pill>
                 <Pill>{totals.sourceChunks} source chunks</Pill>
               </>
+            ) : mode === 'trash' ? (
+              <Pill>{totals.trashInputs} trashed inputs</Pill>
             ) : mode === 'recall' ? (
               <>
                 <Pill>{totals.recallKeys} recall keys</Pill>
@@ -436,7 +498,7 @@ export default function ExplorerView() {
             </button>
           </div>
         </div>
-        <Tabs tabs={['sources', 'recall', 'jobs']} tab={mode} setTab={switchMode} />
+        <Tabs tabs={['sources', 'trash', 'recall', 'jobs']} tab={mode} setTab={switchMode} />
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
           {loading ? (
             <div className="empty-state">Loading memory index...</div>
@@ -444,12 +506,18 @@ export default function ExplorerView() {
             <div className="empty-state" style={{ color: '#ef4444' }}>{error}</div>
           ) : mode === 'sources' && rawInputs.length === 0 ? (
             <div className="empty-state">No source chunks indexed yet.</div>
+          ) : mode === 'trash' && trashInputs.length === 0 ? (
+            <div className="empty-state">Trash is empty.</div>
           ) : mode === 'recall' && recallKeys.length === 0 ? (
             <div className="empty-state">No recall keys indexed yet.</div>
           ) : mode === 'jobs' && jobs.length === 0 ? (
             <div className="empty-state">No ingest jobs yet.</div>
           ) : mode === 'sources' ? (
             rawInputs.map((raw) => (
+              <RawNode key={raw.id} raw={raw} selected={selected} onSelect={select} />
+            ))
+          ) : mode === 'trash' ? (
+            trashInputs.map((raw) => (
               <RawNode key={raw.id} raw={raw} selected={selected} onSelect={select} />
             ))
           ) : mode === 'recall' ? (

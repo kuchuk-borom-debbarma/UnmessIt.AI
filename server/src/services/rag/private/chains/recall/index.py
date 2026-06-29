@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from src.repositories import recall
 from src.services.rag.models import RecallIndex, SourceChunk
 from src.services.rag.private.chains.recall.candidates import RecallCandidateChain
 from src.services.rag.private.chains.recall.drafts import RecallDraftChain
@@ -44,10 +46,10 @@ class RecallIndexChain:
         self.normalizer = RecallNormalizerChain()
         self.graph = self._build_graph()
 
-    def run(self, raw_text: str, source_chunks: list[SourceChunk]) -> RecallIndex:
+    async def run(self, raw_text: str, source_chunks: list[SourceChunk]) -> RecallIndex:
         """Return normalized recall keys and links for saved source chunks."""
         logger.info("recall_index_start chunks=%s chunk_ids=%s", len(source_chunks), [chunk["id"] for chunk in source_chunks])
-        state = self.graph.invoke({"raw_text": raw_text, "source_chunks": source_chunks, "retry_used": False})
+        state = await self.graph.ainvoke({"raw_text": raw_text, "source_chunks": source_chunks, "retry_used": False})
         recall_index = state["recall_index"]
         errors = state.get("errors", [])
         logger.info(
@@ -73,21 +75,20 @@ class RecallIndexChain:
         graph.add_conditional_edges("normalize", self._after_normalize, {"retry": "draft", "done": END})
         return graph.compile()
 
-    def _find_candidates(self, state: RecallGraphState) -> RecallGraphState:
+    async def _find_candidates(self, state: RecallGraphState) -> RecallGraphState:
         """Find existing recall keys before asking the LLM to create new ones."""
-        candidates = self.candidates.run(state["raw_text"], state["source_chunks"])
+        candidates = await self.candidates.run(state["raw_text"], state["source_chunks"])
         return {**state, "candidates": candidates}
 
-    def _draft(self, state: RecallGraphState) -> RecallGraphState:
+    async def _draft(self, state: RecallGraphState) -> RecallGraphState:
         """Ask the LLM for recall keys/links, including retry errors when present."""
-        draft = self.drafts.run(state["source_chunks"], state.get("candidates", []), state.get("errors") if state.get("retry_ready") else None)
+        draft = await self.drafts.run(state["source_chunks"], state.get("candidates", []), state.get("errors") if state.get("retry_ready") else None)
         return {**state, "draft": draft, "retry_ready": False}
 
-    def _normalize(self, state: RecallGraphState) -> RecallGraphState:
+    async def _normalize(self, state: RecallGraphState) -> RecallGraphState:
         """Validate LLM output and prepare the graph branch decision."""
-        recall_index, errors = self.normalizer.run(state.get("draft", {}), state["source_chunks"], state.get("candidates", []))
+        recall_index, errors = await self.normalizer.run(state.get("draft", {}), state["source_chunks"], state.get("candidates", []))
         if errors and not state.get("retry_used"):
-            # The retry tells the LLM exactly what failed instead of silently accepting bad links.
             logger.info(
                 "recall_index_retry validation_errors=%s normalized_keys=%s normalized_links=%s errors=%s",
                 len(errors),

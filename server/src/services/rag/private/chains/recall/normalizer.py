@@ -20,7 +20,7 @@ class RecallNormalizerChain:
     rejects links to unknown chunks, and drops duplicate links from this run.
     """
 
-    def run(
+    async def run(
         self,
         data: dict[str, Any],
         source_chunks: list[SourceChunk],
@@ -31,6 +31,7 @@ class RecallNormalizerChain:
         # Only candidates found by our lookup can be reused; arbitrary LLM IDs are ignored.
         candidates_by_id = {str(candidate["id"]): candidate for candidate in candidates}
         key_by_ref: dict[str, dict[str, Any]] = {}
+        keys_by_norm_name: dict[str, dict[str, Any]] = {}
         keys = []
         links = []
         errors = []
@@ -58,6 +59,12 @@ class RecallNormalizerChain:
             if not ref or not name:
                 errors.append("recall key missing ref or name")
                 continue
+
+            norm_name = recall.normalize_term(name)
+            if not existing and norm_name in keys_by_norm_name:
+                key_by_ref[ref] = keys_by_norm_name[norm_name]
+                continue
+
             if not existing:
                 existing = _exact_existing_key(name, _as_strings(draft.get("aliases")), errors)
             kind, metadata = _allowed(draft.get("kind"), KINDS, draft.get("metadata"))
@@ -77,6 +84,7 @@ class RecallNormalizerChain:
             }
             # Links point to this short ref inside the same LLM response.
             key_by_ref[ref] = key
+            keys_by_norm_name[norm_name] = key
             keys.append(key)
 
         seen_links = set()
@@ -128,12 +136,17 @@ def _as_list(value: Any) -> list[dict[str, Any]]:
 
 def _exact_existing_key(name: str, aliases: list[str], errors: list[str]) -> dict[str, Any] | None:
     """Reuse only one unambiguous exact name/alias match from the whole key store."""
-    matches = recall.find_exact_term_matches([name, *aliases], limit=3)
+    matches = recall.find_exact_term_matches([name, *aliases], limit=5)
     unique = {match["id"]: match for match in matches}
     if len(unique) == 1:
         # Exact normalized text is safe to auto-reuse; semantic matches are not.
         return next(iter(unique.values()))
     if len(unique) > 1:
+        # If ambiguous, check if any exactly match the primary name to prevent runaway duplication.
+        norm_name = recall.normalize_term(name)
+        name_matches = [m for m in unique.values() if recall.normalize_term(m.get("name", "")) == norm_name]
+        if name_matches:
+            return name_matches[0]
         errors.append("new recall key exact match is ambiguous")
     return None
 

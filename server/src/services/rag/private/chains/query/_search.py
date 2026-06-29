@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any
@@ -13,26 +14,23 @@ logger = logging.getLogger(__name__)
 MAX_EVIDENCE_CHUNKS = 12
 MAX_SNIPPETS_PER_CHUNK = 3
 MAX_SNIPPET_CHARS = 420
-# Context budget per sub-query pass; total is capped again after merge.
 _CONTEXT_CHARS_PER_PASS = 6000
 
 
-def search_node(state: QueryState) -> dict[str, Any]:
-    """LangGraph node: run evidence search for every sub-query and accumulate chunks.
+async def search_node(state: QueryState) -> dict[str, Any]:
+    """LangGraph node: run evidence search for all sub-queries concurrently.
 
-    Each sub-query contributes independently ranked chunks. The caller (graph)
-    merges all returned chunk lists via the operator.add reducer on QueryState.chunks.
-    We return one trace_part per sub-query so the final trace can show per-sub-query
-    diagnostics.
+    asyncio.gather() fires each sub-query's vector+lexical+recall searches in
+    parallel. For N sub-queries the wall-clock time is roughly one search pass
+    instead of N sequential passes.
     """
+    extracted_subjects = state.get("extracted_subjects") or []
+    results = await asyncio.gather(*[_evidence_for(sq, extracted_subjects) for sq in state["sub_queries"]])
     all_chunks: list[dict[str, Any]] = []
     trace_parts: list[dict[str, Any]] = []
-
-    for sub_query in state["sub_queries"]:
-        chunks, trace_part = _evidence_for(sub_query)
+    for chunks, trace_part in results:
         all_chunks.extend(chunks)
         trace_parts.append(trace_part)
-
     return {"chunks": all_chunks, "trace_parts": trace_parts}
 
 
@@ -41,14 +39,13 @@ def finalize_chunks(raw_chunks: list[dict[str, Any]], query: str) -> tuple[list[
 
     Called by QueryEvidenceChain after the graph completes; not a graph node itself
     because it needs the full merged set before trimming to MAX_EVIDENCE_CHUNKS.
+    This is pure CPU — no I/O — so it does not need to be async.
     """
-    # Dedup: operator.add may produce duplicates across sub-query passes.
     seen: dict[str, dict[str, Any]] = {}
     for chunk in raw_chunks:
         seen.setdefault(chunk["id"], chunk)
     deduped = list(seen.values())
 
-    # Re-rank across the full merged set using the original user query for term overlap.
     ranked, score_trace = _rank_chunks(query, deduped)
     ranked, context_trace = _pack_context(query, ranked[:MAX_EVIDENCE_CHUNKS])
     selected_score_trace = {chunk["id"]: score_trace.get(chunk["id"], []) for chunk in ranked}
@@ -58,20 +55,23 @@ def finalize_chunks(raw_chunks: list[dict[str, Any]], query: str) -> tuple[list[
 # ── internal helpers ─────────────────────────────────────────────────────────
 
 
-def _evidence_for(sub_query: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Run all three search paths for one sub-query."""
-    vector_chunks, vector_ids = _vector_source_chunks(sub_query)
-    lexical_chunks = source_chunks.search(sub_query, limit=8)
-    recall_keys = _recall_keys(sub_query)
-    linked_ids = recall.linked_source_chunk_ids([key["id"] for key in recall_keys], limit=12)
-    linked_chunks = source_chunks.get_by_ids(linked_ids)
+async def _evidence_for(sub_query: str, extracted_subjects: list[str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Run all three search paths for one sub-query concurrently where possible."""
+    # Vector search and lexical search can run in parallel; recall key lookup is cheap.
+    (vector_chunks, vector_ids), lexical_chunks, recall_keys = await asyncio.gather(
+        _vector_source_chunks(sub_query),
+        asyncio.to_thread(source_chunks.search, sub_query, 8),
+        _recall_keys(sub_query, extracted_subjects),
+    )
+    linked_ids = await asyncio.to_thread(recall.linked_source_chunk_ids, [key["id"] for key in recall_keys], 12)
+    linked_chunks = await asyncio.to_thread(source_chunks.get_by_ids, linked_ids)
 
-    # Source chunks are evidence; recall only expands the search area.
     chunks, _ = _rank_chunks(sub_query, [*vector_chunks, *lexical_chunks, *linked_chunks])
     chunks, _ = _pack_context(sub_query, chunks[:MAX_EVIDENCE_CHUNKS], budget=_CONTEXT_CHARS_PER_PASS)
 
     trace_part = {
         "sub_query": sub_query,
+        "extracted_subjects": extracted_subjects,
         "vector_source_chunk_ids": vector_ids,
         "lexical_source_chunk_count": len(lexical_chunks),
         "recall_key_count": len(recall_keys),
@@ -82,31 +82,69 @@ def _evidence_for(sub_query: str) -> tuple[list[dict[str, Any]], dict[str, Any]]
     return chunks, trace_part
 
 
-def _vector_source_chunks(query: str) -> tuple[list[dict[str, Any]], list[str]]:
+async def _vector_source_chunks(query: str) -> tuple[list[dict[str, Any]], list[str]]:
     """Use Chroma when available; lexical search still works if embeddings are down."""
     try:
-        hits = source_chunk_vectors.search(query, top_k=8)
+        hits = await asyncio.to_thread(source_chunk_vectors.search, query, 8)
     except Exception as exc:
         logger.warning("query_source_vector_search_failed error=%s", exc)
         return [], []
     ids = [hit["object_id"] for hit in hits if hit.get("object_type") == "source_chunk"]
-    return source_chunks.get_by_ids(ids), ids
+    chunks = await asyncio.to_thread(source_chunks.get_by_ids, ids)
+    return chunks, ids
 
 
-def _recall_keys(query: str) -> list[dict[str, Any]]:
-    """Find recall keys that may point to broader related evidence."""
-    keys = recall.find_candidate_keys(_terms(query), limit=8)
-    if recall.has_keys():
-        try:
-            vector_ids = [
-                hit["object_id"]
-                for hit in recall_key_vectors.search(query, top_k=8)
-                if hit.get("object_type") == "recall_key"
-            ]
-            keys = [*keys, *recall.find_keys_by_ids(vector_ids)]
-        except Exception as exc:
-            logger.warning("query_recall_vector_search_failed error=%s", exc)
-    return _merge_keys(keys)[:8]
+async def _recall_keys(query: str, extracted_subjects: list[str]) -> list[dict[str, Any]]:
+    """Find recall keys via three concurrent paths:
+
+    1. FTS term search on the sub-query words.
+    2. FTS name search on extracted subject names (handles diacritics via FTS5).
+    3. Vector search — two concurrent queries:
+       a. Full sub-query text (semantic context).
+       b. Subject names joined as a compact string (direct entity embedding).
+       Both run concurrently; results are merged.
+
+    Path 2+3b handle queries that describe subjects by relationship rather than
+    by explicit name — the subjects node extracts those names before search runs.
+    """
+    term_keys = await asyncio.to_thread(recall.find_candidate_keys, _terms(query), 8)
+    all_keys = []
+    
+    # Direct FTS name lookup for implied subjects (Highest priority)
+    # CRITICAL INSIGHT: If the LLM successfully resolved a description (e.g. "the man") 
+    # into a specific entity name ("Prince Vasili"), we MUST put these keys at the 
+    # front of the list. Otherwise, they get pushed behind generic term matches like 
+    # "Officer" or "Guards" and truncated by the [:8] cap at the end.
+    if extracted_subjects:
+        subject_keys = await asyncio.to_thread(recall.find_keys_by_names, extracted_subjects)
+        all_keys.extend(subject_keys)
+        
+    try:
+        # Run sub-query vector search and subject-name vector search concurrently.
+        searches = [asyncio.to_thread(recall_key_vectors.search, query, 8)]
+        if extracted_subjects:
+            subject_query = " ".join(extracted_subjects)
+            searches.append(asyncio.to_thread(recall_key_vectors.search, subject_query, 8))
+        results = await asyncio.gather(*searches, return_exceptions=True)
+        vector_ids: list[str] = []
+        for result in results:
+            if isinstance(result, Exception):
+                logger.warning("query_recall_vector_search_failed error=%s", result)
+                continue
+            vector_ids.extend(
+                hit["object_id"] for hit in result if hit.get("object_type") == "recall_key"
+            )
+        if vector_ids:
+            vector_keys = await asyncio.to_thread(recall.find_keys_by_ids, list(dict.fromkeys(vector_ids)))
+            all_keys.extend(vector_keys)
+    except Exception as exc:
+        logger.warning("query_recall_vector_search_failed error=%s", exc)
+            
+    # Add generic term matches last (Lowest priority)
+    all_keys.extend(term_keys)
+    
+    return _merge_keys(all_keys)[:8]
+
 
 
 def _rank_chunks(
@@ -149,12 +187,7 @@ def _pack_context(
     chunks: list[dict[str, Any]],
     budget: int = _CONTEXT_CHARS_PER_PASS,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Attach focused snippets so the answer prompt skips unrelated text.
-
-    Context engineering: instead of sending full chunk text we select only
-    the most query-relevant passages per chunk. This keeps each sub-query pass
-    within `budget` chars and the merged final context within MAX_CONTEXT_CHARS.
-    """
+    """Attach focused snippets so the answer prompt skips unrelated text."""
     before_chars = sum(len(str(chunk.get("text", ""))) for chunk in chunks)
     after_chars = 0
     snippet_counts: dict[str, int] = {}

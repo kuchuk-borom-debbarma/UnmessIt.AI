@@ -11,29 +11,29 @@ logger = logging.getLogger(__name__)
 
 
 class QueryEvidenceChain:
-    """Find source chunks using a LangGraph retrieval graph.
+    """Find source chunks using an async LangGraph retrieval graph.
 
-    Graph: breakdown (sub-query decomposition) → search (evidence per sub-query).
-    After the graph runs, chunks are deduped, re-ranked, and context-packed
-    before being returned.
+    Graph: breakdown (sub-query decomposition) → search (concurrent evidence per sub-query).
+    After the graph runs, chunks are deduped, re-ranked, and context-packed.
     """
 
     def __init__(self, json_client) -> None:
         """Compile the retrieval graph once at construction."""
         self.json_client = json_client
-        # Graph is compiled once; subsequent calls just invoke it.
         self._graph = build_retrieval_graph(json_client)
 
-    def run(self, query: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    async def run(self, query: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Return context-packed source chunks plus a trace of how they were found."""
-        result = self._graph.invoke({
+        result = await self._graph.ainvoke({
             "query": query,
             "sub_queries": [],
+            "extracted_subjects": [],
             "chunks": [],
             "trace_parts": [],
         })
 
         sub_queries: list[str] = result["sub_queries"]
+        extracted_subjects: list[str] = result.get("extracted_subjects") or []
         raw_chunks: list[dict[str, Any]] = result["chunks"]
         trace_parts: list[dict[str, Any]] = result["trace_parts"]
 
@@ -44,6 +44,7 @@ class QueryEvidenceChain:
             "query": query,
             "sub_queries": sub_queries,
             "sub_query_count": len(sub_queries),
+            "extracted_subjects": extracted_subjects,
             "sub_query_traces": trace_parts,
             "ranked_source_chunk_ids": [chunk["id"] for chunk in chunks],
             "source_chunk_count": len(chunks),
@@ -56,16 +57,15 @@ class QueryAnswerChain:
     """Generate an answer from already-selected source chunks."""
 
     def __init__(self, json_client) -> None:
-        """Use the same JSON client as ingestion chains."""
         self.json_client = json_client
 
-    def run(self, query: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    async def run(self, query: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
         """Return an answer and source chunk ids used as citations."""
         if not chunks:
             return {"answer": "I could not find relevant source chunks for that query.", "citation_ids": []}
 
         try:
-            data = self.json_client.invoke_json(
+            data = await self.json_client.async_invoke_json(
                 (
                     "Answer the user query using only SOURCE_CHUNKS. "
                     "Return only valid JSON. No markdown. "
@@ -118,7 +118,6 @@ def _chunk_payload(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _citation(chunk: dict[str, Any], number: int) -> dict[str, Any]:
-    """Map one source chunk into the citation fields used by the frontend."""
     span = (chunk.get("spans") or [{}])[0]
     text = str(chunk.get("text", ""))
     quote = " ".join(text.split())[:360]
@@ -135,7 +134,6 @@ def _citation(chunk: dict[str, Any], number: int) -> dict[str, Any]:
 
 
 def _public_chunk(chunk: dict[str, Any]) -> dict[str, Any]:
-    """Return compact source chunk data for dev-friendly UI display."""
     return {
         "id": chunk["id"],
         "raw_input_id": chunk["raw_input_id"],

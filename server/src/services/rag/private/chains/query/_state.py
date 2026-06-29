@@ -14,6 +14,7 @@ class QueryState(TypedDict):
 
     query: str
     sub_queries: list[str]
+    extracted_subjects: list[str]
     # operator.add merges chunk lists across parallel/sequential sub-query nodes.
     chunks: Annotated[list[dict[str, Any]], operator.add]
     trace_parts: Annotated[list[dict[str, Any]], operator.add]
