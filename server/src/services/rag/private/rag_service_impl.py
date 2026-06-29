@@ -4,7 +4,8 @@ from uuid import uuid4
 
 from src.services.rag.models import IngestResult, QueryResult, ProgressReporter, NullProgressReporter
 from src.services.rag.private.chains.preprocess import NoopPreprocessChain
-from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, build_query_result
+from src.services.rag.private.chains.query import build_query_result
+from src.services.rag.private.chains.query.agent import QueryAgentChain
 from src.services.rag.private.chains.recall.index import RecallIndexChain
 from src.services.rag.private.chains.source_chunk_assembler import SourceChunkAssemblerChain
 from src.services.rag.private.chains.source_chunk_drafts import SourceChunkDraftChain
@@ -32,8 +33,7 @@ class RagServiceImpl:
         self.source_chunk_drafts = SourceChunkDraftChain(json_client)
         self.source_chunk_assembler = SourceChunkAssemblerChain()
         self.recall_index = RecallIndexChain(json_client)
-        self.query_evidence = QueryEvidenceChain(json_client)
-        self.query_answer = QueryAnswerChain(json_client)
+        self.query_agent = QueryAgentChain(json_client)
         self.durability = DurableIngest(
             self.preprocess,
             self.source_windows,
@@ -81,13 +81,10 @@ class RagServiceImpl:
         
         if not query:
             trace = {"mode": "empty_query", "query": query, "source_chunk_count": 0}
-            answer = {"answer": "Ask a question to search your source chunks.", "citation_ids": []}
+            answer = {"answer": "Ask a question to search your source chunks.", "citations": [], "directories": [], "notes": []}
             return build_query_result(query, [], answer, trace)
             
-        await reporter.report("Decomposing query...")
-        chunks, trace = await self.query_evidence.run(query, user_id, reporter)
-        
-        await reporter.report("Generating final answer...")
-        answer = await self.query_answer.run(query, chunks)
+        await reporter.report("Running query agent...")
+        answer, chunks, trace = await self.query_agent.run(query, user_id, reporter)
         
         return build_query_result(query, chunks, answer, trace)
