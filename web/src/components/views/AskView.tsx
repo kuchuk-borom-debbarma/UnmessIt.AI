@@ -1,26 +1,11 @@
-import { useState, useEffect, useRef } from 'react'
-import { Search, RefreshCw, ChevronRight, ChevronDown, ChevronUp, CheckCircle2, ExternalLink, Terminal, SlidersHorizontal } from 'lucide-react'
-import { api, API_BASE } from '../../lib/api'
+import { useState } from 'react'
+import { Search, RefreshCw, ChevronRight, ChevronDown, ChevronUp, CheckCircle2, ExternalLink, Terminal, SlidersHorizontal, Square } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Link } from 'react-router-dom'
 import { DirectorySearchSelect } from './DirectorySearchSelect'
 import { TagSearchSelect } from './TagSearchSelect'
-
-type SourceChunk = {
-  id: string
-  raw_input_id: string
-  note_id: string
-  text: string
-  summary: string
-}
-
-type QueryResult = {
-  answer: string
-  citations: any[]
-  source_chunks: SourceChunk[]
-  retrieval_trace: Record<string, any>
-}
+import { useAsk } from '../../contexts/AskContext'
 
 type Toast = { tone: 'success' | 'danger'; message: string }
 
@@ -43,116 +28,12 @@ function ToastMessage({ toast }: { toast: Toast }) {
 }
 
 export function AskView({ token }: { token: string }) {
-  const [query, setQuery] = useState(() => sessionStorage.getItem('ask_query') || '')
-  const [loading, setLoading] = useState(false)
-  const [showTrace, setShowTrace] = useState(false)
-  const [showFilters, setShowFilters] = useState(false)
-  const [withinDirectories, setWithinDirectories] = useState(() => sessionStorage.getItem('ask_within_dirs') || '')
-  const [excludingDirectories, setExcludingDirectories] = useState(() => sessionStorage.getItem('ask_excluding_dirs') || '')
-  const [withinTags, setWithinTags] = useState(() => sessionStorage.getItem('ask_within_tags') || '')
-  const [excludingTags, setExcludingTags] = useState(() => sessionStorage.getItem('ask_excluding_tags') || '')
-  const [withinTagsCondition, setWithinTagsCondition] = useState<'any' | 'all'>(() => (sessionStorage.getItem('ask_within_tags_condition') as 'any' | 'all') || 'any')
-  const [result, setResult] = useState<QueryResult | null>(() => {
-    try {
-      const saved = sessionStorage.getItem('ask_result')
-      return saved ? JSON.parse(saved) : null
-    } catch { return null }
-  })
-  const [toast, setToast] = useState<Toast | null>(null)
-  const [progressSteps, setProgressSteps] = useState<string[]>(() => {
-    try {
-      const saved = sessionStorage.getItem('ask_progress')
-      return saved ? JSON.parse(saved) : []
-    } catch { return [] }
-  })
-
-  useEffect(() => {
-    sessionStorage.setItem('ask_query', query)
-    sessionStorage.setItem('ask_within_dirs', withinDirectories)
-    sessionStorage.setItem('ask_excluding_dirs', excludingDirectories)
-    sessionStorage.setItem('ask_within_tags', withinTags)
-    sessionStorage.setItem('ask_excluding_tags', excludingTags)
-    sessionStorage.setItem('ask_within_tags_condition', withinTagsCondition)
-  }, [query, withinDirectories, excludingDirectories, withinTags, excludingTags, withinTagsCondition])
-
-  useEffect(() => {
-    if (result) {
-      sessionStorage.setItem('ask_result', JSON.stringify(result))
-    } else {
-      sessionStorage.removeItem('ask_result')
-    }
-  }, [result])
-
-  useEffect(() => {
-    if (progressSteps.length > 0) {
-      sessionStorage.setItem('ask_progress', JSON.stringify(progressSteps))
-    } else {
-      sessionStorage.removeItem('ask_progress')
-    }
-  }, [progressSteps])
-
-  const abortControllerRef = useRef<AbortController | null>(null)
-  const evtSourceRef = useRef<EventSource | null>(null)
-
-  useEffect(() => {
-    return () => {
-      abortControllerRef.current?.abort()
-      evtSourceRef.current?.close()
-    }
-  }, [])
-
-  const handleAsk = async () => {
-    if (!query.trim() || loading) return
-    setLoading(true)
-    setToast(null)
-    setResult(null)
-    setProgressSteps([])
-
-    const clientId = crypto.randomUUID()
-    const evtSource = new EventSource(`${API_BASE}/api/retrieval/events/${clientId}`)
-    evtSourceRef.current = evtSource
-    evtSource.addEventListener('progress', (e) => {
-      try {
-        const evData = JSON.parse(e.data)
-        setProgressSteps(prev => [...prev, evData.message])
-      } catch {}
-    })
-
-    const abortController = new AbortController()
-    abortControllerRef.current = abortController
-
-    try {
-      const within = withinDirectories.split(',').map(s => s.trim()).filter(Boolean)
-      const excluding = excludingDirectories.split(',').map(s => s.trim()).filter(Boolean)
-      const withinTagsArr = withinTags.split(',').map(s => s.trim()).filter(Boolean)
-      const excludingTagsArr = excludingTags.split(',').map(s => s.trim()).filter(Boolean)
-      
-      const data = await api<QueryResult>('/api/retrieval/query', {
-        method: 'POST',
-        token,
-        body: JSON.stringify({ 
-          query, 
-          client_id: clientId,
-          within_directories: within.length > 0 ? within : undefined,
-          excluding_directories: excluding.length > 0 ? excluding : undefined,
-          within_tags: withinTagsArr.length > 0 ? withinTagsArr : undefined,
-          excluding_tags: excludingTagsArr.length > 0 ? excludingTagsArr : undefined,
-          within_tags_condition: withinTagsCondition,
-        }),
-        signal: abortController.signal
-      })
-      setResult(data)
-    } catch (err) {
-      console.error(err)
-      if (err instanceof Error && err.name !== 'AbortError') {
-        setToast({ tone: 'danger', message: err.message })
-      }
-    } finally {
-      evtSource.close()
-      evtSourceRef.current = null
-      setLoading(false)
-    }
-  }
+  const {
+    query, setQuery, loading, showTrace, setShowTrace, showFilters, setShowFilters,
+    withinDirectories, setWithinDirectories, excludingDirectories, setExcludingDirectories,
+    withinTags, setWithinTags, excludingTags, setExcludingTags, withinTagsCondition, setWithinTagsCondition,
+    result, toast, progressSteps, handleAsk, stopAsk
+  } = useAsk()
 
   return (
     <div className="flex flex-col flex-1 h-full max-w-4xl mx-auto w-full pt-10 md:pt-20 relative">
@@ -235,7 +116,7 @@ export function AskView({ token }: { token: string }) {
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || !e.shiftKey)) {
                   e.preventDefault()
-                  void handleAsk()
+                  void handleAsk(token)
                 }
               }}
             />
@@ -251,18 +132,27 @@ export function AskView({ token }: { token: string }) {
             >
               <SlidersHorizontal size={20} />
             </button>
-            <button
-              className={cn(
-                "m-2.5 rounded-[1.2rem] px-6 py-4 font-bold transition-all flex items-center gap-2 shrink-0",
-                query.trim() && !loading
-                  ? "bg-foreground text-background hover:scale-105 active:scale-95 shadow-lg"
-                  : "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
-              )}
-              onClick={handleAsk}
-              disabled={!query.trim() || loading}
-            >
-              {loading ? 'Searching...' : 'Ask'} <ChevronRight size={18} className={cn("transition-transform", query.trim() && !loading ? "translate-x-1" : "")} />
-            </button>
+            {loading ? (
+              <button
+                className="m-2.5 rounded-[1.2rem] px-6 py-4 font-bold transition-all flex items-center gap-2 shrink-0 bg-red-500/10 text-red-500 hover:bg-red-500/20 active:scale-95 shadow-lg"
+                onClick={stopAsk}
+              >
+                <Square size={16} fill="currentColor" /> Stop
+              </button>
+            ) : (
+              <button
+                className={cn(
+                  "m-2.5 rounded-[1.2rem] px-6 py-4 font-bold transition-all flex items-center gap-2 shrink-0",
+                  query.trim()
+                    ? "bg-foreground text-background hover:scale-105 active:scale-95 shadow-lg"
+                    : "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
+                )}
+                onClick={() => handleAsk(token)}
+                disabled={!query.trim()}
+              >
+                Ask <ChevronRight size={18} className={cn("transition-transform", query.trim() ? "translate-x-1" : "")} />
+              </button>
+            )}
           </div>
           
           <AnimatePresence>

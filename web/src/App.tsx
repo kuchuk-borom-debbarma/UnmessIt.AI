@@ -16,6 +16,9 @@ import { NoteDetailView } from './components/views/NoteDetailView'
 import { NoteInsightsView } from './components/views/NoteInsightsView'
 import { TrashView } from './components/views/TrashView'
 
+// Contexts
+import { AskProvider } from './contexts/AskContext'
+
 const tokenKey = 'unmessit.token'
 
 function RequireAuth({ token, children }: { token: string | null; children: ReactNode }) {
@@ -48,7 +51,7 @@ function App() {
         path="/signup"
         element={token ? <Navigate to="/" replace /> : <AuthScreen initialMode="signup" onAuthSuccess={saveToken} />}
       />
-      <Route element={<AppShell token={token} onLogout={() => saveToken(null)} />}>
+      <Route element={<AskProvider><AppShell token={token} onLogout={() => saveToken(null)} /></AskProvider>}>
         <Route path="/" element={<LandingView />} />
         <Route
           path="/notes"
