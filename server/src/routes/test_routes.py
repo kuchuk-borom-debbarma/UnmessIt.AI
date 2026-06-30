@@ -106,6 +106,17 @@ def test_advanced_raw_input_is_user_scoped(monkeypatch):
     assert response["data"]["id"] == "raw-1"
 
 
+def test_advanced_note_recall_endpoints_use_repository(monkeypatch):
+    monkeypatch.setattr(advanced_route.recall_repo, "get_paginated_keys_for_note", lambda note_id, user_id, page, limit: {"keys": [{"id": "key-1"}], "total": 1})
+    monkeypatch.setattr(advanced_route.recall_repo, "get_paginated_links_for_note", lambda note_id, user_id, page, limit: {"links": [{"id": "link-1"}], "total": 1})
+
+    keys = asyncio.run(advanced_route.get_note_recall_keys("note-1", user_id="user-1"))
+    links = asyncio.run(advanced_route.get_note_recall_links("note-1", user_id="user-1"))
+
+    assert keys["keys"] == [{"id": "key-1"}]
+    assert links["links"] == [{"id": "link-1"}]
+
+
 def test_advanced_hard_delete_uses_user_scoped_vectors(monkeypatch):
     calls = []
     monkeypatch.setattr(advanced_route.raw_inputs, "get", lambda input_id: {"id": input_id, "user_id": "user-1"})

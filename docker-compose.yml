@@ -5,7 +5,7 @@ services:
     ports:
       - "${SERVER_PORT:-2317}:2317"
     environment:
-      JWT_SECRET: ${JWT_SECRET:-change-me-before-sharing}
+      JWT_SECRET: ${JWT_SECRET:-change-me-before-sharing-use-32-plus-bytes}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:${WEB_PORT:-2831},http://127.0.0.1:${WEB_PORT:-2831}}
       ENABLE_DEV_ROUTES: ${ENABLE_DEV_ROUTES:-0}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

@@ -50,6 +50,7 @@ export function JobsView({ token }: { token: string }) {
     return () => clearTimeout(timer)
   }, [])
   const [toast, setToast] = useState<Toast | null>(null)
+  const [busyJobId, setBusyJobId] = useState<string | null>(null)
   
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
@@ -73,35 +74,48 @@ export function JobsView({ token }: { token: string }) {
     return () => clearInterval(interval)
   }, [load])
 
-  const resumeJob = async (jobId: string) => {
+  const runJobAction = async (jobId: string, action: () => Promise<void>, success: string, failure: string) => {
+    if (busyJobId) return
+    setBusyJobId(jobId)
     try {
-      await api(`/api/advanced/ingest_jobs/${jobId}/resume`, { method: 'POST', token })
-      setToast({ tone: 'success', message: 'Job resumed' })
-      load()
+      await action()
+      setToast({ tone: 'success', message: success })
+      await load()
+      window.setTimeout(() => {
+        setBusyJobId(current => current === jobId ? null : current)
+      }, 1000)
     } catch (err) {
-      setToast({ tone: 'danger', message: err instanceof Error ? err.message : 'Failed to resume job' })
+      setBusyJobId(null)
+      setToast({ tone: 'danger', message: err instanceof Error ? err.message : failure })
     }
   }
 
+  const resumeJob = async (jobId: string) => {
+    await runJobAction(
+      jobId,
+      () => api(`/api/advanced/ingest_jobs/${jobId}/resume`, { method: 'POST', token }),
+      'Job resumed',
+      'Failed to resume job'
+    )
+  }
+
   const pauseJob = async (jobId: string) => {
-    try {
-      await api(`/api/advanced/ingest_jobs/${jobId}/pause`, { method: 'POST', token })
-      setToast({ tone: 'success', message: 'Job paused' })
-      load()
-    } catch (err) {
-      setToast({ tone: 'danger', message: err instanceof Error ? err.message : 'Failed to pause job' })
-    }
+    await runJobAction(
+      jobId,
+      () => api(`/api/advanced/ingest_jobs/${jobId}/pause`, { method: 'POST', token }),
+      'Job paused',
+      'Failed to pause job'
+    )
   }
 
   const deleteJob = async (jobId: string) => {
     if (!confirm('Stop and delete this job?')) return
-    try {
-      await api(`/api/advanced/ingest_jobs/${jobId}`, { method: 'DELETE', token })
-      setToast({ tone: 'success', message: 'Job stopped and deleted' })
-      load()
-    } catch (err) {
-      setToast({ tone: 'danger', message: err instanceof Error ? err.message : 'Failed to stop job' })
-    }
+    await runJobAction(
+      jobId,
+      () => api(`/api/advanced/ingest_jobs/${jobId}`, { method: 'DELETE', token }),
+      'Job stopped and deleted',
+      'Failed to stop job'
+    )
   }
 
   return (
@@ -217,8 +231,9 @@ export function JobsView({ token }: { token: string }) {
                   <div className="flex items-center gap-2 pl-7 md:pl-0">
                     {(job.status === 'queued' || job.status === 'running' || job.status === 'waiting_retry') && (
                       <button 
+                        disabled={busyJobId === job.id}
                         onClick={() => pauseJob(job.id)}
-                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 transition-colors border border-amber-500/20"
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 transition-colors border border-amber-500/20 disabled:opacity-50 disabled:pointer-events-none"
                         title="Pause Job"
                       >
                         <Pause size={14} /> Pause
@@ -226,15 +241,17 @@ export function JobsView({ token }: { token: string }) {
                     )}
                     {(job.status === 'failed' || job.status === 'paused') && (
                       <button 
+                        disabled={busyJobId === job.id}
                         onClick={() => resumeJob(job.id)}
-                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary-500/10 text-primary-500 hover:bg-primary-500/20 transition-colors border border-primary-500/20"
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary-500/10 text-primary-500 hover:bg-primary-500/20 transition-colors border border-primary-500/20 disabled:opacity-50 disabled:pointer-events-none"
                       >
                         <Play size={14} /> Resume
                       </button>
                     )}
                     <button 
+                      disabled={busyJobId === job.id}
                       onClick={() => deleteJob(job.id)}
-                      className="flex items-center justify-center w-8 h-8 rounded-lg bg-zinc-900 border border-[#222] text-zinc-500 hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-500 transition-colors ml-1"
+                      className="flex items-center justify-center w-8 h-8 rounded-lg bg-zinc-900 border border-[#222] text-zinc-500 hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-500 transition-colors ml-1 disabled:opacity-50 disabled:pointer-events-none"
                       title="Stop and Delete Job"
                     >
                       <Square size={14} />

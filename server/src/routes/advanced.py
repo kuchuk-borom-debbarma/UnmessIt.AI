@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.repositories import dev, raw_inputs, source_chunk_vectors, source_chunks, recall
+from src.repositories import dev, raw_inputs, source_chunk_vectors, source_chunks
+from src.repositories import recall as recall_repo
 from src.routes.auth_utils import get_current_user_id
 from src.services.rag.rag_service import get_rag_service
 
@@ -41,7 +42,7 @@ async def get_note_recall_keys(
 ) -> dict:
     page = max(1, page)
     limit = max(1, min(limit, 50))
-    result = recall.get_paginated_keys_for_note(note_id, user_id, page, limit)
+    result = recall_repo.get_paginated_keys_for_note(note_id, user_id, page, limit)
     return {"status": "success", **result}
 
 
@@ -54,7 +55,7 @@ async def get_note_recall_links(
 ) -> dict:
     page = max(1, page)
     limit = max(1, min(limit, 50))
-    result = recall.get_paginated_links_for_note(note_id, user_id, page, limit)
+    result = recall_repo.get_paginated_links_for_note(note_id, user_id, page, limit)
     return {"status": "success", **result}
 
 
