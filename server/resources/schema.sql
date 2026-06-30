@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS ingest_jobs (
 );
 
 
-CREATE INDEX IF NOT EXISTS idx_ingest_jobs_content_hash ON ingest_jobs(content_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_jobs_content_hash ON ingest_jobs(content_hash);
 CREATE INDEX IF NOT EXISTS idx_ingest_jobs_status_next_run ON ingest_jobs(status, next_run_at);
 
 CREATE TABLE IF NOT EXISTS ingest_checkpoints (

@@ -193,19 +193,15 @@ def update_metadata(job_id: str, updates: dict[str, Any]) -> None:
     """Merge inspectable progress metadata into a job row."""
     if not updates:
         return
+    progress_message = updates.pop("progress_message", None)
+    if progress_message:
+        _publish_progress(job_id, str(progress_message))
+    if not updates:
+        return
     job = get(job_id)
     if not job:
         return
     metadata = {**(job.get("metadata") or {})}
-    
-    if "progress_message" in updates and updates["progress_message"]:
-        msg = updates["progress_message"]
-        logs = metadata.get("progress_logs", [])
-        # Only append if it's different from the last log to avoid spamming the same step
-        if not logs or logs[-1] != msg:
-            logs.append(msg)
-            metadata["progress_logs"] = logs[-100:]  # Keep last 100 for terminal view
-            
     metadata.update(updates)
     get_connection().execute(
         "UPDATE ingest_jobs SET metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -217,8 +213,13 @@ def update_metadata(job_id: str, updates: dict[str, Any]) -> None:
 
 def complete(job_id: str, metadata: dict[str, Any]) -> None:
     """Mark a job complete with final counts."""
+    progress_message = metadata.pop("progress_message", None)
+    if progress_message:
+        _publish_progress(job_id, str(progress_message))
     job = get(job_id)
     merged_metadata = {**((job or {}).get("metadata") or {}), **metadata}
+    merged_metadata.pop("progress_message", None)
+    merged_metadata.pop("progress_logs", None)
     merged_metadata.pop("failed_unit_key", None)
     get_connection().execute(
         """
@@ -436,5 +437,13 @@ def _publish_changed(job_id: str) -> None:
     try:
         from .events import publish_job_changed
         publish_job_changed(job_id)
+    except Exception:
+        pass
+
+
+def _publish_progress(job_id: str, message: str) -> None:
+    try:
+        from .events import publish_job_progress
+        publish_job_progress(job_id, message)
     except Exception:
         pass

@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useRef, useEffect, ReactNode, useCallback } from 'react'
+import { createContext, useContext, useState, useRef, useEffect, useCallback } from 'react'
+import type { ReactNode } from 'react'
 import { api, API_BASE } from '../lib/api'
 
 type SourceChunk = {
@@ -123,7 +124,10 @@ export function AskProvider({ children }: { children: ReactNode }) {
     evtSource.addEventListener('progress', (e) => {
       try {
         const evData = JSON.parse(e.data)
-        setProgressSteps(prev => [...prev, evData.message])
+        const details = evData.details && Object.keys(evData.details).length > 0
+          ? ` ${JSON.stringify(evData.details)}`
+          : ''
+        setProgressSteps(prev => [...prev, `${evData.message}${details}`])
       } catch {}
     })
 

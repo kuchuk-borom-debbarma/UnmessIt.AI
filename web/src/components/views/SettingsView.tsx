@@ -211,19 +211,11 @@ export function SettingsView({ token }: { token: string }) {
                     <h3 className="text-sm font-bold uppercase tracking-widest text-accent-500 mb-4">Language Model</h3>
                     <div className="space-y-4">
                       <div>
-                        <label className="block text-xs font-bold mb-1 text-foreground/90">Provider</label>
-                        <select className="premium-input bg-transparent" value={draft.llm_provider} onChange={e => setDraft({ ...draft, llm_provider: e.target.value })}>
-                          <option value="openai">OpenAI</option>
-                        </select>
-                      </div>
-                      <div>
                         <label className="block text-xs font-bold mb-1 text-foreground/90">Model Name</label>
-                        <p className="text-[11px] leading-relaxed text-muted-foreground mb-2.5">Specific identifier used by the provider (e.g. gpt-4o).</p>
                         <input className="premium-input bg-transparent" value={draft.llm_model} onChange={e => setDraft({ ...draft, llm_model: e.target.value })} placeholder="gpt-4o" />
                       </div>
                       <div>
                         <label className="block text-xs font-bold mb-1 text-foreground/90">API Key</label>
-                        <p className="text-[11px] leading-relaxed text-muted-foreground mb-2.5">Secret token to authenticate with the provider.</p>
                         <div className="relative">
                           <KeyRound className="absolute left-3 top-3.5 text-muted-foreground" size={16} />
                           <input type="password" className="premium-input bg-transparent pl-10" value={draft.llm_api_key} onChange={e => setDraft({ ...draft, llm_api_key: e.target.value })} placeholder={editingId ? "Leave blank to keep existing key" : "sk-..."} />
@@ -231,7 +223,6 @@ export function SettingsView({ token }: { token: string }) {
                       </div>
                       <div>
                         <label className="block text-xs font-bold mb-1 text-foreground/90">Base URL (Optional)</label>
-                        <p className="text-[11px] leading-relaxed text-muted-foreground mb-2.5">Override if using a local proxy or custom gateway.</p>
                         <input className="premium-input bg-transparent" value={draft.llm_base_url} onChange={e => setDraft({ ...draft, llm_base_url: e.target.value })} placeholder="https://api.openai.com/v1" />
                       </div>
                       <div>
@@ -247,19 +238,11 @@ export function SettingsView({ token }: { token: string }) {
                     <h3 className="text-sm font-bold uppercase tracking-widest text-primary-500 mb-4">Embedding Model</h3>
                     <div className="space-y-4">
                       <div>
-                        <label className="block text-xs font-bold mb-1 text-foreground/90">Provider</label>
-                        <select className="premium-input bg-transparent" value={draft.embedding_provider} onChange={e => setDraft({ ...draft, embedding_provider: e.target.value })}>
-                          <option value="openai">OpenAI</option>
-                        </select>
-                      </div>
-                      <div>
                         <label className="block text-xs font-bold mb-1 text-foreground/90">Model Name</label>
-                        <p className="text-[11px] leading-relaxed text-muted-foreground mb-2.5">Model used for vectorizing text.</p>
                         <input className="premium-input bg-transparent" value={draft.embedding_model} onChange={e => setDraft({ ...draft, embedding_model: e.target.value })} placeholder="text-embedding-3-small" />
                       </div>
                       <div>
                         <label className="block text-xs font-bold mb-1 text-foreground/90">API Key</label>
-                        <p className="text-[11px] leading-relaxed text-muted-foreground mb-2.5">Secret token to authenticate with the provider.</p>
                         <div className="relative">
                           <KeyRound className="absolute left-3 top-3.5 text-muted-foreground" size={16} />
                           <input type="password" className="premium-input bg-transparent pl-10" value={draft.embedding_api_key} onChange={e => setDraft({ ...draft, embedding_api_key: e.target.value })} placeholder={editingId ? "Leave blank to keep existing key" : "sk-..."} />
@@ -267,52 +250,41 @@ export function SettingsView({ token }: { token: string }) {
                       </div>
                       <div>
                         <label className="block text-xs font-bold mb-1 text-foreground/90">Base URL (Optional)</label>
-                        <p className="text-[11px] leading-relaxed text-muted-foreground mb-2.5">Override if using a local proxy.</p>
                         <input className="premium-input bg-transparent" value={draft.embedding_base_url} onChange={e => setDraft({ ...draft, embedding_base_url: e.target.value })} placeholder="https://api.openai.com/v1" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold mb-1 text-foreground/90">Rate Limit (RPM)</label>
-                        <p className="text-[11px] leading-relaxed text-muted-foreground mb-2.5">Max requests per minute. Set to 0 for unlimited.</p>
-                        <input type="number" className="premium-input bg-transparent" value={draft.embedding_rate_limit_per_minute} onChange={e => setDraft({ ...draft, embedding_rate_limit_per_minute: parseInt(e.target.value) || 0 })} placeholder="0" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold mb-1 text-foreground/90">Batch Size</label>
-                        <p className="text-[11px] leading-relaxed text-muted-foreground mb-2.5">Number of vectors to embed per API call.</p>
-                        <input type="number" className="premium-input bg-transparent" value={draft.embedding_batch_size} onChange={e => setDraft({ ...draft, embedding_batch_size: parseInt(e.target.value) || 100 })} placeholder="100" />
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {/* Chunking */}
-                <div className="pt-8 border-t border-border/50 grid grid-cols-1 md:grid-cols-2 gap-8">
-                  <div>
-                    <h3 className="text-sm font-bold uppercase tracking-widest text-primary-500 mb-4">Document Chunking</h3>
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-xs font-bold mb-1 text-foreground/90">Chunk Size (Characters)</label>
-                        <p className="text-[11px] leading-relaxed text-muted-foreground mb-2.5">
-                          <strong>Pros:</strong> Large chunks preserve flow. Small chunks retrieve sharper facts.<br/>
-                          <strong>Cons:</strong> Large chunks eat context window and dilute LLM attention. Small chunks cause fragmentation (partially offset by recall links).
-                        </p>
-                        <input type="number" className="premium-input bg-transparent" value={draft.chunk_size} onChange={e => setDraft({ ...draft, chunk_size: parseInt(e.target.value) || 1000 })} placeholder="1000" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold mb-1 text-foreground/90">Chunk Overlap (Characters)</label>
-                        <p className="text-[11px] leading-relaxed text-muted-foreground mb-2.5">
-                          <strong>Pros:</strong> High overlap maintains continuity and context so facts aren't split.<br/>
-                          <strong>Cons:</strong> High overlap increases storage cost and token redundancy.
-                        </p>
-                        <input type="number" className="premium-input bg-transparent" value={draft.chunk_overlap} onChange={e => setDraft({ ...draft, chunk_overlap: parseInt(e.target.value) || 200 })} placeholder="200" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold mb-1 text-foreground/90">Retry Backoff (Seconds)</label>
-                        <p className="text-[11px] leading-relaxed text-muted-foreground mb-2.5">Comma-separated ingest retry delays after provider or indexing failures.</p>
-                        <input className="premium-input bg-transparent" value={draft.ingest_retry_backoff_seconds} onChange={e => setDraft({ ...draft, ingest_retry_backoff_seconds: e.target.value })} placeholder="5,15,30,60,120" />
-                      </div>
+                <details className="pt-8 border-t border-border/50 group">
+                  <summary className="flex cursor-pointer list-none items-center justify-between rounded-xl border border-border/50 bg-input/30 px-4 py-3 text-sm font-bold text-foreground/90 transition-colors hover:border-primary-500/40">
+                    <span>Advanced indexing</span>
+                    <span className="text-xs text-muted-foreground group-open:hidden">Show</span>
+                    <span className="hidden text-xs text-muted-foreground group-open:inline">Hide</span>
+                  </summary>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-6">
+                    <div>
+                      <label className="block text-xs font-bold mb-1 text-foreground/90">Embedding Rate Limit (RPM)</label>
+                      <input type="number" className="premium-input bg-transparent" value={draft.embedding_rate_limit_per_minute} onChange={e => setDraft({ ...draft, embedding_rate_limit_per_minute: parseInt(e.target.value) || 0 })} placeholder="0" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold mb-1 text-foreground/90">Embedding Batch Size</label>
+                      <input type="number" className="premium-input bg-transparent" value={draft.embedding_batch_size} onChange={e => setDraft({ ...draft, embedding_batch_size: parseInt(e.target.value) || 100 })} placeholder="100" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold mb-1 text-foreground/90">Chunk Size (Characters)</label>
+                      <input type="number" className="premium-input bg-transparent" value={draft.chunk_size} onChange={e => setDraft({ ...draft, chunk_size: parseInt(e.target.value) || 1000 })} placeholder="1000" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold mb-1 text-foreground/90">Chunk Overlap (Characters)</label>
+                      <input type="number" className="premium-input bg-transparent" value={draft.chunk_overlap} onChange={e => setDraft({ ...draft, chunk_overlap: parseInt(e.target.value) || 200 })} placeholder="200" />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-bold mb-1 text-foreground/90">Retry Backoff (Seconds)</label>
+                      <input className="premium-input bg-transparent" value={draft.ingest_retry_backoff_seconds} onChange={e => setDraft({ ...draft, ingest_retry_backoff_seconds: e.target.value })} placeholder="5,15,30,60,120" />
                     </div>
                   </div>
-                </div>
+                </details>
 
                 <div className="pt-8 border-t border-border/50 flex justify-end gap-3">
                   <button className="premium-btn premium-btn-secondary h-12 px-6" onClick={() => { setIsFormOpen(false); setEditingId(null); }}>Cancel</button>
@@ -355,10 +327,10 @@ export function SettingsView({ token }: { token: string }) {
                 <div className="p-4 rounded-lg bg-input border border-border/50">
                   <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Embedding</div>
                   <div className="font-semibold text-foreground/90">{preset.embedding_provider}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5 font-mono">{preset.embedding_model} {preset.embedding_rate_limit_per_minute > 0 ? `(${preset.embedding_rate_limit_per_minute} RPM)` : ''}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5 font-mono">{preset.embedding_model} &middot; batch {preset.embedding_batch_size || 100}{preset.embedding_rate_limit_per_minute > 0 ? ` · ${preset.embedding_rate_limit_per_minute} RPM` : ''}</div>
                 </div>
                 <div className="p-4 rounded-lg bg-input border border-border/50 sm:col-span-2">
-                  <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Chunking</div>
+                  <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Indexing</div>
                   <div className="text-sm font-semibold text-foreground/90">{preset.chunk_size} chars &middot; {preset.chunk_overlap} overlap &middot; retry {preset.ingest_retry_backoff_seconds || defaultDraft.ingest_retry_backoff_seconds}s</div>
                 </div>
               </div>

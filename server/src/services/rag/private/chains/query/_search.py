@@ -40,13 +40,30 @@ async def search_node(state: QueryState) -> dict[str, Any]:
     excluding_tags = state.get("excluding_tags") or []
     within_tags_condition = state.get("within_tags_condition", "any")
 
-    async def _search_and_report(sq: str):
-        res = await _evidence_for(sq, state.get("query", ""), user_id, extracted_subjects, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
+    async def _search_and_report(index: int, sq: str):
         if reporter:
-            await reporter.report(f"Gathered evidence for: '{sq}'")
+            await reporter.report(f"Sub-query {index}/{len(state['sub_queries'])}: starting search for '{sq}'", {"sub_query": sq})
+        res = await _evidence_for(
+            sq,
+            state.get("query", ""),
+            user_id,
+            extracted_subjects,
+            within_directories,
+            excluding_directories,
+            within_tags,
+            excluding_tags,
+            within_tags_condition,
+            reporter,
+        )
+        if reporter:
+            chunks, trace = res
+            await reporter.report(
+                f"Sub-query {index}/{len(state['sub_queries'])}: packed {len(chunks)} evidence chunk(s)",
+                {k: v for k, v in trace.items() if k != "baseline_lengths"},
+            )
         return res
         
-    results = await asyncio.gather(*[_search_and_report(sq) for sq in state["sub_queries"]])
+    results = await asyncio.gather(*[_search_and_report(index + 1, sq) for index, sq in enumerate(state["sub_queries"])])
     
     all_chunks: list[dict[str, Any]] = []
     trace_parts: list[dict[str, Any]] = []
@@ -78,23 +95,58 @@ def finalize_chunks(raw_chunks: list[dict[str, Any]], query: str) -> tuple[list[
 # ── internal helpers ─────────────────────────────────────────────────────────
 
 
-async def _evidence_for(sub_query: str, global_query: str, user_id: str, extracted_subjects: list[str], within_directories: list[str], excluding_directories: list[str], within_tags: list[str], excluding_tags: list[str], within_tags_condition: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+async def _evidence_for(sub_query: str, global_query: str, user_id: str, extracted_subjects: list[str], within_directories: list[str], excluding_directories: list[str], within_tags: list[str], excluding_tags: list[str], within_tags_condition: str, reporter=None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Run all three search paths for one sub-query concurrently where possible."""
     # Vector search and lexical search can run in parallel; recall key lookup is cheap.
+    async def _vector_path():
+        if reporter:
+            await reporter.report(f"Vector source search: '{sub_query}'")
+        chunks, ids = await _vector_source_chunks(sub_query, user_id, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
+        if reporter:
+            await reporter.report(f"Vector source search returned {len(ids)} hit(s)", {"sub_query": sub_query, "source_chunk_ids": ids})
+        return chunks, ids
+
+    async def _lexical_path():
+        if reporter:
+            await reporter.report(f"Lexical source search: '{sub_query}'")
+        chunks = await asyncio.to_thread(source_chunks.search, sub_query, user_id, 8, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
+        if reporter:
+            await reporter.report(f"Lexical source search returned {len(chunks)} chunk(s)", {"sub_query": sub_query, "source_chunk_ids": [chunk["id"] for chunk in chunks]})
+        return chunks
+
+    async def _recall_path():
+        if reporter:
+            await reporter.report(f"Recall key search: '{sub_query}'")
+        keys = await _recall_keys(sub_query, user_id, extracted_subjects)
+        if reporter:
+            await reporter.report(f"Recall key search returned {len(keys)} key(s)", {"sub_query": sub_query, "recall_keys": [{"id": key["id"], "name": key["name"]} for key in keys]})
+        return keys
+
     (vector_chunks, vector_ids), lexical_chunks, recall_keys = await asyncio.gather(
-        _vector_source_chunks(sub_query, user_id, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition),
-        asyncio.to_thread(source_chunks.search, sub_query, user_id, 8, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition),
-        _recall_keys(sub_query, user_id, extracted_subjects),
+        _vector_path(),
+        _lexical_path(),
+        _recall_path(),
     )
+    if reporter:
+        await reporter.report(f"Expanding {len(recall_keys)} recall key(s) into linked chunks", {"sub_query": sub_query})
     linked_ids = await asyncio.to_thread(recall.linked_source_chunk_ids, [key["id"] for key in recall_keys], user_id, 12, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
     linked_chunks = await asyncio.to_thread(source_chunks.get_by_ids, linked_ids, user_id)
+    if reporter:
+        await reporter.report(f"Recall expansion returned {len(linked_chunks)} linked chunk(s)", {"sub_query": sub_query, "source_chunk_ids": linked_ids})
     chunks, _ = _rank_chunks(sub_query, [*vector_chunks, *lexical_chunks, *linked_chunks])
+    if reporter:
+        await reporter.report(f"Ranked {len(chunks)} unique chunk(s) for '{sub_query}'", {"sub_query": sub_query, "source_chunk_ids": [chunk["id"] for chunk in chunks[:MAX_EVIDENCE_CHUNKS]]})
     
     top_chunks = chunks[:MAX_EVIDENCE_CHUNKS]
     baseline_lengths = {chunk["id"]: len(str(chunk.get("text", ""))) for chunk in top_chunks}
     
     combined_query = f"{global_query} {sub_query}".strip()
     chunks, pack_trace = _pack_context(combined_query, top_chunks, budget=_CONTEXT_CHARS_PER_PASS)
+    if reporter:
+        await reporter.report(
+            f"Packed sub-query context: {pack_trace['context_chars_after_packing']}/{pack_trace['context_chars_before_packing']} chars",
+            {"sub_query": sub_query, **pack_trace},
+        )
 
     trace_part = {
         "sub_query": sub_query,

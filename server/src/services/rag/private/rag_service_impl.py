@@ -63,8 +63,11 @@ class RagServiceImpl:
             answer = {"answer": "Ask a question to search your source chunks.", "citations": [], "directories": [], "notes": []}
             return build_query_result(query, [], answer, trace)
             
+        await reporter.report("Normalizing query text...", {"query_chars": len(query)})
         await reporter.report("Searching source-backed evidence...")
         chunks, trace = await self.query_evidence.run(query, user_id, reporter, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
-        answer = await self.query_answer.run(query, chunks, user_id)
+        await reporter.report("Generating answer from selected evidence...", {"source_chunk_count": len(chunks)})
+        answer = await self.query_answer.run(query, chunks, user_id, reporter)
+        await reporter.report("Retrieval complete.", {"citation_count": len(answer.get("citation_ids", []))})
         
         return build_query_result(query, chunks, answer, trace)

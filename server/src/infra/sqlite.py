@@ -40,6 +40,7 @@ def init_db() -> None:
     conn = get_connection()
     conn.executescript(schema_path.read_text())
     _migrate_ingest_job_status(conn)
+    _ensure_unique_ingest_content_hash(conn)
     _add_column_if_missing(conn, "raw_inputs", "content_hash", "TEXT")
     _add_column_if_missing(conn, "raw_inputs", "user_id", "TEXT REFERENCES users(id) ON DELETE CASCADE")
     _add_column_if_missing(conn, "recall_keys", "user_id", "TEXT REFERENCES users(id) ON DELETE CASCADE")
@@ -67,6 +68,22 @@ def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, de
     columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
     if column not in columns:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _ensure_unique_ingest_content_hash(conn: sqlite3.Connection) -> None:
+    """Durability reuses one job per exact input hash; enforce that invariant."""
+    duplicates = conn.execute(
+        "SELECT 1 FROM ingest_jobs GROUP BY content_hash HAVING COUNT(*) > 1 LIMIT 1"
+    ).fetchone()
+    if duplicates:
+        return
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_ingest_jobs_content_hash'"
+    ).fetchone()
+    if row and str(row["sql"] or "").upper().startswith("CREATE UNIQUE INDEX"):
+        return
+    conn.execute("DROP INDEX IF EXISTS idx_ingest_jobs_content_hash")
+    conn.execute("CREATE UNIQUE INDEX idx_ingest_jobs_content_hash ON ingest_jobs(content_hash)")
 
 
 def _migrate_ingest_job_status(conn: sqlite3.Connection) -> None:

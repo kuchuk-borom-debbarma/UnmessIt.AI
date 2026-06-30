@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Search, RefreshCw, ChevronRight, ChevronDown, ChevronUp, CheckCircle2, ExternalLink, Terminal, SlidersHorizontal, Square } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'

@@ -28,6 +28,7 @@ export type Preset = {
   embedding_base_url?: string | null
   llm_rate_limit_per_minute: number
   embedding_rate_limit_per_minute: number
+  embedding_batch_size: number
   chunk_size: number
   chunk_overlap: number
   ingest_retry_backoff_seconds: string

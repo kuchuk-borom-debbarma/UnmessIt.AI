@@ -24,6 +24,7 @@ class PresetCreate(BaseModel):
     embedding_api_key: str | None = None
     llm_rate_limit_per_minute: int = 0
     embedding_rate_limit_per_minute: int = 0
+    embedding_batch_size: int = 100
     chunk_size: int = 1000
     chunk_overlap: int = 200
     ingest_retry_backoff_seconds: str = "5,15,30,60,120"
@@ -57,6 +58,7 @@ class PresetResponse(BaseModel):
     embedding_base_url: str | None
     llm_rate_limit_per_minute: int
     embedding_rate_limit_per_minute: int
+    embedding_batch_size: int
     chunk_size: int
     chunk_overlap: int
     ingest_retry_backoff_seconds: str
@@ -134,6 +136,7 @@ def get_active_config(user_id: str = Depends(get_current_user_id)) -> dict[str, 
         "embedding_base_url": settings.embedding_base_url,
         "llm_rate_limit_per_minute": settings.llm_rate_limit_per_minute,
         "embedding_rate_limit_per_minute": settings.embedding_rate_limit_per_minute,
+        "embedding_batch_size": settings.embedding_batch_size,
         "chunk_size": settings.chunk_size,
         "chunk_overlap": settings.chunk_overlap,
         "ingest_retry_backoff_seconds": ",".join(str(item) for item in settings.ingest_retry_backoff_seconds),

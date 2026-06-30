@@ -189,7 +189,7 @@ async def test_query_uses_source_search_and_recall_expansion(monkeypatch):
         def __init__(self, json_client) -> None:
             pass
 
-        async def run(self, query: str, chunks: list[dict], user_id: str):
+        async def run(self, query: str, chunks: list[dict], user_id: str, reporter=None):
             return {"answer": "Grisha's power later connects to Eren.", "citation_ids": ["chunk-2"]}
 
     monkeypatch.setattr("src.services.rag.private.rag_service_impl.QueryEvidenceChain", FakeQueryEvidenceChain)
@@ -569,6 +569,7 @@ async def test_durable_source_chunks_resume_from_next_unfinished_piece(monkeypat
 async def test_durable_runner_batches_vector_embeddings(monkeypatch):
     conn = _patch_memory_db(monkeypatch)
     calls = {"recall": [], "source": []}
+    monkeypatch.setattr("src.services.rag.private.durability.runner.get_user_settings", lambda user_id: type("Settings", (), {"embedding_batch_size": 100})())
     monkeypatch.setattr(recall_key_vectors, "exists", lambda key_id, user_id: False)
     monkeypatch.setattr(source_chunk_vectors, "exists", lambda chunk_id, user_id: False)
     monkeypatch.setattr(recall_key_vectors, "index", lambda keys: calls["recall"].append(len(keys)))
@@ -718,7 +719,7 @@ class FakeDrafts:
 
 
 class FakeRecallIndex:
-    async def run(self, raw_text: str, user_id: str, chunks: list[dict]) -> dict:
+    async def run(self, raw_text: str, user_id: str, chunks: list[dict], on_progress=None) -> dict:
         chunk = chunks[0]
         key_id = f"key-{chunk['id']}"
         return {

@@ -39,6 +39,7 @@ type IngestJob = {
 
 type Toast = { tone: 'success' | 'danger'; message: string }
 type JobsResponse = { data: IngestJob[], total: number, page: number, limit: number }
+type JobProgressEvent = { job_id: string; status: JobStatus; stage: string; message: string }
 
 function numberMetric(value?: number) {
   return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : null
@@ -79,6 +80,7 @@ function ToastMessage({ toast }: { toast: Toast }) {
 
 export function JobsView({ token }: { token: string }) {
   const [jobs, setJobs] = useState<IngestJob[]>([])
+  const [liveProgress, setLiveProgress] = useState<Record<string, string[]>>({})
   const [loading, setLoading] = useState(true)
   const [, setShowLoading] = useState(false)
 
@@ -125,7 +127,19 @@ export function JobsView({ token }: { token: string }) {
           buffer += decoder.decode(value, { stream: true })
           const events = buffer.split('\n\n')
           buffer = events.pop() || ''
-          if (events.some(event => event.startsWith('event: job'))) void load()
+          for (const block of events) {
+            const event = block.split('\n').find(line => line.startsWith('event: '))?.slice(7)
+            const rawData = block.split('\n').find(line => line.startsWith('data: '))?.slice(6)
+            if (event === 'job') void load()
+            if (event === 'job_progress' && rawData) {
+              const data = JSON.parse(rawData) as JobProgressEvent
+              setLiveProgress(current => ({
+                ...current,
+                [data.job_id]: [...(current[data.job_id] ?? []), data.message].slice(-100),
+              }))
+              setJobs(current => current.map(job => job.id === data.job_id ? { ...job, status: data.status, stage: data.stage } : job))
+            }
+          }
         }
       } catch {
         if (!controller.signal.aborted) retryTimer = window.setTimeout(connect, 5000)
@@ -224,6 +238,7 @@ export function JobsView({ token }: { token: string }) {
             ) : (
               jobs.map(job => {
                 const metrics = jobMetrics(job)
+                const progress = liveProgress[job.id] ?? []
                 return (
                   <motion.div
                     key={job.id}
@@ -280,23 +295,17 @@ export function JobsView({ token }: { token: string }) {
                             {job.error}
                           </div>
                         )}
-                        {job.metadata?.progress_logs && job.metadata.progress_logs.length > 0 && job.status === 'running' && (
+                        {progress.length > 0 && job.status === 'running' && (
                           <div className="text-amber-400/80 mt-1 bg-amber-950/20 px-3 py-2 rounded-md border border-amber-900/30 font-mono text-[10px] max-h-32 overflow-y-auto flex flex-col gap-1">
-                             {job.metadata.progress_logs.map((log, idx) => (
+                             {progress.map((log, idx) => (
                                <div key={idx} className="flex gap-2">
                                  <span className="text-amber-500/50">&gt;</span>
                                  <span>{log}</span>
                                </div>
                              ))}
-                             {job.metadata?.progress_message && (
-                               <div className="flex gap-2 text-amber-400 animate-pulse mt-1">
-                                 <RefreshCw className="animate-spin mt-0.5" size={10} />
-                                 <span>{job.metadata.progress_message}</span>
-                               </div>
-                             )}
                           </div>
                         )}
-                        {!job.metadata?.progress_logs?.length && job.metadata?.progress_message && job.status === 'running' && (
+                        {progress.length === 0 && job.metadata?.progress_message && job.status === 'running' && (
                           <div className="text-amber-400 mt-1 bg-amber-950/30 px-3 py-2 rounded-md border border-amber-900/50 flex items-center gap-2">
                              <RefreshCw className="animate-spin" size={12} />
                              {job.metadata.progress_message}

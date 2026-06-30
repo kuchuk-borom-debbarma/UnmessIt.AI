@@ -34,8 +34,11 @@ def subjects_node(json_client) -> callable:
         subjects = await _identify_subjects(json_client, query, sub_queries, user_id)
         logger.info("query_subjects query_len=%s extracted=%s", len(query), len(subjects))
         
-        if reporter and subjects:
-            await reporter.report(f"Found implicit subjects: {', '.join(subjects)}")
+        if reporter:
+            await reporter.report(
+                f"Found implicit subjects: {', '.join(subjects)}" if subjects else "No implicit subjects found.",
+                {"subjects": subjects},
+            )
             
         return {"extracted_subjects": subjects}
 
