@@ -89,7 +89,7 @@ async def ingest_jobs(
 
 @router.post("/ingest_jobs/{job_id}/resume")
 async def resume_ingest_job(job_id: str, _user_id: str = Depends(get_current_user_id)) -> dict:
-    if job_id not in {job["id"] for job in get_rag_service().list_ingest_jobs(_user_id)}:
+    if job_id not in {job["id"] for job in get_rag_service().list_ingest_jobs(_user_id, limit=1000)["data"]}:
         raise HTTPException(status_code=404, detail="Ingest job not found")
     job = await get_rag_service().resume_ingest_job(job_id)
     if not job:
@@ -99,7 +99,7 @@ async def resume_ingest_job(job_id: str, _user_id: str = Depends(get_current_use
 
 @router.post("/ingest_jobs/{job_id}/pause")
 async def pause_ingest_job(job_id: str, _user_id: str = Depends(get_current_user_id)) -> dict:
-    if job_id not in {job["id"] for job in get_rag_service().list_ingest_jobs(_user_id)}:
+    if job_id not in {job["id"] for job in get_rag_service().list_ingest_jobs(_user_id, limit=1000)["data"]}:
         raise HTTPException(status_code=404, detail="Ingest job not found")
     job = get_rag_service().pause_ingest_job(job_id)
     if not job:
@@ -109,7 +109,7 @@ async def pause_ingest_job(job_id: str, _user_id: str = Depends(get_current_user
 
 @router.post("/ingest_jobs/{job_id}/stop")
 async def stop_ingest_job(job_id: str, _user_id: str = Depends(get_current_user_id)) -> dict:
-    if job_id not in {job["id"] for job in get_rag_service().list_ingest_jobs(_user_id)}:
+    if job_id not in {job["id"] for job in get_rag_service().list_ingest_jobs(_user_id, limit=1000)["data"]}:
         raise HTTPException(status_code=404, detail="Ingest job not found")
     job = get_rag_service().stop_ingest_job(job_id)
     if not job:
@@ -119,7 +119,7 @@ async def stop_ingest_job(job_id: str, _user_id: str = Depends(get_current_user_
 
 @router.delete("/ingest_jobs/{job_id}")
 async def delete_ingest_job(job_id: str, _user_id: str = Depends(get_current_user_id)) -> dict:
-    if job_id not in {job["id"] for job in get_rag_service().list_ingest_jobs(_user_id)}:
+    if job_id not in {job["id"] for job in get_rag_service().list_ingest_jobs(_user_id, limit=1000)["data"]}:
         raise HTTPException(status_code=404, detail="Ingest job not found")
     if not get_rag_service().delete_ingest_job(job_id):
         raise HTTPException(status_code=404, detail="Ingest job not found")
