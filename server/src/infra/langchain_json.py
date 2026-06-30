@@ -28,8 +28,40 @@ class JsonLLMClient:
 
     def invoke_json(self, system: str, human: str, user_id: str) -> dict[str, Any]:
         """Invoke the chat model and parse a JSON object."""
-        llm = self.llm or _get_chat_llm(get_user_settings(user_id).llm_cache_key())
-        settings = get_user_settings(user_id)
+        if self.llm:
+            return self._invoke_with_settings(self.llm, get_user_settings(user_id), system, human)
+
+        errors = []
+        candidates = list(get_user_setting_candidates(user_id))
+        last_snapshot = get_last_rotation_snapshot()
+        if last_snapshot and last_snapshot.get("preset_id"):
+            sticky_id = last_snapshot["preset_id"]
+            candidates.sort(key=lambda c: 0 if c.preset_id == sticky_id else 1)
+
+        for index, settings in enumerate(candidates, start=1):
+            report_progress_sync(
+                f"Rotation preset {index}/{len(candidates)} selected: {settings.preset_name}",
+                {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "attempt": index, "total": len(candidates)},
+            )
+            try:
+                result = self._invoke_with_settings(_get_chat_llm(settings.llm_cache_key()), settings, system, human)
+                set_last_rotation_snapshot(settings.rotation_snapshot())
+                report_progress_sync(
+                    f"Rotation preset succeeded: {settings.preset_name}",
+                    {"preset_id": settings.preset_id, "preset_name": settings.preset_name},
+                )
+                return result
+            except Exception as exc:
+                errors.append(f"{settings.preset_name}: {exc}")
+                logger.warning("llm_rotation_preset_failed preset=%s error=%s", settings.preset_name, exc)
+                report_progress_sync(
+                    f"Rotation preset failed: {settings.preset_name}",
+                    {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "error": str(exc)[:500]},
+                )
+        report_progress_sync("All rotation presets failed.", {"errors": errors})
+        raise ValueError("All rotation presets failed: " + "; ".join(errors))
+
+    def _invoke_with_settings(self, llm, settings: Settings, system: str, human: str) -> dict[str, Any]:
         messages = [SystemMessage(content=system), HumanMessage(content=human)]
         last_error: Exception | None = None
         for attempt in range(1, settings.llm_max_retries + 2):
@@ -52,7 +84,12 @@ class JsonLLMClient:
             return await self._async_invoke_with_settings(self.llm, get_user_settings(user_id), system, human)
 
         errors = []
-        candidates = get_user_setting_candidates(user_id)
+        candidates = list(get_user_setting_candidates(user_id))
+        last_snapshot = get_last_rotation_snapshot()
+        if last_snapshot and last_snapshot.get("preset_id"):
+            sticky_id = last_snapshot["preset_id"]
+            candidates.sort(key=lambda c: 0 if c.preset_id == sticky_id else 1)
+
         for index, settings in enumerate(candidates, start=1):
             await report_progress(
                 f"Rotation preset {index}/{len(candidates)} selected: {settings.preset_name}",
