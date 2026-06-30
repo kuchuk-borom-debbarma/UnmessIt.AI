@@ -6,8 +6,16 @@ cd "$(dirname "$0")/.."
 
 echo -e "\033[0;34mBuilding and starting UnmessIt.AI locally from source...\033[0m"
 
-# We use the default docker-compose.yml, which uses the local build context
-docker compose up -d --build
+# If the user previously used the installer, grab their existing .env
+ENV_ARGS=""
+if [ -f "unmessit-ai/.env" ]; then
+    echo -e "\033[0;33mDetected existing staging installation. Linking to existing database and config...\033[0m"
+    ENV_ARGS="--env-file unmessit-ai/.env"
+fi
+
+# We force the project name to 'unmessit-ai' so it seamlessly shares the database volume 
+# and replaces the staging containers without port conflicts.
+docker compose $ENV_ARGS -p unmessit-ai up -d --build
 
 echo ""
 echo -e "\033[0;32m==============================================\033[0m"
