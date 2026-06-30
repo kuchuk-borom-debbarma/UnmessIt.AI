@@ -147,7 +147,7 @@ def _citation(chunk: dict[str, Any], number: int) -> dict[str, Any]:
     return {
         "id": f"citation-{number}",
         "source_chunk_id": chunk["id"],
-        "source_input_id": chunk["raw_input_id"],
+        "source_input_id": chunk.get("note_id") or chunk["raw_input_id"],
         "exact_quote": quote,
         "raw_text": text,
         "cleaned_text": chunk.get("summary", ""),
