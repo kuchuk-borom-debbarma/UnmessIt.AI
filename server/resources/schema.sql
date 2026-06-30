@@ -208,7 +208,7 @@ CREATE TABLE IF NOT EXISTS user_config_presets (
     llm_api_key TEXT,
     llm_temperature REAL NOT NULL,
     llm_max_retries INTEGER NOT NULL,
-    llm_max_tokens INTEGER NOT NULL,
+    llm_max_tokens INTEGER,
     
     embedding_provider TEXT NOT NULL,
     embedding_model TEXT NOT NULL,
