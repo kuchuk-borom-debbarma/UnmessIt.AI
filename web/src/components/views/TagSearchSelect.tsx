@@ -58,7 +58,7 @@ export function TagSearchSelect({ label, value, onChange, condition, onCondition
     const fetchResults = async () => {
       setLoading(true)
       try {
-        const data = await api<{ data: Tag[] }>(`/api/tags/search?q=${encodeURIComponent(debouncedQuery)}&limit=10&cursor=${cursor}`, {
+        const data = await api<{ data: Tag[] }>(`/tags/search?q=${encodeURIComponent(debouncedQuery)}&limit=10&cursor=${cursor}`, {
           token
         })
         if (isMounted) {
@@ -117,20 +117,20 @@ export function TagSearchSelect({ label, value, onChange, condition, onCondition
   return (
     <div className="relative" ref={wrapperRef}>
       <div className="flex items-center justify-between mb-2">
-        <label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">{label}</label>
+        <label className="text-sm font-medium text-foreground/80">{label}</label>
         {condition && onConditionChange && (
           <div className="flex items-center bg-input/50 rounded-lg p-0.5 border border-border/50">
             <button
               type="button"
               onClick={() => onConditionChange('any')}
-              className={`px-2 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md transition-colors ${condition === 'any' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              className={`px-2 py-1 text-[11px] font-medium tracking-wide uppercase rounded-md transition-colors ${condition === 'any' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
             >
               Any
             </button>
             <button
               type="button"
               onClick={() => onConditionChange('all')}
-              className={`px-2 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md transition-colors ${condition === 'all' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              className={`px-2 py-1 text-[11px] font-medium tracking-wide uppercase rounded-md transition-colors ${condition === 'all' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
             >
               All
             </button>

@@ -63,7 +63,7 @@ export function DirectorySearchSelect({ label, value, onChange, token, placehold
     const fetchResults = async () => {
       setLoading(true)
       try {
-        const data = await api<{ data: Directory[] }>(`/api/directories/search?q=${encodeURIComponent(debouncedQuery)}&limit=10&cursor=${cursor}`, {
+        const data = await api<{ data: Directory[] }>(`/directories/search?q=${encodeURIComponent(debouncedQuery)}&limit=10&cursor=${cursor}`, {
           token
         })
         if (isMounted) {
@@ -121,7 +121,7 @@ export function DirectorySearchSelect({ label, value, onChange, token, placehold
 
   return (
     <div className="relative" ref={wrapperRef}>
-      <label className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-2 block">{label}</label>
+      <label className="text-sm font-medium text-foreground/80 mb-1.5 block">{label}</label>
       
       <div className="relative">
         <input

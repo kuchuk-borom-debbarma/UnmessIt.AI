@@ -275,13 +275,13 @@ export function AskView({ token }: { token: string }) {
               >
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <DirectorySearchSelect
-                    label="Include Directories (comma-separated IDs)"
+                    label="Include Directories"
                     value={withinDirectories}
                     onChange={setWithinDirectories}
                     token={token}
                   />
                   <DirectorySearchSelect
-                    label="Exclude Directories (comma-separated IDs)"
+                    label="Exclude Directories"
                     value={excludingDirectories}
                     onChange={setExcludingDirectories}
                     token={token}
@@ -289,7 +289,7 @@ export function AskView({ token }: { token: string }) {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <TagSearchSelect
-                    label="Include Tags (comma-separated)"
+                    label="Include Tags"
                     value={withinTags}
                     onChange={setWithinTags}
                     condition={withinTagsCondition}
@@ -297,7 +297,7 @@ export function AskView({ token }: { token: string }) {
                     token={token}
                   />
                   <TagSearchSelect
-                    label="Exclude Tags (comma-separated)"
+                    label="Exclude Tags"
                     value={excludingTags}
                     onChange={setExcludingTags}
                     token={token}
