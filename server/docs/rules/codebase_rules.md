@@ -39,7 +39,7 @@ Keep the server boring, small, and easy to read.
 - Chroma is a rebuildable index; SQLite source rows are the source of truth.
 
 ## 6. Routes
-- Keep these URLs stable: `POST /ingest/`, `POST /api/retrieval/query`, `GET /notes/`, `POST /notes/`, `GET /directories/`, `GET /tags/`, `GET /configs/presets`.
+- Keep these URLs stable: `POST /ingest/`, `POST /api/retrieval/query`, `GET /notes/`, `POST /notes/`, `GET /directories/`, `GET /tags/`, `GET /configs/presets`, `GET /configs/processing`, `PUT /configs/processing`, `GET /configs/rotation`, `PUT /configs/rotation`.
 - Authenticated memory/job inspection lives under `/api/advanced/*`, including `/api/advanced/memory`, `/api/advanced/recall`, and `/api/advanced/ingest_jobs`.
 - Development-only inspection/reset routes live under `/dev/*` and must stay gated by `ENABLE_DEV_ROUTES`.
 - `POST /ingest/` returns after durable job submission; the private scheduler does the background work.

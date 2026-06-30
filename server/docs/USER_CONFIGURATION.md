@@ -1,62 +1,55 @@
 # User Configuration System
 
 ## Overview
-UnmessIt.AI uses a **per-user preset system** for AI configuration. Each user manages their own OpenAI model names, API keys, optional OpenAI-compatible base URLs, chunk sizes, and generation limits without colliding with other users on the same instance.
 
-This design explicitly serves the application's multi-tenant capabilities by treating each user as an isolated domain of configuration and persistence.
+UnmessIt.AI splits per-user AI configuration into two parts:
 
-## Configuration Resolution
-Configuration for any given user request is resolved in the following sequence:
+- **Processing settings**: stable ingest/retrieval behavior. These include embedding provider/model, embedding batch size, chunk size, chunk overlap, and ingest retry backoff.
+- **Rotation lanes**: ordered API access lanes. These include OpenAI-compatible API keys, base URLs, language model names, generation limits, retries, and rate limits.
 
-1. **In-Memory Cache (LRU)**
-   The most recent configurations are cached in an `lru_cache` within the application memory to minimize database read overhead. This cache clears automatically when a preset is activated or modified.
+Rotation is per job/request only. The system does not persist a "last good" pointer. Each job/query starts at the first saved rotation lane and tries the next lane only if the current lane fails.
 
-2. **Database (SQLite `user_config_presets` Table)**
-   If not cached, the application reads the currently active preset for the `user_id` from the SQLite database. Presets contain OpenAI text model names, embedding model names, API keys, optional base URLs, chunk settings, rate limits, and ingest retry backoff seconds.
+## Resolution Flow
 
-3. **Application Defaults**
-   If a user has no active preset, AI work raises `NoActivePresetError` and the API returns `428` with code `no_active_preset`. Provider secrets and model endpoints are never loaded from `.env`; users define those values in Settings.
+1. `user_processing_settings` supplies stable processing settings.
+2. `user_rotation_config` supplies whether rotation is enabled and the ordered preset IDs.
+3. `user_config_presets` stores the rotation lane rows. The old `is_active` flag remains as the default lane when rotation is disabled.
+4. `src.infra.settings.get_user_setting_candidates(user_id)` returns ordered `Settings` objects combining stable processing with each rotation lane.
 
-## Provider Rule
+The LRU caches clear when processing settings, presets, or rotation order change.
 
-Only the `openai` provider is supported. The `/configs` route validates both `llm_provider` and `embedding_provider` and rejects anything else.
+## Hard Rules
 
-Optional base URLs remain available for endpoints that follow OpenAI-compatible request and response behavior. There is no Ollama/local-provider branch in active code.
+- Only the `openai` provider is supported.
+- Chunk size, chunk overlap, embedding model, embedding batch size, and ingest retry backoff do not rotate mid-job.
+- API keys are never returned by `/configs` responses and never stored in snapshots.
+- SSE progress is display-only. Durable checkpoints and saved artifact metadata are the persistent record.
 
-## Ingest Retry Backoff
+## Snapshots
 
-Each preset stores `ingest_retry_backoff_seconds` as a comma-separated list,
-for example `5,15,30,60,120`. Durable ingest uses this list when provider,
-indexing, or embedding work fails. Invalid entries are ignored, values over one
-hour are dropped, and an empty result falls back to the default list.
+Saved chunks, recall keys/links, and vector metadata include non-secret configuration snapshots where useful:
 
-## Late-Binding Architecture (LangChain & Embeddings)
-Because configuration is dynamic, we do not initialize global AI text or embedding clients on application startup. Instead, we use a **late-binding** approach.
+- `processing_settings`: chunking, embedding model, batch size, and retry backoff.
+- `llm_rotation_preset`: the non-secret lane snapshot for LLM-produced artifacts.
+- `embedding_rotation_preset`: the non-secret lane snapshot attached to vector metadata.
 
-Components like `JsonLLMClient` and `get_embedding_function` are instantiated per-request. By passing `user_id` down the entire call stack (from the API route, through the LangGraph chains, down to the clients), the system fetches the user's specific `Settings` from the LRU cache just milliseconds before making the provider API call.
+## API
 
-## RAG Isolation Strategy
+- `GET /configs/processing` - Fetch stable processing settings.
+- `PUT /configs/processing` - Save stable processing settings.
+- `GET /configs/rotation` - Fetch rotation enabled state and ordered lane IDs.
+- `PUT /configs/rotation` - Save rotation enabled state and ordered lane IDs.
+- `GET /configs/presets` - List rotation lanes without API keys.
+- `POST /configs/presets` - Create a rotation lane.
+- `PUT /configs/presets/{preset_id}` - Update a rotation lane while preserving omitted keys.
+- `PUT /configs/presets/{preset_id}/activate` - Set the default lane used when rotation is disabled.
+- `DELETE /configs/presets/{preset_id}` - Delete a rotation lane.
+- `GET /configs/active` - Compatibility endpoint returning the first effective settings candidate.
 
-Because API keys and configuration define context windows and embedding models, we must strictly isolate user data across the entire RAG pipeline:
+## Retry Backoff
 
-* **ChromaDB Collections**: Chroma collections are dynamically named using the convention `statements_{user_id}` instead of a single shared `statements` collection. This enforces rigid data separation at the persistence layer.
+`ingest_retry_backoff_seconds` lives in processing settings as a comma-separated list such as `5,15,30,60,120`. Invalid entries are ignored, values over one hour are dropped, and an empty result falls back to the default list.
 
-> [!WARNING]
-> **Cloud Infra Limitations**
-> Scoping Chroma collections by user ID (`statements_{user_id}`) is acceptable for the current beta storage layer. A larger cloud multi-tenant deployment should use either a dedicated multi-tenant vector database with namespaces/tenants or a single shared collection with rigid metadata filtering (`{"user_id": {"$eq": user_id}}`) enforced at the proxy layer.
+## Testing Rule
 
-* **Vector Migrations**: Because each user manages their own embedding model, vector dimensions may change. The application does not migrate existing vectors automatically; the user must rebuild their knowledge base if they swap embedding representations.
-
-## Using the API
-
-The `/configs` router provides CRUD operations for managing these presets:
-* `GET /configs/presets` - List all presets for the authenticated user.
-* `POST /configs/presets` - Create a new preset.
-* `PUT /configs/presets/{preset_id}` - Update an existing preset while preserving saved API keys when omitted.
-* `GET /configs/active` - Fetch the currently active preset.
-* `PUT /configs/presets/{preset_id}/activate` - Set a preset as the active context for the user.
-* `DELETE /configs/presets/{preset_id}` - Delete a preset.
-
-## Testing Rules Addendum
-
-When writing integration tests or unit tests for components across the stack (Chains, Repositories, Infra), **always pass a `user_id` parameter** to the mock functions and pipeline steps. Global AI configuration is not supported; tests that omit `user_id` will fail configuration and persistence lookups.
+When testing chains, repositories, or infra that touch AI configuration, pass `user_id`. Global AI provider secrets are not supported.

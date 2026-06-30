@@ -69,7 +69,7 @@ https://integrate.api.nvidia.com/v1
 https://api.openai.com/v1
 ```
 
-This means user presets can keep the familiar LM Studio URL from the Settings UI. Docker deployments make it reachable at runtime.
+This means rotation lanes can keep the familiar LM Studio URL from the Settings UI. Docker deployments make it reachable at runtime.
 
 ## LM Studio Checklist
 
@@ -88,14 +88,14 @@ http://host.docker.internal:1234/v1
 ```
 
 4. Use a model name exactly as LM Studio exposes it.
-5. Resume or recreate failed ingest jobs after changing the preset.
+5. Resume or recreate failed ingest jobs after changing processing settings or rotation lanes.
 
 ## Troubleshooting
 
 If ingest jobs fail with `Connection error` during embeddings:
 
 - Confirm the embedding base URL points to the LM Studio server.
-- Confirm LM Studio is running and serving embeddings for the configured embedding model.
+- Confirm LM Studio is running and serving embeddings for the configured processing embedding model.
 - From Docker, loopback URLs must resolve through `host.docker.internal`; this happens automatically only when `UNMESSIT_DOCKER=1`.
 - If running the server outside Docker, use normal host loopback URLs such as `http://127.0.0.1:1234/v1`.
 

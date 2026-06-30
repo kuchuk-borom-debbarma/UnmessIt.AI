@@ -423,9 +423,9 @@ Current defaults:
 - retry limit: `5`
 - backoff seconds: `5`, `15`, `30`, `60`, `120`
 
-Backoff seconds are configurable per active user preset as a comma-separated
-list such as `5,15,30,60,120`. Invalid entries are ignored and values above
-one hour are dropped.
+Backoff seconds are configurable per user's stable processing settings as a
+comma-separated list such as `5,15,30,60,120`. Invalid entries are ignored and
+values above one hour are dropped.
 
 When a unit fails:
 

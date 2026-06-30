@@ -59,6 +59,31 @@ def init_db() -> None:
     _add_column_if_missing(conn, "user_config_presets", "embedding_batch_size", "INTEGER NOT NULL DEFAULT 100")
     _add_column_if_missing(conn, "user_config_presets", "ingest_retry_backoff_seconds", "TEXT NOT NULL DEFAULT '5,15,30,60,120'")
     _add_column_if_missing(conn, "source_chunks", "directory_path", "TEXT")
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS user_processing_settings (
+            user_id TEXT PRIMARY KEY,
+            embedding_provider TEXT NOT NULL DEFAULT 'openai',
+            embedding_model TEXT NOT NULL DEFAULT 'text-embedding-3-small',
+            embedding_batch_size INTEGER NOT NULL DEFAULT 100,
+            chunk_size INTEGER NOT NULL DEFAULT 1000,
+            chunk_overlap INTEGER NOT NULL DEFAULT 200,
+            ingest_retry_backoff_seconds TEXT NOT NULL DEFAULT '5,15,30,60,120',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS user_rotation_config (
+            user_id TEXT PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            preset_ids JSON NOT NULL DEFAULT '[]',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        """
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_directories_user_name ON directories(user_id, name)")
     conn.commit()
 

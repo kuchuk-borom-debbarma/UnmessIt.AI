@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from src.infra import chroma
+from src.infra.settings import get_user_settings
 from src.services.rag.models import SourceChunk
 
 
@@ -15,6 +16,9 @@ def index(chunks: list[SourceChunk]) -> None:
     from src.repositories import tags, raw_inputs
     
     ids, texts, metadatas = [], [], []
+    settings = get_user_settings(chunks[0]["user_id"]) if chunks else None
+    processing_snapshot = settings.processing_snapshot() if settings else {}
+    rotation_snapshot = settings.rotation_snapshot() if settings else {}
     for chunk in chunks:
         # Get tags for this chunk's note
         raw_input = raw_inputs.get(chunk["raw_input_id"])
@@ -30,6 +34,8 @@ def index(chunks: list[SourceChunk]) -> None:
             "user_id": chunk["user_id"],
             "spans": json.dumps(chunk["spans"], ensure_ascii=False),
             "directory_path": dir_path,
+            "processing_settings": json.dumps(processing_snapshot, ensure_ascii=False),
+            "embedding_rotation_preset": json.dumps(rotation_snapshot or {}, ensure_ascii=False),
         }
         
         if dir_path:

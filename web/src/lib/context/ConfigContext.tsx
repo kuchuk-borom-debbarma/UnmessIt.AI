@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { api } from '../api'
-import type { Preset } from '../api'
+import type { Preset, RotationConfig } from '../api'
 import { ConfigContext } from './ConfigContextCore'
 
 export function ConfigProvider({ children, token }: { children: ReactNode; token: string | null }) {
@@ -16,8 +16,11 @@ export function ConfigProvider({ children, token }: { children: ReactNode; token
     }
 
     try {
-      const presets = await api<Preset[]>('/configs/presets', { token })
-      setHasActivePreset(presets.some((p) => p.is_active === 1))
+      const [presets, rotation] = await Promise.all([
+        api<Preset[]>('/configs/presets', { token }),
+        api<RotationConfig>('/configs/rotation', { token }),
+      ])
+      setHasActivePreset(presets.some((p) => p.is_active === 1) || (rotation.enabled && rotation.preset_ids.length >= 2))
     } catch {
       setHasActivePreset(false)
     } finally {

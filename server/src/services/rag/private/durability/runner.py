@@ -7,6 +7,7 @@ from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from src.infra.progress import get_last_rotation_snapshot, reset_progress_reporters, set_progress_reporters
 from src.infra.settings import NoActivePresetError, get_user_settings
 from src.repositories import recall, recall_key_vectors, source_chunk_vectors, source_chunks
 from src.services.rag.models import SourceChunk, SourceChunkDraft, SourceWindow
@@ -188,11 +189,18 @@ class DurableIngestRunner:
         chunks = await self.source_chunk_assembler.run(raw_input_id, raw_text, user_id, drafts, directory_path)
         
         await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": f"Summarizing chunk {index + 1}/{total} (Saving): \"{snippet}\""})
+        processing_snapshot = _processing_snapshot(user_id)
+        rotation_snapshot = get_last_rotation_snapshot()
         for c_idx, chunk in enumerate(chunks):
             chunk["id"] = _stable_id("source_chunk", unit_key, str(c_idx), chunk["text"])
+            chunk["metadata"] = {
+                **(chunk.get("metadata") or {}),
+                "processing_settings": processing_snapshot,
+                "llm_rotation_preset": rotation_snapshot,
+            }
         await asyncio.to_thread(source_chunks.save_many, chunks)
         chunk_ids = [chunk["id"] for chunk in chunks]
-        return ",".join(chunk_ids), {"source_chunk_ids": chunk_ids}
+        return ",".join(chunk_ids), {"source_chunk_ids": chunk_ids, "processing_settings": processing_snapshot, "llm_rotation_preset": rotation_snapshot}
 
     async def _recall(self, job_id: str, raw_text: str, user_id: str, chunks: list[SourceChunk]) -> None:
         """Create recall links only for chunks without completed recall work."""
@@ -237,11 +245,25 @@ class DurableIngestRunner:
         )
         if not index_result["recall_links"]:
             raise ValueError("recall produced no links")
+        processing_snapshot = _processing_snapshot(user_id)
+        rotation_snapshot = get_last_rotation_snapshot()
+        for key in index_result["recall_keys"]:
+            key["metadata"] = {
+                **(key.get("metadata") or {}),
+                "processing_settings": processing_snapshot,
+                "llm_rotation_preset": rotation_snapshot,
+            }
+        for link in index_result["recall_links"]:
+            link["metadata"] = {
+                **(link.get("metadata") or {}),
+                "processing_settings": processing_snapshot,
+                "llm_rotation_preset": rotation_snapshot,
+            }
         
         await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": f"Recall chunk {index + 1}/{total} (saving links): \"{snippet}\""})
         saved_links = await asyncio.to_thread(recall.save_index, index_result, user_id)
         logger.info("ingest_recall_saved chunk_id=%s saved_links=%s", chunk["id"], saved_links)
-        return chunk["id"], {"saved_links": saved_links, "recall_keys": [key["id"] for key in index_result["recall_keys"]]}
+        return chunk["id"], {"saved_links": saved_links, "recall_keys": [key["id"] for key in index_result["recall_keys"]], "llm_rotation_preset": rotation_snapshot}
 
     async def _recall_vectors(self, job_id: str, keys: list[dict[str, Any]]) -> None:
         """Index only missing recall-key vectors."""
@@ -299,6 +321,13 @@ class DurableIngestRunner:
         """Run one unit and convert failures into durable retry state."""
         await asyncio.to_thread(repository.start_checkpoint, job_id, stage, unit_key)
         logger.info("ingest_unit_start job_id=%s stage=%s unit=%s", job_id, stage, unit_key)
+        async def async_report(message: str, details: dict[str, Any] | None = None) -> None:
+            await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": _progress_message(message, details)})
+
+        def sync_report(message: str, details: dict[str, Any] | None = None) -> None:
+            repository.update_metadata(job_id, {"progress_message": _progress_message(message, details)})
+
+        tokens = set_progress_reporters(async_report, sync_report)
         try:
             output_ref, metadata = await work()
             await asyncio.to_thread(repository.complete_checkpoint, job_id, stage, unit_key, output_ref, metadata)
@@ -312,12 +341,21 @@ class DurableIngestRunner:
                 job_id, stage, unit_key, job["status"], job["attempt_count"], str(exc),
             )
             raise
+        finally:
+            reset_progress_reporters(tokens)
 
     async def _run_batch_units(self, job_id: str, stage: str, units: list[tuple[str, str, dict[str, Any]]], work, user_id: str | None = None) -> None:
         """Run one batch while preserving per-unit checkpoints."""
         for unit_key, _, _ in units:
             await asyncio.to_thread(repository.start_checkpoint, job_id, stage, unit_key)
         logger.info("ingest_batch_start job_id=%s stage=%s units=%s", job_id, stage, len(units))
+        async def async_report(message: str, details: dict[str, Any] | None = None) -> None:
+            await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": _progress_message(message, details)})
+
+        def sync_report(message: str, details: dict[str, Any] | None = None) -> None:
+            repository.update_metadata(job_id, {"progress_message": _progress_message(message, details)})
+
+        tokens = set_progress_reporters(async_report, sync_report)
         try:
             await work()
             for unit_key, output_ref, metadata in units:
@@ -334,6 +372,8 @@ class DurableIngestRunner:
                 job_id, stage, len(units), job["status"], job["attempt_count"], str(exc),
             )
             raise
+        finally:
+            reset_progress_reporters(tokens)
 
 
 def _raw_input(raw_input_id: str) -> dict[str, Any] | None:
@@ -345,7 +385,7 @@ def _retry_backoff(user_id: str | None) -> list[int] | None:
     if not user_id:
         return None
     try:
-        return get_user_settings(user_id).ingest_retry_backoff_seconds
+        return getattr(get_user_settings(user_id), "ingest_retry_backoff_seconds", None)
     except NoActivePresetError:
         return None
 
@@ -360,6 +400,18 @@ def _stable_id(*parts: str) -> str:
     """Stable IDs make save-after-crash idempotent even before checkpoint completion."""
     digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
     return digest
+
+
+def _progress_message(message: str, details: dict[str, Any] | None = None) -> str:
+    preset = (details or {}).get("preset_name")
+    return f"{message} [{preset}]" if preset else message
+
+
+def _processing_snapshot(user_id: str) -> dict[str, Any]:
+    settings = get_user_settings(user_id)
+    if hasattr(settings, "processing_snapshot"):
+        return settings.processing_snapshot()
+    return {}
 
 def _directory_path(job_id: str) -> str | None:
     from src.infra.sqlite import get_connection

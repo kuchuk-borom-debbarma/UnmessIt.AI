@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from uuid import uuid4
 
+from src.infra.progress import reset_progress_reporters, set_progress_reporters
 from src.services.rag.models import IngestResult, QueryResult, ProgressReporter, NullProgressReporter
 from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, build_query_result
 from src.services.rag.private.pipeline.ingest import get_durable_ingest
@@ -62,12 +64,22 @@ class RagServiceImpl:
             trace = {"mode": "empty_query", "query": query, "source_chunk_count": 0}
             answer = {"answer": "Ask a question to search your source chunks.", "citations": [], "directories": [], "notes": []}
             return build_query_result(query, [], answer, trace)
-            
-        await reporter.report("Normalizing query text...", {"query_chars": len(query)})
-        await reporter.report("Searching source-backed evidence...")
-        chunks, trace = await self.query_evidence.run(query, user_id, reporter, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
-        await reporter.report("Generating answer from selected evidence...", {"source_chunk_count": len(chunks)})
-        answer = await self.query_answer.run(query, chunks, user_id, reporter)
-        await reporter.report("Retrieval complete.", {"citation_count": len(answer.get("citation_ids", []))})
+
+        async def async_report(message: str, details: dict | None = None) -> None:
+            await reporter.report(message, details)
+
+        def sync_report(message: str, details: dict | None = None) -> None:
+            asyncio.create_task(reporter.report(message, details))
+
+        tokens = set_progress_reporters(async_report, sync_report)
+        try:
+            await reporter.report("Normalizing query text...", {"query_chars": len(query)})
+            await reporter.report("Searching source-backed evidence...")
+            chunks, trace = await self.query_evidence.run(query, user_id, reporter, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
+            await reporter.report("Generating answer from selected evidence...", {"source_chunk_count": len(chunks)})
+            answer = await self.query_answer.run(query, chunks, user_id, reporter)
+            await reporter.report("Retrieval complete.", {"citation_count": len(answer.get("citation_ids", []))})
+        finally:
+            reset_progress_reporters(tokens)
         
         return build_query_result(query, chunks, answer, trace)

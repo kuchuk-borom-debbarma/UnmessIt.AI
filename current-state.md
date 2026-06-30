@@ -1,12 +1,12 @@
 # Current State
 
-Engineering snapshot as of 2026-06-30.
+Engineering snapshot as of 2026-07-01.
 
 ## Product Direction
 
 UnmessIt.AI is a source-backed personal RAG app for evolving user notes. The product goal is simple: users store messy text, then ask questions later and get answers grounded in the exact saved sources.
 
-The current implementation is OpenAI-standard only. Users configure OpenAI text and embedding presets in the app Settings screen. Server environment variables are for runtime concerns such as JWT, CORS, dev routes, and logging.
+The current implementation is OpenAI-standard only. Users configure stable processing settings and ordered OpenAI rotation lanes in the app Settings screen. Server environment variables are for runtime concerns such as JWT, CORS, dev routes, and logging.
 
 ## Current App Shape
 
@@ -19,7 +19,7 @@ The current implementation is OpenAI-standard only. Users configure OpenAI text 
 ## Implemented Features
 
 - Local username/password auth with JWT bearer tokens.
-- Per-user data isolation across notes, directories, tags, raw inputs, source chunks, recall keys, recall links, vectors, and presets.
+- Per-user data isolation across notes, directories, tags, raw inputs, source chunks, recall keys, recall links, vectors, processing settings, and rotation lanes.
 - Notes CRUD with directory structures, tag organization, pagination, and a soft/hard delete Trash system.
 - Materialized-path directories for efficient subtree queries. Search leverages an O(1) Vector DB lineage optimization using injected parent boolean flags inside ChromaDB metadata.
 - Soft-delete vector synchronization (moving notes to trash masks raw inputs and evicts Chroma vectors; restoring re-indexes instantly).
@@ -33,7 +33,7 @@ The current implementation is OpenAI-standard only. Users configure OpenAI text 
 - Chroma vector indexes for source chunks and recall keys, with durable ingest batching missing vectors per stage (ChromaDB client acts as a global singleton to prevent SQLite locking).
 - Retrieval with query breakdown, vector search, lexical search, recall-key search, linked-chunk expansion, dedupe, rerank, and Context Engineering (context packing/distillation).
 - Source-backed answer generation with citations to specific `note_id`s, source chunks, and an expandable Retrieval Analysis Trace.
-- Settings UI for OpenAI presets, API keys, model names, base URLs, max tokens, retries, chunk size, chunk overlap, rate limits, and ingest retry backoff.
+- Settings UI separates stable processing settings from ordered API rotation lanes. Chunk size, overlap, embedding model, batch size, and retry backoff stay fixed per job/request; API keys, base URLs, model lanes, and rate limits can rotate on failure.
 - Jobs UI for durable ingest job status, stage tracking, pause, stop, resume, and delete; updates arrive through SSE with a slow fallback refresh.
 - Paginated Note Insights UI for inspecting recall keys and links per note (replaced global memory UI).
 
@@ -91,6 +91,10 @@ Product:
 - `GET /api/retrieval/events/{client_id}`
 - `GET /configs/presets`
 - `POST /configs/presets`
+- `GET /configs/processing`
+- `PUT /configs/processing`
+- `GET /configs/rotation`
+- `PUT /configs/rotation`
 - `PUT /configs/presets/{preset_id}/activate`
 - `DELETE /configs/presets/{preset_id}`
 - `GET /configs/active`
@@ -137,7 +141,7 @@ Development-only routes:
 
 - Background ingest workers are in-process threads, not a distributed queue.
 - SQLite and Chroma are still beta storage choices, not a production multi-region data layer.
-- Chroma collection names are per user, but vector rebuild/migration is manual if embedding dimensions change.
+- Chroma collection names are per user and embedding processing signature. Rebuild/migration remains manual if embedding dimensions change.
 - Timeline answers use source order, spans, `source_time`, `event_time`, and `time_label` hints; there is no dedicated temporal ordering layer yet.
 - Recall quality controls broad reasoning quality.
 - There is no LLM response cache table.

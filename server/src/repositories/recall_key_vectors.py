@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from src.infra import chroma
+from src.infra.settings import get_user_settings
 
 
 def index(keys: list[dict[str, Any]]) -> None:
@@ -13,6 +14,9 @@ def index(keys: list[dict[str, Any]]) -> None:
     existing keys when wording differs from a saved name or alias.
     """
     ids, texts, metadatas = [], [], []
+    settings = get_user_settings(keys[0]["user_id"]) if keys else None
+    processing_snapshot = settings.processing_snapshot() if settings else {}
+    rotation_snapshot = settings.rotation_snapshot() if settings else {}
     for key in keys:
         ids.append(f"{key['id']}:recall_key")
         texts.append(_text(key))
@@ -22,6 +26,8 @@ def index(keys: list[dict[str, Any]]) -> None:
             "recall_key_id": key["id"],
             "name": key["name"],
             "user_id": key["user_id"],
+            "processing_settings": json.dumps(processing_snapshot, ensure_ascii=False),
+            "embedding_rotation_preset": json.dumps(rotation_snapshot or {}, ensure_ascii=False),
         })
     if keys:
         user_id = keys[0]["user_id"]

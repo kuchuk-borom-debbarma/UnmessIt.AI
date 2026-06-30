@@ -8,7 +8,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
 
 from src.infra.rate_limit import RateLimitedModel, get_limiter
-from src.infra.settings import get_user_settings
+from src.infra.settings import Settings, get_user_setting_candidates, get_user_settings
+from src.infra.progress import report_progress, set_last_rotation_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class JsonLLMClient:
 
     def invoke_json(self, system: str, human: str, user_id: str) -> dict[str, Any]:
         """Invoke the chat model and parse a JSON object."""
-        llm = self.llm or _get_chat_llm(user_id)
+        llm = self.llm or _get_chat_llm(get_user_settings(user_id).llm_cache_key())
         settings = get_user_settings(user_id)
         messages = [SystemMessage(content=system), HumanMessage(content=human)]
         last_error: Exception | None = None
@@ -44,13 +45,46 @@ class JsonLLMClient:
 
     async def async_invoke_json(self, system: str, human: str, user_id: str) -> dict[str, Any]:
         """Async variant: awaits ainvoke() so the event loop stays free during LLM I/O."""
-        llm = self.llm or _get_chat_llm(user_id)
-        settings = get_user_settings(user_id)
+        if self.llm:
+            return await self._async_invoke_with_settings(self.llm, get_user_settings(user_id), system, human)
+
+        errors = []
+        candidates = get_user_setting_candidates(user_id)
+        for index, settings in enumerate(candidates, start=1):
+            await report_progress(
+                f"Rotation preset {index}/{len(candidates)} selected: {settings.preset_name}",
+                {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "attempt": index, "total": len(candidates)},
+            )
+            try:
+                result = await self._async_invoke_with_settings(_get_chat_llm(settings.llm_cache_key()), settings, system, human)
+                set_last_rotation_snapshot(settings.rotation_snapshot())
+                await report_progress(
+                    f"Rotation preset succeeded: {settings.preset_name}",
+                    {"preset_id": settings.preset_id, "preset_name": settings.preset_name},
+                )
+                return result
+            except Exception as exc:
+                errors.append(f"{settings.preset_name}: {exc}")
+                logger.warning("llm_rotation_preset_failed preset=%s error=%s", settings.preset_name, exc)
+                await report_progress(
+                    f"Rotation preset failed: {settings.preset_name}",
+                    {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "error": str(exc)[:500]},
+                )
+                if index < len(candidates):
+                    await report_progress(f"Trying next rotation preset after {settings.preset_name} failed.")
+        await report_progress("All rotation presets failed.", {"errors": errors})
+        raise ValueError("All rotation presets failed: " + "; ".join(errors))
+
+    async def _async_invoke_with_settings(self, llm, settings: Settings, system: str, human: str) -> dict[str, Any]:
         messages = [SystemMessage(content=system), HumanMessage(content=human)]
         last_error: Exception | None = None
         for attempt in range(1, settings.llm_max_retries + 2):
             content = ""
             try:
+                await report_progress(
+                    f"Calling language model {settings.llm_model} (attempt {attempt}/{settings.llm_max_retries + 1})",
+                    {"preset_id": settings.preset_id, "model": settings.llm_model, "attempt": attempt},
+                )
                 response = await llm.ainvoke(messages)
                 content = response.content if hasattr(response, "content") else str(response)
                 return JsonOutputParser().parse(content)
@@ -69,24 +103,34 @@ def get_json_client() -> JsonLLMClient:
 
 
 @lru_cache(maxsize=100)
-def _get_chat_llm(user_id: str):
-    """Create the provider-specific LangChain chat model lazily, cached per user."""
-    settings = get_user_settings(user_id)
+def _get_chat_llm(cache_key: tuple):
+    """Create the provider-specific LangChain chat model lazily."""
+    (
+        _preset_id,
+        _provider,
+        model,
+        base_url,
+        api_key,
+        temperature,
+        _max_retries,
+        max_tokens,
+        rate_limit,
+    ) = cache_key
     
     from langchain_openai import ChatOpenAI
 
     llm = ChatOpenAI(
-        model=settings.llm_model,
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key or "dummy-key",
-        temperature=settings.llm_temperature,
-        max_tokens=settings.llm_max_tokens,
-        model_kwargs={"response_format": _json_response_format(settings.llm_base_url or "")},
+        model=model,
+        base_url=base_url,
+        api_key=api_key or "dummy-key",
+        temperature=temperature,
+        max_tokens=max_tokens,
+        model_kwargs={"response_format": _json_response_format(base_url or "")},
     )
 
-    if settings.llm_rate_limit_per_minute > 0:
+    if rate_limit > 0:
         # get_limiter returns a singleton so ingest and retrieval share one token bucket.
-        return RateLimitedModel(llm, get_limiter(settings.llm_rate_limit_per_minute))
+        return RateLimitedModel(llm, get_limiter(rate_limit))
     return llm
 
 

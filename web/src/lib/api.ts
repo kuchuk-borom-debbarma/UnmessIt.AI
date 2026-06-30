@@ -34,6 +34,21 @@ export type Preset = {
   ingest_retry_backoff_seconds: string
 }
 
+export type ProcessingSettings = {
+  embedding_provider: string
+  embedding_model: string
+  embedding_batch_size: number
+  chunk_size: number
+  chunk_overlap: number
+  ingest_retry_backoff_seconds: string
+}
+
+export type RotationConfig = {
+  enabled: boolean
+  preset_ids: string[]
+  presets: Preset[]
+}
+
 type Options = RequestInit & { token?: string | null }
 
 export async function api<T>(path: string, options: Options = {}): Promise<T> {

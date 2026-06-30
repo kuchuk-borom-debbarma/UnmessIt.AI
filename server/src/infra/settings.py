@@ -17,8 +17,9 @@ class NoActivePresetError(Exception):
     pass
 
 class Settings:
-    def __init__(self, preset: dict | None = None) -> None:
+    def __init__(self, preset: dict | None = None, processing: dict | None = None) -> None:
         preset = preset or {}
+        processing = processing or preset or {}
         
         self.log_level = os.getenv("LOG_LEVEL", "INFO")
         self.enable_dev_routes = os.getenv("ENABLE_DEV_ROUTES", "1").lower() not in {"0", "false", "no"}
@@ -33,18 +34,75 @@ class Settings:
         self.llm_max_tokens = int(preset.get("llm_max_tokens", 2048))
         self.llm_rate_limit_per_minute = int(preset.get("llm_rate_limit_per_minute", 0))
 
-        self.embedding_provider = (preset.get("embedding_provider") or "openai").lower()
-        self.embedding_model = preset.get("embedding_model") or "text-embedding-3-small"
+        self.preset_id = str(preset.get("id") or "")
+        self.preset_name = str(preset.get("name") or "Default")
+
+        self.embedding_provider = (processing.get("embedding_provider") or "openai").lower()
+        self.embedding_model = processing.get("embedding_model") or "text-embedding-3-small"
         self.embedding_base_url = _docker_reachable_url(preset.get("embedding_base_url"))
         self.embedding_api_key = preset.get("embedding_api_key") or ""
         self.embedding_rate_limit_per_minute = int(preset.get("embedding_rate_limit_per_minute", 0))
-        self.embedding_batch_size = int(preset.get("embedding_batch_size", 100))
+        self.embedding_batch_size = int(processing.get("embedding_batch_size", 100))
         
-        self.chunk_size = int(preset.get("chunk_size", 1000))
-        self.chunk_overlap = int(preset.get("chunk_overlap", 200))
+        self.chunk_size = int(processing.get("chunk_size", 1000))
+        self.chunk_overlap = int(processing.get("chunk_overlap", 200))
         self.ingest_retry_backoff_seconds = parse_retry_backoff_seconds(
-            preset.get("ingest_retry_backoff_seconds")
+            processing.get("ingest_retry_backoff_seconds")
         )
+
+    def llm_cache_key(self) -> tuple:
+        return (
+            self.preset_id,
+            self.llm_provider,
+            self.llm_model,
+            self.llm_base_url,
+            self.llm_api_key,
+            self.llm_temperature,
+            self.llm_max_retries,
+            self.llm_max_tokens,
+            self.llm_rate_limit_per_minute,
+        )
+
+    def embedding_cache_key(self) -> tuple:
+        return (
+            self.preset_id,
+            self.embedding_provider,
+            self.embedding_model,
+            self.embedding_base_url,
+            self.embedding_api_key,
+            self.embedding_rate_limit_per_minute,
+        )
+
+    def processing_signature(self) -> str:
+        return "|".join([
+            self.embedding_provider,
+            self.embedding_model,
+            str(self.chunk_size),
+            str(self.chunk_overlap),
+            str(self.embedding_batch_size),
+        ])
+
+    def processing_snapshot(self) -> dict:
+        return {
+            "embedding_provider": self.embedding_provider,
+            "embedding_model": self.embedding_model,
+            "embedding_batch_size": self.embedding_batch_size,
+            "chunk_size": self.chunk_size,
+            "chunk_overlap": self.chunk_overlap,
+            "ingest_retry_backoff_seconds": ",".join(str(item) for item in self.ingest_retry_backoff_seconds),
+        }
+
+    def rotation_snapshot(self) -> dict:
+        return {
+            "preset_id": self.preset_id,
+            "preset_name": self.preset_name,
+            "llm_provider": self.llm_provider,
+            "llm_model": self.llm_model,
+            "llm_base_url": self.llm_base_url,
+            "embedding_base_url": self.embedding_base_url,
+            "llm_rate_limit_per_minute": self.llm_rate_limit_per_minute,
+            "embedding_rate_limit_per_minute": self.embedding_rate_limit_per_minute,
+        }
 
 
 def parse_retry_backoff_seconds(value: object) -> list[int]:
@@ -81,14 +139,24 @@ def get_settings() -> Settings:
 
 @lru_cache(maxsize=128)
 def get_user_settings(user_id: str) -> Settings:
-    """Return the active AI settings for a specific user."""
-    from src.repositories.config_presets import get_active
+    """Return the first effective settings candidate for compatibility callers."""
+    candidates = get_user_setting_candidates(user_id)
+    if not candidates:
+        raise NoActivePresetError("No AI rotation preset configured. Please add a rotation preset in Settings.")
+    return candidates[0]
+
+
+@lru_cache(maxsize=128)
+def get_user_setting_candidates(user_id: str) -> tuple[Settings, ...]:
+    """Return ordered per-job/request rotation candidates."""
+    from src.repositories.config_presets import get_processing, rotation_candidates
     
     # Non-user runtime paths get server defaults, never provider secrets.
     if not user_id:
-        return get_settings()
+        return (get_settings(),)
         
-    preset = get_active(user_id)
-    if not preset:
-        raise NoActivePresetError("No active AI preset configured. Please configure an AI preset in Settings.")
-    return Settings(preset)
+    processing = get_processing(user_id)
+    presets = rotation_candidates(user_id)
+    if not presets:
+        raise NoActivePresetError("No AI rotation preset configured. Please add a rotation preset in Settings.")
+    return tuple(Settings(preset, processing) for preset in presets)
