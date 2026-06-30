@@ -5,6 +5,7 @@ import { cn } from '../../lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Link } from 'react-router-dom'
 import { DirectorySearchSelect } from './DirectorySearchSelect'
+import { TagSearchSelect } from './TagSearchSelect'
 
 type SourceChunk = {
   id: string
@@ -48,6 +49,9 @@ export function AskView({ token }: { token: string }) {
   const [showFilters, setShowFilters] = useState(false)
   const [withinDirectories, setWithinDirectories] = useState(() => sessionStorage.getItem('ask_within_dirs') || '')
   const [excludingDirectories, setExcludingDirectories] = useState(() => sessionStorage.getItem('ask_excluding_dirs') || '')
+  const [withinTags, setWithinTags] = useState(() => sessionStorage.getItem('ask_within_tags') || '')
+  const [excludingTags, setExcludingTags] = useState(() => sessionStorage.getItem('ask_excluding_tags') || '')
+  const [withinTagsCondition, setWithinTagsCondition] = useState<'any' | 'all'>(() => (sessionStorage.getItem('ask_within_tags_condition') as 'any' | 'all') || 'any')
   const [result, setResult] = useState<QueryResult | null>(() => {
     try {
       const saved = sessionStorage.getItem('ask_result')
@@ -66,7 +70,10 @@ export function AskView({ token }: { token: string }) {
     sessionStorage.setItem('ask_query', query)
     sessionStorage.setItem('ask_within_dirs', withinDirectories)
     sessionStorage.setItem('ask_excluding_dirs', excludingDirectories)
-  }, [query, withinDirectories, excludingDirectories])
+    sessionStorage.setItem('ask_within_tags', withinTags)
+    sessionStorage.setItem('ask_excluding_tags', excludingTags)
+    sessionStorage.setItem('ask_within_tags_condition', withinTagsCondition)
+  }, [query, withinDirectories, excludingDirectories, withinTags, excludingTags, withinTagsCondition])
 
   useEffect(() => {
     if (result) {
@@ -117,6 +124,8 @@ export function AskView({ token }: { token: string }) {
     try {
       const within = withinDirectories.split(',').map(s => s.trim()).filter(Boolean)
       const excluding = excludingDirectories.split(',').map(s => s.trim()).filter(Boolean)
+      const withinTagsArr = withinTags.split(',').map(s => s.trim()).filter(Boolean)
+      const excludingTagsArr = excludingTags.split(',').map(s => s.trim()).filter(Boolean)
       
       const data = await api<QueryResult>('/api/retrieval/query', {
         method: 'POST',
@@ -126,6 +135,9 @@ export function AskView({ token }: { token: string }) {
           client_id: clientId,
           within_directories: within.length > 0 ? within : undefined,
           excluding_directories: excluding.length > 0 ? excluding : undefined,
+          within_tags: withinTagsArr.length > 0 ? withinTagsArr : undefined,
+          excluding_tags: excludingTagsArr.length > 0 ? excludingTagsArr : undefined,
+          within_tags_condition: withinTagsCondition,
         }),
         signal: abortController.signal
       })
@@ -230,7 +242,7 @@ export function AskView({ token }: { token: string }) {
             <button
               className={cn(
                 "mr-1 rounded-[1.2rem] p-4 transition-all flex items-center justify-center shrink-0",
-                showFilters || withinDirectories || excludingDirectories
+                showFilters || withinDirectories || excludingDirectories || withinTags || excludingTags
                   ? "bg-primary-500/10 text-primary-500 hover:bg-primary-500/20"
                   : "bg-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground"
               )}
@@ -261,18 +273,36 @@ export function AskView({ token }: { token: string }) {
                 exit={{ opacity: 0, y: -10, height: 0 }}
                 className="w-full mt-4 p-5 bg-background/80 backdrop-blur-xl border border-border/50 rounded-[1.8rem] shadow-xl flex flex-col gap-4 overflow-visible relative z-10"
               >
-                <DirectorySearchSelect
-                  label="Include Directories (comma-separated IDs)"
-                  value={withinDirectories}
-                  onChange={setWithinDirectories}
-                  token={token}
-                />
-                <DirectorySearchSelect
-                  label="Exclude Directories (comma-separated IDs)"
-                  value={excludingDirectories}
-                  onChange={setExcludingDirectories}
-                  token={token}
-                />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <DirectorySearchSelect
+                    label="Include Directories (comma-separated IDs)"
+                    value={withinDirectories}
+                    onChange={setWithinDirectories}
+                    token={token}
+                  />
+                  <DirectorySearchSelect
+                    label="Exclude Directories (comma-separated IDs)"
+                    value={excludingDirectories}
+                    onChange={setExcludingDirectories}
+                    token={token}
+                  />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <TagSearchSelect
+                    label="Include Tags (comma-separated)"
+                    value={withinTags}
+                    onChange={setWithinTags}
+                    condition={withinTagsCondition}
+                    onConditionChange={setWithinTagsCondition}
+                    token={token}
+                  />
+                  <TagSearchSelect
+                    label="Exclude Tags (comma-separated)"
+                    value={excludingTags}
+                    onChange={setExcludingTags}
+                    token={token}
+                  />
+                </div>
               </motion.div>
             )}
           </AnimatePresence>

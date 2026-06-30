@@ -48,6 +48,9 @@ class NotesService:
         
         success = notes.update(note_id, text, user_id, directory_id)
         if success:
+            old_tag_names = {t["name"] for t in tags.get_for_note(note_id)}
+            new_tag_names = set(tag_names) if tag_names is not None else old_tag_names
+            
             if tag_names is not None:
                 for tag in tags.get_for_note(note_id):
                     tags.remove_from_note(note_id, tag["id"])
@@ -55,11 +58,18 @@ class NotesService:
                     tag = tags.get_by_name(name, user_id)
                     tag_id = tag["id"] if tag else tags.create(name, user_id)
                     tags.add_to_note(note_id, tag_id)
-            self.event_bus.publish("note.updated", {
-                "note_id": note_id,
-                "text": text,
-                "user_id": user_id
-            })
+                    
+            if old_note["text"] != text:
+                self.event_bus.publish("note.updated", {
+                    "note_id": note_id,
+                    "text": text,
+                    "user_id": user_id
+                })
+            elif old_tag_names != new_tag_names:
+                self.event_bus.publish("note.tags_changed", {
+                    "note_id": note_id,
+                    "user_id": user_id
+                })
             
             if old_dir != directory_id:
                 self.event_bus.publish("note.moved", {

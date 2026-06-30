@@ -146,7 +146,7 @@ def list_all(user_id: str, page: int = 1, limit: int = 50) -> dict[str, Any]:
         "data": [dict(row) for row in rows]
     }
 
-def search_by_name(query: str, user_id: str, limit: int = 10) -> list[dict[str, Any]]:
+def search_by_name(query: str, user_id: str, limit: int = 10, cursor: int = 0) -> list[dict[str, Any]]:
     """Search directories by name using LIKE match."""
     conn = get_connection()
     # Simple prefix or contained match. User asked for LIKE match.
@@ -157,9 +157,9 @@ def search_by_name(query: str, user_id: str, limit: int = 10) -> list[dict[str, 
         FROM directories 
         WHERE user_id = ? AND name LIKE ? 
         ORDER BY name ASC 
-        LIMIT ?
+        LIMIT ? OFFSET ?
         """,
-        (user_id, like_query, limit)
+        (user_id, like_query, limit, cursor)
     ).fetchall()
     return [dict(row) for row in rows]
 

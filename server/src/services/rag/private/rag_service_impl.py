@@ -53,7 +53,7 @@ class RagServiceImpl:
         """Delete one durable job."""
         return get_durable_ingest().delete_job(job_id)
 
-    async def query(self, data: str, user_id: str, reporter: ProgressReporter | None = None, within_directories: list[str] | None = None, excluding_directories: list[str] | None = None) -> QueryResult:
+    async def query(self, data: str, user_id: str, reporter: ProgressReporter | None = None, within_directories: list[str] | None = None, excluding_directories: list[str] | None = None, within_tags: list[str] | None = None, excluding_tags: list[str] | None = None, within_tags_condition: str = "any") -> QueryResult:
         """Search source chunks, expand through recall links, then answer."""
         reporter = reporter or NullProgressReporter()
         query = " ".join(data.split())
@@ -64,7 +64,7 @@ class RagServiceImpl:
             return build_query_result(query, [], answer, trace)
             
         await reporter.report("Searching source-backed evidence...")
-        chunks, trace = await self.query_evidence.run(query, user_id, reporter, within_directories, excluding_directories)
+        chunks, trace = await self.query_evidence.run(query, user_id, reporter, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
         answer = await self.query_answer.run(query, chunks, user_id)
         
         return build_query_result(query, chunks, answer, trace)

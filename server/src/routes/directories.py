@@ -41,10 +41,11 @@ async def list_directories(
 async def search_directories(
     q: str,
     limit: int = 10,
+    cursor: int = 0,
     user_id: str = Depends(get_current_user_id),
 ) -> dict:
     limit = max(1, min(limit, 100))
-    result = directories.search_by_name(q, user_id, limit)
+    result = directories.search_by_name(q, user_id, limit, cursor)
     return {"status": "success", "data": result}
 
 
