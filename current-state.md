@@ -146,13 +146,14 @@ Development-only routes:
 
 - **Durable Pub/Sub**: Implement durable pub/sub using idempotency and a transactional outbox pattern to guarantee event delivery between the Notes and RAG domains.
 - **Tag Filtering**: Granular control to filter AI searches by specific tags during querying.
+- **Custom Knowledge Connections**: Give users the ability to manually teach the AI connections by wiring explicit recall links between concepts or notes.
 - Add explicit timeline ordering for timeline-style questions if real examples need it.
 - Add a rebuild-vector-index command for embedding model changes.
 - Add small evaluations for multi-note, broad-recall, and citation correctness.
 - Replace in-process jobs with a real queue/lease only when multi-process deployment needs it.
 - Add route contract tests for frontend-used endpoints.
 
-## Later Down the Line
+## Far Far in the Future
 
 - **Cloud Platform**: A fully hosted cloud version of UnmessIt.AI for zero-setup, ubiquitous access to user knowledge bases.
 

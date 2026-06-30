@@ -23,11 +23,12 @@ Stop digging through folders to find what you wrote weeks ago. Just dump your no
 - **Durable Execution**: Long-running indexing jobs are checkpointed in SQLite, so they can gracefully pause and resume if an API provider times out.
 - **Memory Inspection**: View exact source chunks and recall links generated from your notes to understand how the AI sees your data.
 
-## Next
+## Next Up
 
 - **Tag Filtering**: Apply granular filtering to your AI searches using specific tags across your entire workspace.
+- **Custom Knowledge Connections**: Teach the AI by manually linking notes, entities, or concepts together, overriding or extending the automated knowledge graph.
 
-## Later Down the Line
+## Far Far in the Future
 
 - **Cloud Platform**: A fully hosted cloud version of UnmessIt.AI for zero-setup, ubiquitous access to your knowledge base.
 
