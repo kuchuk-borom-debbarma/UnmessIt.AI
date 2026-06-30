@@ -37,14 +37,16 @@ Stop digging through folders to find what you wrote weeks ago. Just dump your no
 
 ## Fast Start (Local Run)
 
-The easiest way to run UnmessIt.AI is using our pre-built Docker images. You don't need to build anything from source!
+The easiest way to run UnmessIt.AI is using our pre-built Docker images. You don't need to build anything from source! Just open your terminal or command prompt, copy the command for your operating system, and hit enter to launch the interactive setup wizard.
 
+**Mac / Linux**
 ```bash
-# Download the production compose file
-curl -O https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/main/docker-compose.prod.yml
+bash <(curl -s https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/main/scripts/install.sh)
+```
 
-# Start the application in the background
-docker compose -f docker-compose.prod.yml up -d
+**Windows (PowerShell)**
+```powershell
+iwr -useb https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/main/scripts/install.ps1 | iex
 ```
 
 Open your browser to:
