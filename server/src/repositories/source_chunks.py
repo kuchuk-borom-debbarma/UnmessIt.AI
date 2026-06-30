@@ -92,7 +92,7 @@ def delete_by_raw_input_id(raw_input_id: str) -> None:
     conn.commit()
 
 
-def search(query: str, user_id: str, limit: int = 8, within_directories: list[str] | None = None, excluding_directories: list[str] | None = None) -> list[dict[str, Any]]:
+def search(query: str, user_id: str, limit: int = 8, within_directories: list[str] | None = None, excluding_directories: list[str] | None = None, within_tags: list[str] | None = None, excluding_tags: list[str] | None = None, within_tags_condition: str = "any") -> list[dict[str, Any]]:
     """Small lexical fallback over source text and summaries."""
     terms = _terms(query)
     if not terms:
@@ -117,6 +117,21 @@ def search(query: str, user_id: str, limit: int = 8, within_directories: list[st
         for path in excluding_directories:
             where_clauses.append("(sc.directory_path NOT LIKE ? OR sc.directory_path IS NULL)")
             params.append(f"{path}%")
+            
+    if within_tags:
+        placeholders = ",".join(["?"] * len(within_tags))
+        if within_tags_condition == "all":
+            where_clauses.append(f"ri.job_id IN (SELECT note_id FROM note_tags WHERE tag_id IN ({placeholders}) GROUP BY note_id HAVING COUNT(DISTINCT tag_id) = ?)")
+            params.extend(within_tags)
+            params.append(len(within_tags))
+        else:
+            where_clauses.append(f"ri.job_id IN (SELECT note_id FROM note_tags WHERE tag_id IN ({placeholders}))")
+            params.extend(within_tags)
+            
+    if excluding_tags:
+        placeholders = ",".join(["?"] * len(excluding_tags))
+        where_clauses.append(f"ri.job_id NOT IN (SELECT note_id FROM note_tags WHERE tag_id IN ({placeholders}))")
+        params.extend(excluding_tags)
             
     where_sql = " AND ".join(where_clauses)
     

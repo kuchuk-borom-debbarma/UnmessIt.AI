@@ -77,7 +77,8 @@ async def _handle_note_moved(payload: dict[str, Any]) -> None:
             chunks = await asyncio.to_thread(source_chunks.get_by_raw_input_id, raw_input_id)
             if chunks:
                 chunk_ids = [chunk["id"] for chunk in chunks]
-                await asyncio.to_thread(source_chunk_vectors.update_metadata, chunk_ids, {"directory_path": new_path or ""}, user_id)
+                await asyncio.to_thread(source_chunk_vectors.delete, chunk_ids, user_id)
+                await asyncio.to_thread(source_chunk_vectors.index, chunks)
                 
         logger.info(f"Updated directory path for moved note {note_id}")
     except Exception as e:
@@ -139,6 +140,24 @@ def _on_note_restored(payload: dict[str, Any]) -> None:
     asyncio.create_task(asyncio.to_thread(_restore))
 
 
+def _on_note_tags_changed(payload: dict[str, Any]) -> None:
+    note_id = payload["note_id"]
+    user_id = payload["user_id"]
+    
+    def _update_tags():
+        from src.repositories import raw_inputs, source_chunks, source_chunk_vectors
+        inputs = raw_inputs.list_by_job(note_id, user_id)
+        for row in inputs:
+            input_id = row["id"]
+            chunks = source_chunks.get_by_raw_input_id(input_id)
+            if chunks:
+                chunk_ids = [c["id"] for c in chunks]
+                source_chunk_vectors.delete(chunk_ids, user_id)
+                source_chunk_vectors.index(chunks)
+                
+    asyncio.create_task(asyncio.to_thread(_update_tags))
+
+
 def register_rag_listeners() -> None:
     bus = get_event_bus()
     bus.subscribe("note.created", _on_note_created)
@@ -147,3 +166,4 @@ def register_rag_listeners() -> None:
     bus.subscribe("note.hard_deleted", _on_note_hard_deleted)
     bus.subscribe("note.soft_deleted", _on_note_soft_deleted)
     bus.subscribe("note.restored", _on_note_restored)
+    bus.subscribe("note.tags_changed", _on_note_tags_changed)

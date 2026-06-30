@@ -21,6 +21,9 @@ class QueryRequest(BaseModel):
     client_id: str | None = None
     within_directories: list[str] | None = None
     excluding_directories: list[str] | None = None
+    within_tags: list[str] | None = None
+    excluding_tags: list[str] | None = None
+    within_tags_condition: str = "any"  # "any" or "all"
 
 
 class SseProgressReporter(ProgressReporter):
@@ -68,5 +71,8 @@ async def query_endpoint(
         user_id, 
         reporter, 
         request.within_directories, 
-        request.excluding_directories
+        request.excluding_directories,
+        request.within_tags,
+        request.excluding_tags,
+        request.within_tags_condition
     )

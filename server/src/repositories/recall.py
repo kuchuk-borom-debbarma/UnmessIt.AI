@@ -150,7 +150,7 @@ def keys_for_source_chunks(source_chunk_ids: list[str], user_id: str) -> list[di
     return [_key_from_row(row) for row in rows]
 
 
-def linked_source_chunk_ids(recall_key_ids: list[str], user_id: str, limit: int = 12, within_directories: list[str] | None = None, excluding_directories: list[str] | None = None) -> list[str]:
+def linked_source_chunk_ids(recall_key_ids: list[str], user_id: str, limit: int = 12, within_directories: list[str] | None = None, excluding_directories: list[str] | None = None, within_tags: list[str] | None = None, excluding_tags: list[str] | None = None, within_tags_condition: str = "any") -> list[str]:
     """Return chunks connected to recall keys for one-hop query expansion."""
     clean_ids = [key_id for key_id in dict.fromkeys(recall_key_ids) if key_id]
     if not clean_ids or limit <= 0:
@@ -171,6 +171,21 @@ def linked_source_chunk_ids(recall_key_ids: list[str], user_id: str, limit: int 
         for path in excluding_directories:
             where_clauses.append("sc.directory_path NOT LIKE ? OR sc.directory_path IS NULL")
             params.append(f"{path}%")
+            
+    if within_tags:
+        placeholders_tags = ",".join(["?"] * len(within_tags))
+        if within_tags_condition == "all":
+            where_clauses.append(f"ri.job_id IN (SELECT note_id FROM note_tags WHERE tag_id IN ({placeholders_tags}) GROUP BY note_id HAVING COUNT(DISTINCT tag_id) = ?)")
+            params.extend(within_tags)
+            params.append(len(within_tags))
+        else:
+            where_clauses.append(f"ri.job_id IN (SELECT note_id FROM note_tags WHERE tag_id IN ({placeholders_tags}))")
+            params.extend(within_tags)
+            
+    if excluding_tags:
+        placeholders_tags = ",".join(["?"] * len(excluding_tags))
+        where_clauses.append(f"ri.job_id NOT IN (SELECT note_id FROM note_tags WHERE tag_id IN ({placeholders_tags}))")
+        params.extend(excluding_tags)
             
     where_sql = " AND ".join(where_clauses)
     

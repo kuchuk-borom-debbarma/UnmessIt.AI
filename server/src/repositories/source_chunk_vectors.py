@@ -12,19 +12,40 @@ def index(chunks: list[SourceChunk]) -> None:
 
     SQLite stores the durable chunk rows; vectors can be wiped and rebuilt.
     """
+    from src.repositories import tags, raw_inputs
+    
     ids, texts, metadatas = [], [], []
     for chunk in chunks:
-        ids.append(f"{chunk['id']}:source_chunk")
-        texts.append(f"{chunk['summary']}\n{chunk['text']}")
-        metadatas.append({
+        # Get tags for this chunk's note
+        raw_input = raw_inputs.get(chunk["raw_input_id"])
+        note_id = raw_input["job_id"] if raw_input else None
+        
+        dir_path = chunk.get("directory_path") or ""
+        
+        meta = {
             "object_type": "source_chunk",
             "object_id": chunk["id"],
             "source_chunk_id": chunk["id"],
             "raw_input_id": chunk["raw_input_id"],
             "user_id": chunk["user_id"],
             "spans": json.dumps(chunk["spans"], ensure_ascii=False),
-            "directory_path": chunk.get("directory_path") or "",
-        })
+            "directory_path": dir_path,
+        }
+        
+        if dir_path:
+            dir_ids = [d for d in dir_path.split("/") if d]
+            for d in dir_ids:
+                meta[f"dir_{d}"] = True
+        
+        if note_id:
+            note_tags = tags.get_for_note(note_id)
+            for t in note_tags:
+                meta[f"tag_{t['id']}"] = True
+                
+        ids.append(f"{chunk['id']}:source_chunk")
+        texts.append(f"{chunk['summary']}\n{chunk['text']}")
+        metadatas.append(meta)
+        
     if chunks:
         user_id = chunks[0]["user_id"]
         chroma.upsert(ids, texts, metadatas, user_id)
@@ -68,41 +89,53 @@ def update_metadata(chunk_ids: list[str], metadata_updates: dict[str, Any], user
     collection.update(ids=existing_ids, metadatas=merged_metadatas)
 
 
-def search(query: str, user_id: str, top_k: int = 8, within_directories: list[str] | None = None, excluding_directories: list[str] | None = None) -> list[dict[str, Any]]:
+def search(
+    query: str,
+    user_id: str,
+    top_k: int = 8,
+    within_directories: list[str] | None = None,
+    excluding_directories: list[str] | None = None,
+    within_tags: list[str] | None = None,
+    excluding_tags: list[str] | None = None,
+    within_tags_condition: str = "any"
+) -> list[dict[str, Any]]:
     """Search the rebuildable Chroma source chunk index."""
-    from src.repositories import directories
-    
     where_conditions: list[dict[str, Any]] = [{"object_type": "source_chunk"}, {"user_id": user_id}]
     
     if within_directories:
-        resolved_paths = set()
-        for dir_id in within_directories:
-            d = directories.get(dir_id, user_id)
-            if d:
-                resolved_paths.add(d["path"])
-            subs = directories.list_subtree(dir_id, user_id, limit=1000).get("data", [])
-            resolved_paths.update([sub["path"] for sub in subs])
-            
-        if not resolved_paths:
-            where_conditions.append({"directory_path": "__NO_MATCH__"})
+        if len(within_directories) == 1:
+            where_conditions.append({f"dir_{within_directories[0]}": True})
         else:
-            where_conditions.append({"directory_path": {"$in": list(resolved_paths)}})
+            or_conditions = [{f"dir_{d}": True} for d in within_directories]
+            where_conditions.append({"$or": or_conditions})
             
     if excluding_directories:
-        resolved_paths = set()
-        for dir_id in excluding_directories:
-            d = directories.get(dir_id, user_id)
-            if d:
-                resolved_paths.add(d["path"])
-            subs = directories.list_subtree(dir_id, user_id, limit=1000).get("data", [])
-            resolved_paths.update([sub["path"] for sub in subs])
+        for d in excluding_directories:
+            where_conditions.append({f"dir_{d}": {"$ne": True}})
             
-        if len(resolved_paths) == 1:
-            where_conditions.append({"directory_path": {"$ne": list(resolved_paths)[0]}})
-        elif len(resolved_paths) > 1:
-            where_conditions.append({"directory_path": {"$nin": list(resolved_paths)}})
+    if within_tags:
+        if within_tags_condition == "all":
+            for t in within_tags:
+                where_conditions.append({f"tag_{t}": True})
+        else: # any
+            if len(within_tags) == 1:
+                where_conditions.append({f"tag_{within_tags[0]}": True})
+            else:
+                or_conditions = [{f"tag_{t}": True} for t in within_tags]
+                where_conditions.append({"$or": or_conditions})
+                
+    if excluding_tags:
+        for t in excluding_tags:
+            where_conditions.append({f"tag_{t}": {"$ne": True}})
             
-    return chroma.search(query, user_id, top_k=top_k, where={"$and": where_conditions})
+    # Chroma only allows a single top-level $and or $or. 
+    # If we have multiple where_conditions, we must wrap them in $and.
+    if len(where_conditions) == 1:
+        where = where_conditions[0]
+    else:
+        where = {"$and": where_conditions}
+        
+    return chroma.search(query, user_id, top_k=top_k, where=where)
 
 
 def reset(user_id: str) -> None:

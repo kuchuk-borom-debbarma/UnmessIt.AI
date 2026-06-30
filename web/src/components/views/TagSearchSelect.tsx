@@ -2,24 +2,25 @@ import { useState, useEffect, useRef } from 'react'
 import { api } from '../../lib/api'
 import { Check, Copy, Search, Loader2 } from 'lucide-react'
 
-type Directory = {
+type Tag = {
   id: string
   name: string
-  path: string
 }
 
-interface DirectorySearchSelectProps {
+interface TagSearchSelectProps {
   label: string
   value: string
   onChange: (val: string) => void
+  condition?: 'any' | 'all'
+  onConditionChange?: (val: 'any' | 'all') => void
   token: string
   placeholder?: string
 }
 
-export function DirectorySearchSelect({ label, value, onChange, token, placeholder }: DirectorySearchSelectProps) {
+export function TagSearchSelect({ label, value, onChange, condition, onConditionChange, token, placeholder }: TagSearchSelectProps) {
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
-  const [results, setResults] = useState<Directory[]>([])
+  const [results, setResults] = useState<Tag[]>([])
   const [loading, setLoading] = useState(false)
   const [isOpen, setIsOpen] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -53,17 +54,11 @@ export function DirectorySearchSelect({ label, value, onChange, token, placehold
   }, [debouncedQuery])
 
   useEffect(() => {
-    if (!debouncedQuery.trim()) {
-      setResults([])
-      setHasMore(false)
-      return
-    }
-
     let isMounted = true
     const fetchResults = async () => {
       setLoading(true)
       try {
-        const data = await api<{ data: Directory[] }>(`/api/directories/search?q=${encodeURIComponent(debouncedQuery)}&limit=10&cursor=${cursor}`, {
+        const data = await api<{ data: Tag[] }>(`/api/tags/search?q=${encodeURIComponent(debouncedQuery)}&limit=10&cursor=${cursor}`, {
           token
         })
         if (isMounted) {
@@ -72,7 +67,7 @@ export function DirectorySearchSelect({ label, value, onChange, token, placehold
           setHasMore(newResults.length === 10)
         }
       } catch (err) {
-        console.error('Failed to search directories:', err)
+        console.error('Failed to search tags:', err)
       } finally {
         if (isMounted) setLoading(false)
       }
@@ -99,10 +94,10 @@ export function DirectorySearchSelect({ label, value, onChange, token, placehold
     return () => observer.disconnect()
   }, [hasMore, loading])
 
-  const handleSelect = (dir: Directory) => {
+  const handleSelect = (tag: Tag) => {
     const current = value.split(',').map(s => s.trim()).filter(Boolean)
-    if (!current.includes(dir.id)) {
-      onChange([...current, dir.id].join(', '))
+    if (!current.includes(tag.name)) {
+      onChange([...current, tag.name].join(', '))
     }
     setQuery('')
     setIsOpen(false)
@@ -121,13 +116,33 @@ export function DirectorySearchSelect({ label, value, onChange, token, placehold
 
   return (
     <div className="relative" ref={wrapperRef}>
-      <label className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-2 block">{label}</label>
+      <div className="flex items-center justify-between mb-2">
+        <label className="text-xs font-bold uppercase tracking-widest text-muted-foreground">{label}</label>
+        {condition && onConditionChange && (
+          <div className="flex items-center bg-input/50 rounded-lg p-0.5 border border-border/50">
+            <button
+              type="button"
+              onClick={() => onConditionChange('any')}
+              className={`px-2 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md transition-colors ${condition === 'any' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              Any
+            </button>
+            <button
+              type="button"
+              onClick={() => onConditionChange('all')}
+              className={`px-2 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md transition-colors ${condition === 'all' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              All
+            </button>
+          </div>
+        )}
+      </div>
       
       <div className="relative">
         <input
           type="text"
           className="w-full bg-input/50 border border-border/50 rounded-xl px-4 py-3 text-sm outline-none focus:border-primary-500/50 focus:bg-background transition-colors placeholder:text-muted-foreground/40 text-foreground mb-2 font-mono"
-          placeholder={placeholder || "Paste IDs or type to search..."}
+          placeholder={placeholder || "Type tags separated by commas..."}
           value={value}
           onChange={handleRawInputChange}
         />
@@ -140,7 +155,7 @@ export function DirectorySearchSelect({ label, value, onChange, token, placehold
         <input
           type="text"
           className="w-full bg-input/30 border border-border/30 rounded-lg pl-9 pr-4 py-2 text-sm outline-none focus:border-primary-500/30 transition-colors placeholder:text-muted-foreground/50 text-foreground"
-          placeholder="Search directory by name..."
+          placeholder="Search tags by name..."
           value={query}
           onChange={(e) => {
             setQuery(e.target.value)
@@ -155,31 +170,31 @@ export function DirectorySearchSelect({ label, value, onChange, token, placehold
         )}
       </div>
 
-      {isOpen && query.trim() && (
+      {isOpen && (
         <div className="absolute z-10 w-full mt-1 bg-background/95 backdrop-blur-xl border border-border/50 rounded-xl shadow-2xl overflow-hidden max-h-60 overflow-y-auto custom-scrollbar">
           {results.length === 0 && !loading ? (
-            <div className="p-4 text-center text-sm text-muted-foreground">No directories found.</div>
+            <div className="p-4 text-center text-sm text-muted-foreground">No tags found.</div>
           ) : (
             <>
-              {results.map(dir => (
+              {results.map(tag => (
                 <div 
-                  key={dir.id}
+                  key={tag.id}
                   className="flex items-center justify-between p-3 hover:bg-primary-500/10 cursor-pointer transition-colors border-b border-border/20 last:border-0"
-                  onClick={() => handleSelect(dir)}
+                  onClick={() => handleSelect(tag)}
                 >
                   <div>
-                    <div className="font-medium text-sm text-foreground">{dir.name}</div>
+                    <div className="font-medium text-sm text-foreground">{tag.name}</div>
                     <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5 font-mono">
-                      {dir.id.substring(0, 8)}...
+                      {tag.id.substring(0, 8)}...
                     </div>
                   </div>
                   
                   <button
-                    onClick={(e) => handleCopy(e, dir.id)}
+                    onClick={(e) => handleCopy(e, tag.id)}
                     className="p-1.5 rounded-md hover:bg-background/80 text-muted-foreground hover:text-foreground transition-colors z-20"
                     title="Copy full ID"
                   >
-                    {copiedId === dir.id ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+                    {copiedId === tag.id ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
                   </button>
                 </div>
               ))}

@@ -30,6 +30,21 @@ def list_tags(user_id: str) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def search_tags(user_id: str, query: str = "", limit: int = 20, cursor: int = 0) -> list[dict[str, Any]]:
+    conn = get_connection()
+    if query:
+        rows = conn.execute(
+            "SELECT id, name, user_id, created_at FROM tags WHERE user_id = ? AND name LIKE ? ORDER BY name ASC LIMIT ? OFFSET ?",
+            (user_id, f"%{query}%", limit, cursor)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, name, user_id, created_at FROM tags WHERE user_id = ? ORDER BY name ASC LIMIT ? OFFSET ?",
+            (user_id, limit, cursor)
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_by_name(name: str, user_id: str) -> dict[str, Any] | None:
     row = get_connection().execute(
         "SELECT id, name, user_id, created_at FROM tags WHERE name = ? AND user_id = ?",
