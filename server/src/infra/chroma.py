@@ -27,7 +27,7 @@ def _get_client():
 @lru_cache(maxsize=100)
 def _collection(user_id: str, processing_hash: str):
     """Create or reuse the persistent Chroma collection for a specific user."""
-    embedding_function = _embedding_function(user_id)
+    embedding_function = RotatingEmbeddingFunction(user_id)
     client = _get_client()
     collection_name = f"statements_{_name_part(user_id)}_{processing_hash[:8]}"
     try:
@@ -110,11 +110,6 @@ def _user_collection(user_id: str):
     settings = get_user_settings(user_id)
     digest = hashlib.sha256(settings.processing_signature().encode("utf-8")).hexdigest()
     return _collection(user_id, digest)
-
-
-def _embedding_function(user_id: str):
-    """Build the configured embedding function for Chroma."""
-    return RotatingEmbeddingFunction(user_id)
 
 
 class RotatingEmbeddingFunction(chromadb.EmbeddingFunction):

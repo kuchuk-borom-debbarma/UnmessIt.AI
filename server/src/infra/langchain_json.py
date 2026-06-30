@@ -6,6 +6,7 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
+from langchain_openai import ChatOpenAI
 
 from src.infra.rate_limit import RateLimitedModel, get_limiter
 from src.infra.settings import Settings, get_user_setting_candidates, get_user_settings
@@ -94,8 +95,6 @@ class JsonLLMClient:
                 messages = _repair_messages(content, str(exc)) if content.strip() else messages
         raise ValueError(f"LLM returned invalid JSON (async): {last_error}")
 
-
-
 @lru_cache(maxsize=1)
 def get_json_client() -> JsonLLMClient:
     """Return the process-wide JSON client."""
@@ -116,8 +115,6 @@ def _get_chat_llm(cache_key: tuple):
         max_tokens,
         rate_limit,
     ) = cache_key
-    
-    from langchain_openai import ChatOpenAI
 
     kwargs = {
         "model": model,
