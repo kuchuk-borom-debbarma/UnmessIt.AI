@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
 import { api } from '../../lib/api'
-import { cn } from '../../lib/utils'
 import { Check, Copy, Search, Loader2 } from 'lucide-react'
 
 type Directory = {
