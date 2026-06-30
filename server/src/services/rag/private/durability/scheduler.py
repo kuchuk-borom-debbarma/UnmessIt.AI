@@ -63,6 +63,7 @@ class DurableScheduler:
                     job = await asyncio.to_thread(repository.get, job_id)
                     if not job or job["status"] == STATUS_FAILED:
                         return
+                    await asyncio.sleep(2)
                     continue
         finally:
             self._running.discard(job_id)
