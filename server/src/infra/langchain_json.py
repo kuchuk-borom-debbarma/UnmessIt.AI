@@ -119,14 +119,17 @@ def _get_chat_llm(cache_key: tuple):
     
     from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(
-        model=model,
-        base_url=base_url,
-        api_key=api_key or "dummy-key",
-        temperature=temperature,
-        max_tokens=max_tokens,
-        model_kwargs={"response_format": _json_response_format(base_url or "")},
-    )
+    kwargs = {
+        "model": model,
+        "base_url": base_url,
+        "api_key": api_key or "dummy-key",
+        "temperature": temperature,
+        "model_kwargs": {"response_format": _json_response_format(base_url or "")},
+    }
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+
+    llm = ChatOpenAI(**kwargs)
 
     if rate_limit > 0:
         # get_limiter returns a singleton so ingest and retrieval share one token bucket.

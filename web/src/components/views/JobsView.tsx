@@ -135,7 +135,7 @@ export function JobsView({ token }: { token: string }) {
               const data = JSON.parse(rawData) as JobProgressEvent
               setLiveProgress(current => ({
                 ...current,
-                [data.job_id]: [...(current[data.job_id] ?? []), data.message].slice(-100),
+                [data.job_id]: [...(current[data.job_id] ?? []), data.message].slice(-3),
               }))
               setJobs(current => current.map(job => job.id === data.job_id ? { ...job, status: data.status, stage: data.stage } : job))
             }
