@@ -115,7 +115,7 @@ export function AskView({ token }: { token: string }) {
       try {
         const evData = JSON.parse(e.data)
         setProgressSteps(prev => [...prev, evData.message])
-      } catch (err) {}
+      } catch {}
     })
 
     const abortController = new AbortController()

@@ -4,7 +4,7 @@ import { api } from '../../lib/api'
 import type { Preset } from '../../lib/api'
 import { cn } from '../../lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useConfig } from '../../lib/context/ConfigContext'
+import { useConfig } from '../../lib/context/useConfig'
 
 type PresetDraft = {
   name: string

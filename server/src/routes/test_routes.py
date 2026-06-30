@@ -45,24 +45,37 @@ def test_directories_route_lists_all_directories(monkeypatch):
 
 
 def test_directories_route_search_directories(monkeypatch):
-    monkeypatch.setattr(directories_route.directories, "search_by_name", lambda query, user_id, limit: [{"id": "dir-1", "name": "FoundDir"}])
+    calls = []
+    monkeypatch.setattr(directories_route.directories, "search_by_name", lambda query, user_id, limit, cursor: calls.append((query, user_id, limit, cursor)) or [{"id": "dir-1", "name": "FoundDir"}])
 
-    response = asyncio.run(directories_route.search_directories(q="Found", limit=10, user_id="user-1"))
+    response = asyncio.run(directories_route.search_directories(q="Found", limit=10, cursor=3, user_id="user-1"))
 
     assert response["data"][0]["name"] == "FoundDir"
+    assert calls == [("Found", "user-1", 10, 3)]
 
 
 def test_retrieval_route_returns_current_query_shape(monkeypatch):
+    calls = []
+
     class FakeRag:
-        async def query(self, data: str, user_id: str, reporter=None, within_directories=None, excluding_directories=None) -> dict:
+        async def query(self, data: str, user_id: str, reporter=None, within_directories=None, excluding_directories=None, within_tags=None, excluding_tags=None, within_tags_condition="any") -> dict:
+            calls.append((data, user_id, reporter, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition))
             return {"answer": "Retrieval rewrite pending.", "citations": [], "source_chunks": [], "retrieval_trace": {"query": data}}
 
     monkeypatch.setattr(retrieval_route, "get_rag_service", lambda: FakeRag())
 
-    response = asyncio.run(retrieval_route.query_endpoint(retrieval_route.QueryRequest(query="hello"), "user-1"))
+    response = asyncio.run(retrieval_route.query_endpoint(retrieval_route.QueryRequest(
+        query="hello",
+        within_directories=["dir-1"],
+        excluding_directories=["dir-2"],
+        within_tags=["tag-1"],
+        excluding_tags=["tag-2"],
+        within_tags_condition="all",
+    ), "user-1"))
 
     assert response["answer"] == "Retrieval rewrite pending."
     assert response["source_chunks"] == []
+    assert calls == [("hello", "user-1", None, ["dir-1"], ["dir-2"], ["tag-1"], ["tag-2"], "all")]
 
 
 def test_dev_routes_read_repositories(monkeypatch):

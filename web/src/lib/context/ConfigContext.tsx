@@ -1,15 +1,8 @@
-import { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { api } from '../api'
 import type { Preset } from '../api'
-
-type ConfigContextType = {
-  hasActivePreset: boolean | null
-  loading: boolean
-  checkConfig: () => Promise<void>
-}
-
-const ConfigContext = createContext<ConfigContextType | undefined>(undefined)
+import { ConfigContext } from './ConfigContextCore'
 
 export function ConfigProvider({ children, token }: { children: ReactNode; token: string | null }) {
   const [hasActivePreset, setHasActivePreset] = useState<boolean | null>(null)
@@ -41,12 +34,4 @@ export function ConfigProvider({ children, token }: { children: ReactNode; token
       {children}
     </ConfigContext.Provider>
   )
-}
-
-export function useConfig() {
-  const context = useContext(ConfigContext)
-  if (context === undefined) {
-    throw new Error('useConfig must be used within a ConfigProvider')
-  }
-  return context
 }

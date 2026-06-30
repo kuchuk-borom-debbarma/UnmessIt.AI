@@ -73,12 +73,11 @@ async def _handle_note_moved(payload: dict[str, Any]) -> None:
             # 3. Update SQLite directory_path
             await asyncio.to_thread(source_chunks.update_directory_path, raw_input_id, new_path)
             
-            # 4. Get chunks and update Chroma
+            # 4. Update Chroma metadata without re-embedding unchanged text.
             chunks = await asyncio.to_thread(source_chunks.get_by_raw_input_id, raw_input_id)
             if chunks:
                 chunk_ids = [chunk["id"] for chunk in chunks]
-                await asyncio.to_thread(source_chunk_vectors.delete, chunk_ids, user_id)
-                await asyncio.to_thread(source_chunk_vectors.index, chunks)
+                await asyncio.to_thread(source_chunk_vectors.update_metadata, chunk_ids, {"directory_path": new_path or ""}, user_id)
                 
         logger.info(f"Updated directory path for moved note {note_id}")
     except Exception as e:

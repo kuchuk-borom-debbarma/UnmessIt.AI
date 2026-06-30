@@ -70,7 +70,7 @@ async def _identify_subjects(json_client, query: str, sub_queries: list[str], us
                 + (f"SUB_QUERIES:\n{sub_queries}\n\n" if sub_queries else "")
                 + 'Return JSON: {"subjects": ["subject name 1", "subject name 2"]}'
             ),
-            user_id,
+            user_id=user_id,
         )
         subjects = data.get("subjects") if isinstance(data, dict) else None
         if not isinstance(subjects, list):

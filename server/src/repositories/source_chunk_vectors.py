@@ -83,6 +83,13 @@ def update_metadata(chunk_ids: list[str], metadata_updates: dict[str, Any], user
     merged_metadatas = []
     for m in existing_metadatas:
         new_meta = dict(m) if m else {}
+        if "directory_path" in metadata_updates:
+            for key in list(new_meta):
+                if key.startswith("dir_"):
+                    del new_meta[key]
+            for directory_id in str(metadata_updates["directory_path"] or "").split("/"):
+                if directory_id:
+                    new_meta[f"dir_{directory_id}"] = True
         new_meta.update(metadata_updates)
         merged_metadatas.append(new_meta)
         

@@ -65,7 +65,7 @@ export function JobsView({ token }: { token: string }) {
     } finally {
       setLoading(false)
     }
-  }, [token])
+  }, [page, token])
 
   useEffect(() => {
     load()
