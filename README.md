@@ -40,27 +40,29 @@ Docker is the easiest way to get started:
 docker compose up --build
 ```
 
-*(Optional)* You can customize the server and web ports by setting the `SERVER_PORT` and `WEB_PORT` environment variables. They work out of the box and automatically configure CORS and API URLs:
-```bash
-SERVER_PORT=8080 WEB_PORT=3000 docker compose up --build
-```
-
-If you are deploying to a specific domain or need advanced networking configuration, you can also manually override `VITE_API_BASE_URL` and `CORS_ORIGINS` directly:
-```bash
-CORS_ORIGINS="https://my-frontend.com" VITE_API_BASE_URL="https://api.my-backend.com" docker compose up --build
-```
-
 Open your browser to:
 ```txt
 http://localhost:2831
 ```
-*(If you changed `WEB_PORT`, go to `http://localhost:<WEB_PORT>` instead)*
 
 1. Sign up for a local account.
 2. Open **Settings** and add an OpenAI API key preset.
 3. Create a note.
 4. Wait for it to index.
 5. Ask a question!
+
+### Custom Configuration
+
+*(Optional)* You can customize the server and web ports by setting the `SERVER_PORT` and `WEB_PORT` environment variables. They work out of the box and automatically configure CORS and API URLs:
+```bash
+SERVER_PORT=8080 WEB_PORT=3000 docker compose up --build
+```
+*(If you changed `WEB_PORT`, go to `http://localhost:<WEB_PORT>` instead)*
+
+If you are deploying to a specific domain or need advanced networking configuration, you can also manually override `VITE_API_BASE_URL` and `CORS_ORIGINS` directly:
+```bash
+CORS_ORIGINS="https://my-frontend.com" VITE_API_BASE_URL="https://api.my-backend.com" docker compose up --build
+```
 
 ## Manual Development
 
