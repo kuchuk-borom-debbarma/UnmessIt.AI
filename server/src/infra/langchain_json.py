@@ -10,7 +10,7 @@ from langchain_openai import ChatOpenAI
 
 from src.infra.rate_limit import RateLimitedModel, get_limiter
 from src.infra.settings import Settings, get_user_setting_candidates, get_user_settings
-from src.infra.progress import report_progress, set_last_rotation_snapshot
+from src.infra.progress import report_progress, set_last_rotation_snapshot, get_last_rotation_snapshot, report_progress_sync
 
 logger = logging.getLogger(__name__)
 
