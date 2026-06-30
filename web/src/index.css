@@ -149,6 +149,10 @@
     @apply bg-card border border-border hover:bg-white/50 text-foreground shadow-sm hover:shadow-md backdrop-blur-xl;
   }
 
+  .icon-btn {
+    @apply inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-input text-muted-foreground transition-colors hover:bg-card hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
+  }
+
   .dark .premium-btn-secondary {
     @apply hover:bg-white/10;
   }

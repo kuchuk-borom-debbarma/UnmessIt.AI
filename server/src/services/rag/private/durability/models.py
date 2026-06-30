@@ -33,7 +33,7 @@ STAGES = [
 ]
 
 RETRY_LIMIT = 5
-BACKOFF_SECONDS = [30, 120, 300, 900, 1800]
+BACKOFF_SECONDS = [5, 15, 30, 60, 120]
 
 
 class IngestJob(TypedDict):

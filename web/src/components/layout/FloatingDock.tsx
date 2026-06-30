@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { FileText, Bot, Activity, Settings, LogOut, Moon, Sun, LogIn, UserPlus } from 'lucide-react'
 import { cn } from '../../lib/utils'
-import { useTheme } from '../../lib/context/ThemeContext'
+import { useTheme } from '../../lib/context/useTheme'
 
 const dockItems = [
   { path: '/notes', label: 'Notes', icon: FileText },

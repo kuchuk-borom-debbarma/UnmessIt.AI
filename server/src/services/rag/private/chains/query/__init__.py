@@ -46,8 +46,23 @@ class QueryEvidenceChain:
         raw_chunks: list[dict[str, Any]] = result["chunks"]
         trace_parts: list[dict[str, Any]] = result["trace_parts"]
         if reporter:
-            await reporter.report("Deduplicating, re-ranking, and context-packing evidence...")
+            await reporter.report("Merging sub-query evidence...", {"raw_chunk_count": len(raw_chunks), "sub_query_count": len(trace_parts)})
         chunks, finalize_trace = finalize_chunks(raw_chunks, query)
+        if reporter:
+            await reporter.report(
+                f"Final context selected {len(chunks)} chunk(s); saved {finalize_trace.get('context_chars_saved', 0)} chars",
+                {"source_chunk_ids": [chunk["id"] for chunk in chunks], **finalize_trace},
+            )
+        
+        # Calculate true baseline chars (unique across all subqueries before budget dropping)
+        global_unique_chunks = {}
+        for t in trace_parts:
+            global_unique_chunks.update(t.get("baseline_lengths", {}))
+            
+        true_before_chars = sum(global_unique_chunks.values())
+        if true_before_chars > 0:
+            finalize_trace["context_chars_before_packing"] = true_before_chars
+            finalize_trace["context_chars_saved"] = max(true_before_chars - finalize_trace.get("context_chars_after_packing", 0), 0)
 
         trace = {
             "mode": "source_chunks_with_recall_expansion",
@@ -69,12 +84,16 @@ class QueryAnswerChain:
     def __init__(self, json_client) -> None:
         self.json_client = json_client
 
-    async def run(self, query: str, chunks: list[dict[str, Any]], user_id: str) -> dict[str, Any]:
+    async def run(self, query: str, chunks: list[dict[str, Any]], user_id: str, reporter: ProgressReporter | None = None) -> dict[str, Any]:
         """Return an answer and source chunk ids used as citations."""
         if not chunks:
+            if reporter:
+                await reporter.report("No evidence chunks found; skipping answer model call.")
             return {"answer": "I could not find relevant source chunks for that query.", "citation_ids": []}
 
         try:
+            if reporter:
+                await reporter.report("Building answer prompt from packed snippets...", {"source_chunk_count": len(chunks)})
             data = await self.json_client.async_invoke_json(
                 system=(
                     "Answer the user query using only SOURCE_CHUNKS. "
@@ -92,13 +111,19 @@ class QueryAnswerChain:
                 ),
                 user_id=user_id,
             )
+            if reporter:
+                await reporter.report("Answer model returned JSON; validating citations...")
         except Exception as exc:
             logger.warning("query_answer_failed error=%s", exc)
+            if reporter:
+                await reporter.report(f"Answer generation failed: {exc}")
             return {"answer": "I found relevant source chunks, but answer generation failed.", "citation_ids": []}
 
         answer = str(data.get("answer") or "").strip()
         valid_ids = {chunk["id"] for chunk in chunks}
         citation_ids = [str(item) for item in data.get("citation_ids", []) if str(item) in valid_ids]
+        if reporter:
+            await reporter.report(f"Selected {len(citation_ids[:6])} citation(s)", {"citation_ids": citation_ids[:6]})
         return {"answer": answer or "I found relevant source chunks, but no answer was generated.", "citation_ids": citation_ids[:6]}
 
 
@@ -137,7 +162,7 @@ def _citation(chunk: dict[str, Any], number: int) -> dict[str, Any]:
     return {
         "id": f"citation-{number}",
         "source_chunk_id": chunk["id"],
-        "source_input_id": chunk["raw_input_id"],
+        "source_input_id": chunk.get("note_id") or chunk["raw_input_id"],
         "exact_quote": quote,
         "raw_text": text,
         "cleaned_text": chunk.get("summary", ""),

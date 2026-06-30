@@ -1,15 +1,8 @@
-import { createContext, useContext, useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { api } from '../api'
-import type { Preset } from '../api'
-
-type ConfigContextType = {
-  hasActivePreset: boolean | null
-  loading: boolean
-  checkConfig: () => Promise<void>
-}
-
-const ConfigContext = createContext<ConfigContextType | undefined>(undefined)
+import type { Preset, RotationConfig } from '../api'
+import { ConfigContext } from './ConfigContextCore'
 
 export function ConfigProvider({ children, token }: { children: ReactNode; token: string | null }) {
   const [hasActivePreset, setHasActivePreset] = useState<boolean | null>(null)
@@ -23,8 +16,11 @@ export function ConfigProvider({ children, token }: { children: ReactNode; token
     }
 
     try {
-      const presets = await api<Preset[]>('/configs/presets', { token })
-      setHasActivePreset(presets.some((p) => p.is_active === 1))
+      const [presets, rotation] = await Promise.all([
+        api<Preset[]>('/configs/presets', { token }),
+        api<RotationConfig>('/configs/rotation', { token }),
+      ])
+      setHasActivePreset(presets.some((p) => p.is_active === 1) || (rotation.enabled && rotation.preset_ids.length >= 2))
     } catch {
       setHasActivePreset(false)
     } finally {
@@ -41,12 +37,4 @@ export function ConfigProvider({ children, token }: { children: ReactNode; token
       {children}
     </ConfigContext.Provider>
   )
-}
-
-export function useConfig() {
-  const context = useContext(ConfigContext)
-  if (context === undefined) {
-    throw new Error('useConfig must be used within a ConfigProvider')
-  }
-  return context
 }

@@ -42,3 +42,13 @@ The HTTP route (`src/routes/retrieval.py`) is responsible for wrapping the `SseS
 This guarantees:
 1. The LangGraph logic remains entirely pure.
 2. The frontend is responsible for state tracking (no complex backend state machines to manage step counts). The backend simply "fires and forgets" event messages.
+
+## 5. Usage in Durable Jobs
+
+Durable ingest emits a domain event (`ingest_job.changed`) after job-row
+changes. `src/services/rag/private/durability/events.py` bridges that event to
+the SSE layer and publishes on `ingest_jobs:{user_id}`.
+
+This keeps the durable repository independent of SSE while letting the Jobs UI
+refresh immediately on status, stage, retry, pause, resume, metadata, and
+completion changes.

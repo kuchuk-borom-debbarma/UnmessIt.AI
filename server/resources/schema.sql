@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS ingest_jobs (
     id TEXT PRIMARY KEY,
     content_hash TEXT NOT NULL,
     raw_input_id TEXT,
-    status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'waiting_retry', 'complete', 'failed', 'aborted')),
+    status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'waiting_retry', 'complete', 'failed', 'aborted', 'paused')),
     stage TEXT NOT NULL,
     attempt_count INTEGER NOT NULL DEFAULT 0,
     next_run_at DATETIME,
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS ingest_jobs (
 );
 
 
-CREATE INDEX IF NOT EXISTS idx_ingest_jobs_content_hash ON ingest_jobs(content_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ingest_jobs_content_hash ON ingest_jobs(content_hash);
 CREATE INDEX IF NOT EXISTS idx_ingest_jobs_status_next_run ON ingest_jobs(status, next_run_at);
 
 CREATE TABLE IF NOT EXISTS ingest_checkpoints (
@@ -208,7 +208,7 @@ CREATE TABLE IF NOT EXISTS user_config_presets (
     llm_api_key TEXT,
     llm_temperature REAL NOT NULL,
     llm_max_retries INTEGER NOT NULL,
-    llm_max_tokens INTEGER NOT NULL,
+    llm_max_tokens INTEGER,
     
     embedding_provider TEXT NOT NULL,
     embedding_model TEXT NOT NULL,
@@ -217,9 +217,11 @@ CREATE TABLE IF NOT EXISTS user_config_presets (
     
     llm_rate_limit_per_minute INTEGER NOT NULL DEFAULT 0,
     embedding_rate_limit_per_minute INTEGER NOT NULL DEFAULT 0,
+    embedding_batch_size INTEGER NOT NULL DEFAULT 100,
     
     chunk_size INTEGER NOT NULL DEFAULT 1000,
     chunk_overlap INTEGER NOT NULL DEFAULT 200,
+    ingest_retry_backoff_seconds TEXT NOT NULL DEFAULT '5,15,30,60,120',
     
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -228,3 +230,25 @@ CREATE TABLE IF NOT EXISTS user_config_presets (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_presets_active ON user_config_presets(user_id) WHERE is_active = 1;
+
+CREATE TABLE IF NOT EXISTS user_processing_settings (
+    user_id TEXT PRIMARY KEY,
+    embedding_provider TEXT NOT NULL DEFAULT 'openai',
+    embedding_model TEXT NOT NULL DEFAULT 'text-embedding-3-small',
+    embedding_batch_size INTEGER NOT NULL DEFAULT 100,
+    chunk_size INTEGER NOT NULL DEFAULT 1000,
+    chunk_overlap INTEGER NOT NULL DEFAULT 200,
+    ingest_retry_backoff_seconds TEXT NOT NULL DEFAULT '5,15,30,60,120',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS user_rotation_config (
+    user_id TEXT PRIMARY KEY,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    preset_ids JSON NOT NULL DEFAULT '[]',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);

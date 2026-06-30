@@ -1,11 +1,13 @@
 import pytest
 import jwt
+from src.services.auth import local_impl
 from src.services.auth import get_auth_service
-from src.services.auth.local_impl import JWT_SECRET, JWT_ALGORITHM
+from src.services.auth.local_impl import JWT_ALGORITHM
 from src.infra.sqlite import get_connection, init_db
 
 @pytest.fixture(autouse=True)
-def setup_db():
+def setup_db(monkeypatch):
+    monkeypatch.setattr(local_impl, "JWT_SECRET", "test_secret_for_hs256_with_32_bytes")
     init_db()
     conn = get_connection()
     conn.execute("DELETE FROM users")
@@ -21,7 +23,7 @@ async def test_local_auth_signup_and_signin():
     assert "token" in signup_res
     
     token = signup_res["token"]
-    payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    payload = jwt.decode(token, local_impl.JWT_SECRET, algorithms=[JWT_ALGORITHM])
     assert payload["identifier"] == "testuser"
     assert "sub" in payload
     

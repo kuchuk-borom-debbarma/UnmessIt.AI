@@ -34,6 +34,7 @@ def test_ai_settings_use_user_preset_values(monkeypatch):
         "embedding_model": "preset-embedding-model",
         "embedding_base_url": "https://preset.example/v1",
         "embedding_api_key": "preset-embedding-key",
+        "ingest_retry_backoff_seconds": "1,2,5",
     }
 
     settings = Settings(preset)
@@ -46,3 +47,30 @@ def test_ai_settings_use_user_preset_values(monkeypatch):
     assert settings.embedding_model == "preset-embedding-model"
     assert settings.embedding_base_url == "https://preset.example/v1"
     assert settings.embedding_api_key == "preset-embedding-key"
+    assert settings.ingest_retry_backoff_seconds == [1, 2, 5]
+
+
+def test_ai_settings_sanitize_retry_backoff_seconds():
+    settings = Settings({"ingest_retry_backoff_seconds": "0, bad, 12, 99999"})
+
+    assert settings.ingest_retry_backoff_seconds == [0, 12]
+
+
+def test_ai_settings_rewrite_loopback_base_urls_in_docker(monkeypatch):
+    monkeypatch.setenv("UNMESSIT_DOCKER", "1")
+    preset = {
+        "llm_base_url": "http://localhost:1234/v1",
+        "embedding_base_url": "http://127.0.0.1:1234/v1",
+    }
+
+    settings = Settings(preset)
+
+    assert settings.llm_base_url == "http://host.docker.internal:1234/v1"
+    assert settings.embedding_base_url == "http://host.docker.internal:1234/v1"
+
+
+def test_ai_settings_leave_external_base_urls_in_docker(monkeypatch):
+    monkeypatch.setenv("UNMESSIT_DOCKER", "1")
+    settings = Settings({"llm_base_url": "https://integrate.api.nvidia.com/v1"})
+
+    assert settings.llm_base_url == "https://integrate.api.nvidia.com/v1"

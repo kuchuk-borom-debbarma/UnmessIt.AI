@@ -1,4 +1,4 @@
-export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:2317'
+export const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:2317' : '')
 
 export type AuthResult = { status: 'success' | 'error'; token?: string; message?: string }
 export type Tag = { id: string; name: string }
@@ -22,14 +22,29 @@ export type Preset = {
   llm_base_url?: string | null
   llm_temperature: number
   llm_max_retries: number
-  llm_max_tokens: number
+  llm_max_tokens?: number | null
   embedding_provider: string
   embedding_model: string
   embedding_base_url?: string | null
   llm_rate_limit_per_minute: number
   embedding_rate_limit_per_minute: number
+  embedding_batch_size: number
   chunk_size: number
   chunk_overlap: number
+  ingest_retry_backoff_seconds: string
+}
+
+export type ProcessingSettings = {
+  embedding_batch_size: number
+  chunk_size: number
+  chunk_overlap: number
+  ingest_retry_backoff_seconds: string
+}
+
+export type RotationConfig = {
+  enabled: boolean
+  preset_ids: string[]
+  presets: Preset[]
 }
 
 type Options = RequestInit & { token?: string | null }

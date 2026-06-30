@@ -1,26 +1,11 @@
-import { useState, useEffect, useRef } from 'react'
-import { Search, RefreshCw, ChevronRight, ChevronDown, ChevronUp, CheckCircle2, ExternalLink, Terminal, SlidersHorizontal } from 'lucide-react'
-import { api, API_BASE } from '../../lib/api'
+import { Search, RefreshCw, ChevronRight, ChevronDown, ChevronUp, CheckCircle2, ExternalLink, Terminal, SlidersHorizontal, Square, X } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Link } from 'react-router-dom'
 import { DirectorySearchSelect } from './DirectorySearchSelect'
 import { TagSearchSelect } from './TagSearchSelect'
-
-type SourceChunk = {
-  id: string
-  raw_input_id: string
-  note_id: string
-  text: string
-  summary: string
-}
-
-type QueryResult = {
-  answer: string
-  citations: any[]
-  source_chunks: SourceChunk[]
-  retrieval_trace: Record<string, any>
-}
+import { useAsk } from '../../contexts/AskContext'
+import { useEffect, useRef, memo } from 'react'
 
 type Toast = { tone: 'success' | 'danger'; message: string }
 
@@ -42,117 +27,107 @@ function ToastMessage({ toast }: { toast: Toast }) {
   )
 }
 
+// Isolated terminal component — memo prevents parent re-renders from scrolling the list
+const MiniTerminal = memo(function MiniTerminal({
+  steps, loading, open, onToggle, hasResult
+}: {
+  steps: string[]
+  loading: boolean
+  open: boolean
+  onToggle: () => void
+  hasResult: boolean
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Auto-scroll to bottom when new steps arrive while open
+  useEffect(() => {
+    if (open && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [steps, open])
+
+  if (steps.length === 0) return null
+
+  const lastStep = steps[steps.length - 1]
+
+  return (
+    <div className={cn(
+      "mb-6 rounded-2xl border overflow-hidden transition-all duration-300",
+      loading
+        ? "border-primary-500/30 bg-black/60 shadow-[0_0_24px_rgba(var(--primary-500-rgb),0.08)]"
+        : "border-border/30 bg-black/40"
+    )}>
+      {/* Terminal header bar */}
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-white/[0.03] transition-colors"
+      >
+        <div className="flex items-center gap-1.5">
+          <div className="w-2.5 h-2.5 rounded-full bg-rose-500/70" />
+          <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/70" />
+          <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/70" />
+        </div>
+        <Terminal size={12} className={cn("ml-1", loading ? "text-primary-400" : "text-muted-foreground/60")} />
+        <span className={cn("text-xs font-mono font-medium flex-1 text-left truncate",
+          loading ? "text-primary-300/80" : "text-muted-foreground/60"
+        )}>
+          {loading ? lastStep.split('{')[0].trim() : `${steps.length} steps completed`}
+        </span>
+        {loading && <RefreshCw size={11} className="text-primary-400 animate-spin shrink-0" />}
+        {open ? <ChevronUp size={14} className="text-muted-foreground/50 shrink-0" /> : <ChevronDown size={14} className="text-muted-foreground/50 shrink-0" />}
+      </button>
+
+      {/* Scrollable log body */}
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0 }}
+            animate={{ height: 160 }}
+            exit={{ height: 0 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            className="overflow-hidden"
+          >
+            <div
+              ref={scrollRef}
+              className="h-40 overflow-y-auto px-4 py-3 font-mono text-xs flex flex-col gap-1.5 custom-scrollbar"
+            >
+              {steps.map((step, idx) => {
+                const isLast = idx === steps.length - 1
+                return (
+                  <div
+                    key={idx}
+                    className={cn(
+                      "flex items-start gap-2 leading-relaxed",
+                      isLast && loading ? "text-primary-300" : "text-zinc-500"
+                    )}
+                  >
+                    <span className="shrink-0 mt-px">
+                      {isLast && loading
+                        ? <span className="inline-block w-1.5 h-3 bg-primary-400 animate-pulse rounded-sm" />
+                        : <span className="text-zinc-700">›</span>
+                      }
+                    </span>
+                    <span className="break-all">{step}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+})
+
 export function AskView({ token }: { token: string }) {
-  const [query, setQuery] = useState(() => sessionStorage.getItem('ask_query') || '')
-  const [loading, setLoading] = useState(false)
-  const [showTrace, setShowTrace] = useState(false)
-  const [showFilters, setShowFilters] = useState(false)
-  const [withinDirectories, setWithinDirectories] = useState(() => sessionStorage.getItem('ask_within_dirs') || '')
-  const [excludingDirectories, setExcludingDirectories] = useState(() => sessionStorage.getItem('ask_excluding_dirs') || '')
-  const [withinTags, setWithinTags] = useState(() => sessionStorage.getItem('ask_within_tags') || '')
-  const [excludingTags, setExcludingTags] = useState(() => sessionStorage.getItem('ask_excluding_tags') || '')
-  const [withinTagsCondition, setWithinTagsCondition] = useState<'any' | 'all'>(() => (sessionStorage.getItem('ask_within_tags_condition') as 'any' | 'all') || 'any')
-  const [result, setResult] = useState<QueryResult | null>(() => {
-    try {
-      const saved = sessionStorage.getItem('ask_result')
-      return saved ? JSON.parse(saved) : null
-    } catch { return null }
-  })
-  const [toast, setToast] = useState<Toast | null>(null)
-  const [progressSteps, setProgressSteps] = useState<string[]>(() => {
-    try {
-      const saved = sessionStorage.getItem('ask_progress')
-      return saved ? JSON.parse(saved) : []
-    } catch { return [] }
-  })
-
-  useEffect(() => {
-    sessionStorage.setItem('ask_query', query)
-    sessionStorage.setItem('ask_within_dirs', withinDirectories)
-    sessionStorage.setItem('ask_excluding_dirs', excludingDirectories)
-    sessionStorage.setItem('ask_within_tags', withinTags)
-    sessionStorage.setItem('ask_excluding_tags', excludingTags)
-    sessionStorage.setItem('ask_within_tags_condition', withinTagsCondition)
-  }, [query, withinDirectories, excludingDirectories, withinTags, excludingTags, withinTagsCondition])
-
-  useEffect(() => {
-    if (result) {
-      sessionStorage.setItem('ask_result', JSON.stringify(result))
-    } else {
-      sessionStorage.removeItem('ask_result')
-    }
-  }, [result])
-
-  useEffect(() => {
-    if (progressSteps.length > 0) {
-      sessionStorage.setItem('ask_progress', JSON.stringify(progressSteps))
-    } else {
-      sessionStorage.removeItem('ask_progress')
-    }
-  }, [progressSteps])
-
-  const abortControllerRef = useRef<AbortController | null>(null)
-  const evtSourceRef = useRef<EventSource | null>(null)
-
-  useEffect(() => {
-    return () => {
-      abortControllerRef.current?.abort()
-      evtSourceRef.current?.close()
-    }
-  }, [])
-
-  const handleAsk = async () => {
-    if (!query.trim() || loading) return
-    setLoading(true)
-    setToast(null)
-    setResult(null)
-    setProgressSteps([])
-
-    const clientId = crypto.randomUUID()
-    const evtSource = new EventSource(`${API_BASE}/api/retrieval/events/${clientId}`)
-    evtSourceRef.current = evtSource
-    evtSource.addEventListener('progress', (e) => {
-      try {
-        const evData = JSON.parse(e.data)
-        setProgressSteps(prev => [...prev, evData.message])
-      } catch (err) {}
-    })
-
-    const abortController = new AbortController()
-    abortControllerRef.current = abortController
-
-    try {
-      const within = withinDirectories.split(',').map(s => s.trim()).filter(Boolean)
-      const excluding = excludingDirectories.split(',').map(s => s.trim()).filter(Boolean)
-      const withinTagsArr = withinTags.split(',').map(s => s.trim()).filter(Boolean)
-      const excludingTagsArr = excludingTags.split(',').map(s => s.trim()).filter(Boolean)
-      
-      const data = await api<QueryResult>('/api/retrieval/query', {
-        method: 'POST',
-        token,
-        body: JSON.stringify({ 
-          query, 
-          client_id: clientId,
-          within_directories: within.length > 0 ? within : undefined,
-          excluding_directories: excluding.length > 0 ? excluding : undefined,
-          within_tags: withinTagsArr.length > 0 ? withinTagsArr : undefined,
-          excluding_tags: excludingTagsArr.length > 0 ? excludingTagsArr : undefined,
-          within_tags_condition: withinTagsCondition,
-        }),
-        signal: abortController.signal
-      })
-      setResult(data)
-    } catch (err) {
-      console.error(err)
-      if (err instanceof Error && err.name !== 'AbortError') {
-        setToast({ tone: 'danger', message: err.message })
-      }
-    } finally {
-      evtSource.close()
-      evtSourceRef.current = null
-      setLoading(false)
-    }
-  }
+  const {
+    query, setQuery, loading, showTrace, setShowTrace, showFilters, setShowFilters,
+    terminalOpen, setTerminalOpen,
+    withinDirectories, setWithinDirectories, excludingDirectories, setExcludingDirectories,
+    withinTags, setWithinTags, excludingTags, setExcludingTags, withinTagsCondition, setWithinTagsCondition,
+    result, toast, progressSteps, handleAsk, stopAsk
+  } = useAsk()
 
   return (
     <div className="flex flex-col flex-1 h-full max-w-4xl mx-auto w-full pt-10 md:pt-20 relative">
@@ -208,7 +183,7 @@ export function AskView({ token }: { token: string }) {
               What do you need to know?
             </h1>
             <p className="text-lg md:text-xl text-muted-foreground font-medium max-w-2xl mx-auto">
-              Search across your entire knowledge base in natural language.
+              Ask anything and let the AI synthesize answers from your knowledge base.
             </p>
           </motion.div>
         )}
@@ -235,7 +210,7 @@ export function AskView({ token }: { token: string }) {
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || !e.shiftKey)) {
                   e.preventDefault()
-                  void handleAsk()
+                  void handleAsk(token)
                 }
               }}
             />
@@ -251,57 +226,88 @@ export function AskView({ token }: { token: string }) {
             >
               <SlidersHorizontal size={20} />
             </button>
-            <button
-              className={cn(
-                "m-2.5 rounded-[1.2rem] px-6 py-4 font-bold transition-all flex items-center gap-2 shrink-0",
-                query.trim() && !loading
-                  ? "bg-foreground text-background hover:scale-105 active:scale-95 shadow-lg"
-                  : "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
-              )}
-              onClick={handleAsk}
-              disabled={!query.trim() || loading}
-            >
-              {loading ? 'Searching...' : 'Ask'} <ChevronRight size={18} className={cn("transition-transform", query.trim() && !loading ? "translate-x-1" : "")} />
-            </button>
+            {loading ? (
+              <button
+                className="m-2.5 rounded-[1.2rem] px-6 py-4 font-bold transition-all flex items-center gap-2 shrink-0 bg-red-500/10 text-red-500 hover:bg-red-500/20 active:scale-95 shadow-lg"
+                onClick={stopAsk}
+              >
+                <Square size={16} fill="currentColor" /> Stop
+              </button>
+            ) : (
+              <button
+                className={cn(
+                  "m-2.5 rounded-[1.2rem] px-6 py-4 font-bold transition-all flex items-center gap-2 shrink-0",
+                  query.trim()
+                    ? "bg-foreground text-background hover:scale-105 active:scale-95 shadow-lg"
+                    : "bg-muted text-muted-foreground cursor-not-allowed opacity-50"
+                )}
+                onClick={() => handleAsk(token)}
+                disabled={!query.trim()}
+              >
+                Ask <ChevronRight size={18} className={cn("transition-transform", query.trim() ? "translate-x-1" : "")} />
+              </button>
+            )}
           </div>
           
           <AnimatePresence>
             {showFilters && (
               <motion.div
-                initial={{ opacity: 0, y: -10, height: 0 }}
+                initial={{ opacity: 0, y: -8, height: 0 }}
                 animate={{ opacity: 1, y: 0, height: 'auto' }}
-                exit={{ opacity: 0, y: -10, height: 0 }}
-                className="w-full mt-4 p-5 bg-background/80 backdrop-blur-xl border border-border/50 rounded-[1.8rem] shadow-xl flex flex-col gap-4 overflow-visible relative z-10"
+                exit={{ opacity: 0, y: -8, height: 0 }}
+                transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                className="w-full mt-3 overflow-visible relative z-10"
               >
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <DirectorySearchSelect
-                    label="Include Directories (comma-separated IDs)"
-                    value={withinDirectories}
-                    onChange={setWithinDirectories}
-                    token={token}
-                  />
-                  <DirectorySearchSelect
-                    label="Exclude Directories (comma-separated IDs)"
-                    value={excludingDirectories}
-                    onChange={setExcludingDirectories}
-                    token={token}
-                  />
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <TagSearchSelect
-                    label="Include Tags (comma-separated)"
-                    value={withinTags}
-                    onChange={setWithinTags}
-                    condition={withinTagsCondition}
-                    onConditionChange={setWithinTagsCondition}
-                    token={token}
-                  />
-                  <TagSearchSelect
-                    label="Exclude Tags (comma-separated)"
-                    value={excludingTags}
-                    onChange={setExcludingTags}
-                    token={token}
-                  />
+                <div className="bg-background/60 backdrop-blur-xl border border-border/40 rounded-2xl p-4 shadow-2xl flex flex-col gap-4">
+                  {/* Filter hints */}
+                  <div className="text-[11px] text-muted-foreground/80 leading-relaxed bg-muted/20 border border-border/20 rounded-xl p-2.5 flex flex-col gap-1">
+                    <p>
+                      <strong className="text-foreground/90">Directories:</strong> If included, search is scoped <span className="underline decoration-primary-500/40">only</span> to those folders and their sub-folders. If only excluded, the whole knowledge base is searched except those folders.
+                    </p>
+                    <p>
+                      <strong className="text-foreground/90">Tags:</strong> Scopes search to documents matching the specified tags (Any/All logical matching). Excluded tags will filter out matching documents entirely.
+                    </p>
+                  </div>
+
+                  {/* Directories row */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <DirectorySearchSelect
+                      label="Include Directories"
+                      mode="include"
+                      value={withinDirectories}
+                      onChange={setWithinDirectories}
+                      token={token}
+                    />
+                    <DirectorySearchSelect
+                      label="Exclude Directories"
+                      mode="exclude"
+                      value={excludingDirectories}
+                      onChange={setExcludingDirectories}
+                      token={token}
+                    />
+                  </div>
+
+                  <div className="h-px bg-border/20" />
+
+                  {/* Tags row */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <TagSearchSelect
+                      label="Include Tags"
+                      mode="include"
+                      value={withinTags}
+                      onChange={setWithinTags}
+                      condition={withinTagsCondition}
+                      onConditionChange={setWithinTagsCondition}
+                      token={token}
+                    />
+                    <TagSearchSelect
+                      label="Exclude Tags"
+                      mode="exclude"
+                      value={excludingTags}
+                      onChange={setExcludingTags}
+                      token={token}
+                    />
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -309,43 +315,15 @@ export function AskView({ token }: { token: string }) {
         </div>
       </motion.div>
 
-      {/* Progress Steps */}
-      <AnimatePresence>
-        {loading && progressSteps.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0, height: 0, filter: 'blur(10px)' }}
-            animate={{ opacity: 1, height: 'auto', filter: 'blur(0px)' }}
-            exit={{ opacity: 0, height: 0, filter: 'blur(10px)' }}
-            className="mb-8 overflow-hidden"
-          >
-            <div className="bento-card p-6 flex flex-col gap-4">
-              {progressSteps.map((step, idx) => {
-                const isLast = idx === progressSteps.length - 1;
-                return (
-                  <motion.div 
-                    key={idx}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    className={cn(
-                      "flex items-center gap-3 font-mono text-sm",
-                      isLast ? "text-primary-400" : "text-muted-foreground"
-                    )}
-                  >
-                    {isLast ? (
-                      <RefreshCw className="animate-spin" size={16} />
-                    ) : (
-                      <CheckCircle2 size={16} />
-                    )}
-                    <span>{step}</span>
-                  </motion.div>
-                )
-              })}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Mini Terminal — fixed height, persists after result */}
+      <MiniTerminal
+        steps={progressSteps}
+        loading={loading}
+        open={terminalOpen}
+        onToggle={() => setTerminalOpen(!terminalOpen)}
+        hasResult={!!result}
+      />
 
-      {/* The Answer Sheet */}
       <AnimatePresence>
         {result && (
           <motion.div
@@ -358,14 +336,17 @@ export function AskView({ token }: { token: string }) {
               <div dangerouslySetInnerHTML={{ __html: result.answer }} />
             </div>
 
-            {result.source_chunks?.length > 0 && (
+            {result.citations?.length > 0 && (
               <div className="mt-12 pt-8 border-t border-border/50">
                 <h3 className="text-sm font-bold uppercase tracking-widest text-muted-foreground mb-6">Sources Used</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                  {result.source_chunks.map((chunk, i) => (
+                  {/* We map over citations instead of source_chunks here because source_chunks contains the 
+                      entire raw retrieval context (which includes unrelated padding chunks from vector search's 
+                      fixed top-K behavior). citations contains only what the AI actually decided to use. */}
+                  {result.citations.map((citation, i) => (
                     <Link 
                       key={i} 
-                      to={`/notes/${chunk.note_id}`}
+                      to={`/notes/${citation.source_input_id}?start=${citation.start_char ?? ''}&end=${citation.end_char ?? ''}`}
                       className="group p-4 rounded-2xl bg-input/50 border border-border/50 hover:bg-input hover:border-primary-500/50 transition-colors block"
                     >
                       <div className="flex items-center justify-between mb-2">
@@ -374,8 +355,8 @@ export function AskView({ token }: { token: string }) {
                         </div>
                         <ExternalLink size={14} className="text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                       </div>
-                      <p className="text-sm text-foreground/80 line-clamp-3 italic mb-2">"{chunk.text}"</p>
-                      <p className="text-xs text-muted-foreground line-clamp-2">{chunk.summary}</p>
+                      <p className="text-sm text-foreground/80 line-clamp-3 italic mb-2">"{citation.raw_text}"</p>
+                      <p className="text-xs text-muted-foreground line-clamp-2">{citation.cleaned_text}</p>
                     </Link>
                   ))}
                 </div>

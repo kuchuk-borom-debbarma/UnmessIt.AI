@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { Plus, Tag, RefreshCw, Trash2, FolderOpen, FileText, Maximize2, FolderPlus, FolderMinus, ChevronRight, X, CheckCircle2, Clock3, AlertCircle, Pause } from 'lucide-react'
-import { api, type Note, type Directory } from '../../lib/api'
+import { API_BASE, api, type Note, type Directory } from '../../lib/api'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '../../lib/utils'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
 type ApiPaginatedData<T> = { data: T, total: number, page: number, limit: number }
+type JobStatus = NonNullable<Note['job_status']>
+type JobEvent = { job: { id: string; status: JobStatus } }
+type JobProgressEvent = { job_id: string; status: JobStatus }
 
 const FolderCard = React.memo(function FolderCard({ dir, onSelect, onDelete }: { dir: Directory, onSelect: () => void, onDelete: () => void }) {
   return (
@@ -301,6 +304,53 @@ export function NotesView({ token }: { token: string }) {
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    let retryTimer: number | undefined
+    const setNoteStatus = (noteId: string, status: JobStatus) => {
+      setNotes(current => current.map(note => note.id === noteId ? { ...note, job_status: status } : note))
+    }
+    const connect = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/advanced/ingest_jobs/events`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        })
+        if (!response.body) return
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        while (!controller.signal.aborted) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const events = buffer.split('\n\n')
+          buffer = events.pop() || ''
+          for (const block of events) {
+            const event = block.split('\n').find(line => line.startsWith('event: '))?.slice(7)
+            const rawData = block.split('\n').find(line => line.startsWith('data: '))?.slice(6)
+            if (!rawData) continue
+            if (event === 'job') {
+              const data = JSON.parse(rawData) as JobEvent
+              setNoteStatus(data.job.id, data.job.status)
+            }
+            if (event === 'job_progress') {
+              const data = JSON.parse(rawData) as JobProgressEvent
+              setNoteStatus(data.job_id, data.status)
+            }
+          }
+        }
+      } catch {
+        if (!controller.signal.aborted) retryTimer = window.setTimeout(connect, 5000)
+      }
+    }
+    void connect()
+    return () => {
+      controller.abort()
+      if (retryTimer) clearTimeout(retryTimer)
+    }
+  }, [token])
 
   // Resolve breadcrumbs
   const breadcrumbs = []

@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 
 from . import repository
-from .models import STATUS_ABORTED, STATUS_COMPLETE, STATUS_FAILED, STATUS_WAITING_RETRY
+from .models import STATUS_ABORTED, STATUS_COMPLETE, STATUS_FAILED, STATUS_PAUSED, STATUS_WAITING_RETRY
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class DurableScheduler:
         try:
             while True:
                 job = await asyncio.to_thread(repository.get, job_id)
-                if not job or job["status"] in {STATUS_COMPLETE, STATUS_FAILED, STATUS_ABORTED}:
+                if not job or job["status"] in {STATUS_COMPLETE, STATUS_FAILED, STATUS_ABORTED, STATUS_PAUSED}:
                     return
                 if job["status"] == STATUS_WAITING_RETRY:
                     delay = _delay_seconds(job["next_run_at"])
@@ -63,6 +63,7 @@ class DurableScheduler:
                     job = await asyncio.to_thread(repository.get, job_id)
                     if not job or job["status"] == STATUS_FAILED:
                         return
+                    await asyncio.sleep(2)
                     continue
         finally:
             self._running.discard(job_id)

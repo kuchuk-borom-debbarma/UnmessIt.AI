@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from src.infra import chroma
+from src.infra.settings import get_user_settings
 from src.services.rag.models import SourceChunk
 
 
@@ -15,6 +16,9 @@ def index(chunks: list[SourceChunk]) -> None:
     from src.repositories import tags, raw_inputs
     
     ids, texts, metadatas = [], [], []
+    settings = get_user_settings(chunks[0]["user_id"]) if chunks else None
+    processing_snapshot = settings.processing_snapshot() if settings else {}
+    rotation_snapshot = settings.rotation_snapshot() if settings else {}
     for chunk in chunks:
         # Get tags for this chunk's note
         raw_input = raw_inputs.get(chunk["raw_input_id"])
@@ -30,6 +34,8 @@ def index(chunks: list[SourceChunk]) -> None:
             "user_id": chunk["user_id"],
             "spans": json.dumps(chunk["spans"], ensure_ascii=False),
             "directory_path": dir_path,
+            "processing_settings": json.dumps(processing_snapshot, ensure_ascii=False),
+            "embedding_rotation_preset": json.dumps(rotation_snapshot or {}, ensure_ascii=False),
         }
         
         if dir_path:
@@ -72,7 +78,7 @@ def update_metadata(chunk_ids: list[str], metadata_updates: dict[str, Any], user
     if not chunk_ids:
         return
     vector_ids = [vector_id(cid) for cid in chunk_ids]
-    collection = chroma._collection(user_id)
+    collection = chroma.collection(user_id)
     results = collection.get(ids=vector_ids, include=["metadatas"])
     existing_metadatas = results.get("metadatas") or []
     existing_ids = results.get("ids") or []
@@ -83,6 +89,13 @@ def update_metadata(chunk_ids: list[str], metadata_updates: dict[str, Any], user
     merged_metadatas = []
     for m in existing_metadatas:
         new_meta = dict(m) if m else {}
+        if "directory_path" in metadata_updates:
+            for key in list(new_meta):
+                if key.startswith("dir_"):
+                    del new_meta[key]
+            for directory_id in str(metadata_updates["directory_path"] or "").split("/"):
+                if directory_id:
+                    new_meta[f"dir_{directory_id}"] = True
         new_meta.update(metadata_updates)
         merged_metadatas.append(new_meta)
         

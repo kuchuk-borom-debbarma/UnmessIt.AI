@@ -20,6 +20,8 @@ from src.services.rag.rag_service import get_rag_service
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Resume durable ingest jobs when the API process starts."""
+    from src.services.rag.private.durability.events import register_ingest_job_sse_bridge
+    register_ingest_job_sse_bridge()
     await get_rag_service().resume_pending_jobs()
     yield
 

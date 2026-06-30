@@ -1,12 +1,12 @@
 # Current State
 
-Engineering snapshot as of 2026-06-30.
+Engineering snapshot as of 2026-07-01.
 
 ## Product Direction
 
 UnmessIt.AI is a source-backed personal RAG app for evolving user notes. The product goal is simple: users store messy text, then ask questions later and get answers grounded in the exact saved sources.
 
-The current implementation is OpenAI-standard only. Users configure OpenAI text and embedding presets in the app Settings screen. Server environment variables are for runtime concerns such as JWT, CORS, dev routes, and logging.
+The current implementation is OpenAI-standard only. Users configure specific OpenAI config presets, optional rotation, and advanced processing settings in the app Settings screen. Server environment variables are for runtime concerns such as JWT, CORS, dev routes, and logging.
 
 ## Current App Shape
 
@@ -19,22 +19,22 @@ The current implementation is OpenAI-standard only. Users configure OpenAI text 
 ## Implemented Features
 
 - Local username/password auth with JWT bearer tokens.
-- Per-user data isolation across notes, directories, tags, raw inputs, source chunks, recall keys, recall links, vectors, and presets.
+- Per-user data isolation across notes, directories, tags, raw inputs, source chunks, recall keys, recall links, vectors, processing settings, and rotation lanes.
 - Notes CRUD with directory structures, tag organization, pagination, and a soft/hard delete Trash system.
 - Materialized-path directories for efficient subtree queries. Search leverages an O(1) Vector DB lineage optimization using injected parent boolean flags inside ChromaDB metadata.
 - Soft-delete vector synchronization (moving notes to trash masks raw inputs and evicts Chroma vectors; restoring re-indexes instantly).
 - Cross-Domain Filtering: AI queries can be explicitly constrained by or excluded from specific directories and tag combinations (supporting ANY, ALL, and NOT logic) inside the vector store.
 - Event-driven note ingestion through the in-memory event bus.
 - Raw input storage as source truth.
-- Durable ingestion jobs with SQLite checkpoints, bounded retry/backoff, pause, and stop controls.
+- Durable ingestion jobs with SQLite checkpoints, configurable bounded retry/backoff, pause, and stop controls.
 - Lossless source chunks chosen by source position, not by LLM importance.
 - LLM summaries for chunks without replacing source text.
 - Recall keys and recall links for entities, topics, tasks, events, questions, and other reusable handles.
-- Chroma vector indexes for source chunks and recall keys (ChromaDB client acts as a global singleton to prevent SQLite locking).
+- Chroma vector indexes for source chunks and recall keys, with durable ingest batching missing vectors per stage (ChromaDB client acts as a global singleton to prevent SQLite locking).
 - Retrieval with query breakdown, vector search, lexical search, recall-key search, linked-chunk expansion, dedupe, rerank, and Context Engineering (context packing/distillation).
 - Source-backed answer generation with citations to specific `note_id`s, source chunks, and an expandable Retrieval Analysis Trace.
-- Settings UI for OpenAI presets, API keys, model names, base URLs, max tokens, retries, chunk size, chunk overlap, and rate limits.
-- Jobs UI for durable ingest job status, stage tracking, pause, stop, resume, and delete.
+- Settings UI lets users choose one specific config preset or optional rotation. Config presets own LLM and embedding models/API info; advanced processing owns chunk size, overlap, batch size, and retry backoff.
+- Jobs UI for durable ingest job status, stage tracking, pause, stop, resume, and delete; updates arrive through SSE with a slow fallback refresh.
 - Paginated Note Insights UI for inspecting recall keys and links per note (replaced global memory UI).
 
 ## Active Ingestion Shape
@@ -91,6 +91,10 @@ Product:
 - `GET /api/retrieval/events/{client_id}`
 - `GET /configs/presets`
 - `POST /configs/presets`
+- `GET /configs/processing`
+- `PUT /configs/processing`
+- `GET /configs/rotation`
+- `PUT /configs/rotation`
 - `PUT /configs/presets/{preset_id}/activate`
 - `DELETE /configs/presets/{preset_id}`
 - `GET /configs/active`
@@ -102,6 +106,7 @@ Advanced authenticated inspection:
 - `GET /api/advanced/raw_inputs/{input_id}`
 - `DELETE /api/advanced/raw_inputs/{input_id}/hard`
 - `GET /api/advanced/ingest_jobs`
+- `GET /api/advanced/ingest_jobs/events`
 - `POST /api/advanced/ingest_jobs/{job_id}/resume`
 - `DELETE /api/advanced/ingest_jobs/{job_id}`
 
@@ -130,12 +135,13 @@ Development-only routes:
 - ChromaDB SQLite locking is resolved via a global singleton.
 - Route prefixes between frontend and backend are currently aligned.
 - OpenAI-only provider rules are enforced in the config route and reflected in the UI.
+- Retrieval chunk ranking correctly tracks and rewards multiple-path discovery without score duplication, and the Ask UI accurately displays only the citations the LLM ultimately utilized (hiding vector search padding).
 
 ## Current Limits
 
 - Background ingest workers are in-process threads, not a distributed queue.
 - SQLite and Chroma are still beta storage choices, not a production multi-region data layer.
-- Chroma collection names are per user, but vector rebuild/migration is manual if embedding dimensions change.
+- Chroma collection names are per user and active embedding/config signature. Rebuild/migration remains manual if embedding dimensions change.
 - Timeline answers use source order, spans, `source_time`, `event_time`, and `time_label` hints; there is no dedicated temporal ordering layer yet.
 - Recall quality controls broad reasoning quality.
 - There is no LLM response cache table.
@@ -144,13 +150,15 @@ Development-only routes:
 
 ## Likely Next Steps
 
-- **Durable Pub/Sub & Caching**: Implement durable pub/sub using a Transactional Outbox pattern in SQLite to guarantee event delivery between Notes and RAG domains. We plan to introduce a lightweight Redis instance to act simultaneously as a distributed cache and a durable message broker (via Redis Streams with consumer groups).
+- **Response Cache**: Add a small SQLite-backed LLM response cache first, keyed by model/settings/prompt shape, to avoid repeated query and indexing calls.
+- **Durable Pub/Sub**: After caching, implement durable pub/sub using a Transactional Outbox pattern in SQLite to guarantee event delivery between Notes and RAG domains. Add Redis Streams with consumer groups only when one-process SQLite outbox stops being enough.
 - **Custom Knowledge Connections**: Give users the ability to manually teach the AI connections by wiring explicit recall links between concepts or notes.
 - Add explicit timeline ordering for timeline-style questions if real examples need it.
 - Add a rebuild-vector-index command for embedding model changes.
 - Add small evaluations for multi-note, broad-recall, and citation correctness.
 - Replace in-process jobs with a real queue/lease only when multi-process deployment needs it.
 - Add route contract tests for frontend-used endpoints.
+- **Conversation History**: Add chat history for multi-turn conversations.
 
 ## Far Far in the Future
 

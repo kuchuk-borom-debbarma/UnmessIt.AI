@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -76,6 +77,43 @@ async def test_source_chunk_llm_failure_is_retryable():
         await SourceChunkDraftChain(BrokenJson()).run({"text": "hello", "start": 0, "end": 5}, "user-1")
 
 
+def test_source_chunk_vector_metadata_move_refreshes_directory_flags(monkeypatch):
+    updated = {}
+
+    class FakeCollection:
+        def get(self, ids, include):
+            assert ids == ["chunk-1:source_chunk"]
+            assert include == ["metadatas"]
+            return {
+                "ids": ids,
+                "metadatas": [{
+                    "object_type": "source_chunk",
+                    "directory_path": "/old/",
+                    "dir_old": True,
+                    "tag_keep": True,
+                }],
+            }
+
+        def update(self, ids, metadatas):
+            updated["ids"] = ids
+            updated["metadatas"] = metadatas
+
+    monkeypatch.setattr(source_chunk_vectors.chroma, "collection", lambda user_id: FakeCollection())
+
+    source_chunk_vectors.update_metadata(["chunk-1"], {"directory_path": "/dir-2/nested/"}, "user-1")
+
+    assert updated == {
+        "ids": ["chunk-1:source_chunk"],
+        "metadatas": [{
+            "object_type": "source_chunk",
+            "directory_path": "/dir-2/nested/",
+            "tag_keep": True,
+            "dir_dir-2": True,
+            "dir_nested": True,
+        }],
+    }
+
+
 async def test_recall_index_chain_retries_once_after_invalid_output(monkeypatch):
     class RetryJson:
         def __init__(self) -> None:
@@ -144,14 +182,14 @@ async def test_query_uses_source_search_and_recall_expansion(monkeypatch):
         def __init__(self, json_client) -> None:
             pass
 
-        async def run(self, query: str, user_id: str, reporter=None, within_directories=None, excluding_directories=None):
+        async def run(self, query: str, user_id: str, reporter=None, within_directories=None, excluding_directories=None, within_tags=None, excluding_tags=None, within_tags_condition="any"):
             return [chunk_1, chunk_2], {"mode": "source_chunks_with_recall_expansion", "sub_query_traces": [{"recall_key_count": 1}], "context_chars_saved": 10}
 
     class FakeQueryAnswerChain:
         def __init__(self, json_client) -> None:
             pass
 
-        async def run(self, query: str, chunks: list[dict], user_id: str):
+        async def run(self, query: str, chunks: list[dict], user_id: str, reporter=None):
             return {"answer": "Grisha's power later connects to Eren.", "citation_ids": ["chunk-2"]}
 
     monkeypatch.setattr("src.services.rag.private.rag_service_impl.QueryEvidenceChain", FakeQueryEvidenceChain)
@@ -173,11 +211,11 @@ async def test_query_context_packer_ranks_and_falls_back(monkeypatch):
     lexical = {**_source_chunk("lexical", "No direct overlap in text."), "summary": "fallback summary"}
     linked = {**_source_chunk("linked", "Attack Titan is also linked through recall."), "summary": "linked summary"}
 
-    monkeypatch.setattr(source_chunk_vectors, "search", lambda query, user_id, top_k=8, within_directories=None, excluding_directories=None: [{"object_id": "vector", "object_type": "source_chunk"}])
+    monkeypatch.setattr(source_chunk_vectors, "search", lambda query, user_id, top_k=8, within_directories=None, excluding_directories=None, within_tags=None, excluding_tags=None, within_tags_condition="any": [{"object_id": "vector", "object_type": "source_chunk"}])
     monkeypatch.setattr(source_chunks, "get_by_ids", lambda ids, user_id: [chunk for chunk in [vector, lexical, linked] if chunk["id"] in ids])
-    monkeypatch.setattr(source_chunks, "search", lambda query, user_id, limit=8, within_directories=None, excluding_directories=None: [lexical])
+    monkeypatch.setattr(source_chunks, "search", lambda query, user_id, limit=8, within_directories=None, excluding_directories=None, within_tags=None, excluding_tags=None, within_tags_condition="any": [lexical])
     monkeypatch.setattr(recall, "find_candidate_keys", lambda terms, user_id, limit=8: [_candidate("key-1", "Attack Titan", "keyword")])
-    monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda key_ids, user_id, limit=12, within_directories=None, excluding_directories=None: ["linked"])
+    monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda key_ids, user_id, limit=12, within_directories=None, excluding_directories=None, within_tags=None, excluding_tags=None, within_tags_condition="any": ["linked"])
 
     class PassthroughBreakdownJson:
         async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
@@ -509,8 +547,66 @@ async def test_durable_source_chunks_resume_from_next_unfinished_piece(monkeypat
     await runner.run_once(job["id"])
 
     assert drafts.calls == ["one", "two", "two"]
-    assert durability_repo.get(job["id"])["status"] == "complete"
+    completed = durability_repo.get(job["id"])
+    assert completed["status"] == "complete"
+    assert completed["metadata"] == {
+        "raw_input_id": raw_id,
+        "input_chars": 7,
+        "directory_path": "",
+        "source_window_count": 2,
+        "source_chunk_count": 2,
+        "recall_chunk_count": 2,
+        "recall_key_count": 2,
+        "recall_link_count": 2,
+        "recall_vector_count": 2,
+        "source_vector_count": 2,
+        "source_chunks": 2,
+        "recall_keys": 2,
+    }
     assert len(source_chunks.get_by_raw_input_id(raw_id)) == 2
+
+
+async def test_durable_runner_batches_vector_embeddings(monkeypatch):
+    conn = _patch_memory_db(monkeypatch)
+    calls = {"recall": [], "source": []}
+    monkeypatch.setattr("src.services.rag.private.durability.runner.get_user_settings", lambda user_id: type("Settings", (), {"embedding_batch_size": 100})())
+    monkeypatch.setattr(recall_key_vectors, "exists", lambda key_id, user_id: False)
+    monkeypatch.setattr(source_chunk_vectors, "exists", lambda chunk_id, user_id: False)
+    monkeypatch.setattr(recall_key_vectors, "index", lambda keys: calls["recall"].append(len(keys)))
+    monkeypatch.setattr(source_chunk_vectors, "index", lambda chunks: calls["source"].append(len(chunks)))
+
+    raw_id = raw_inputs.save_or_reuse("job-1", "one two", "user-1", "hash-1")
+    job = durability_repo.create_or_reuse_job("job-1", "hash-1", raw_id)
+    runner = DurableIngestRunner(FakeWindows(), FakeDrafts(), SourceChunkAssemblerChain(), FakeRecallIndex())
+
+    await runner.run_once(job["id"])
+
+    assert calls == {"recall": [2], "source": [2]}
+    assert conn.execute("SELECT COUNT(*) FROM ingest_checkpoints WHERE stage = 'recall_vectors' AND status = 'complete'").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM ingest_checkpoints WHERE stage = 'source_vectors' AND status = 'complete'").fetchone()[0] == 2
+
+
+async def test_durable_runner_pause_stops_after_current_unit(monkeypatch):
+    _patch_memory_db(monkeypatch)
+
+    raw_id = raw_inputs.save_or_reuse("job-1", "one two", "user-1", "hash-1")
+    job = durability_repo.create_or_reuse_job("job-1", "hash-1", raw_id)
+
+    class PausingDrafts(FakeDrafts):
+        async def run(self, window: dict, user_id: str) -> list[dict]:
+            result = await super().run(window, user_id)
+            if window["text"] == "one":
+                durability_repo.pause(job["id"])
+            return result
+
+    drafts = PausingDrafts()
+    runner = DurableIngestRunner(FakeWindows(), drafts, SourceChunkAssemblerChain(), FakeRecallIndex())
+
+    await runner.run_once(job["id"])
+
+    assert durability_repo.get(job["id"])["status"] == "paused"
+    assert drafts.calls == ["one"]
+    assert len(source_chunks.get_by_raw_input_id(raw_id)) == 1
 
 
 def test_durable_retry_cap_marks_job_failed(monkeypatch):
@@ -523,6 +619,19 @@ def test_durable_retry_cap_marks_job_failed(monkeypatch):
 
     assert job["status"] == STATUS_FAILED
     assert job["attempt_count"] == 5
+
+
+def test_durable_retry_uses_configured_backoff(monkeypatch):
+    _patch_memory_db(monkeypatch)
+    raw_id = raw_inputs.save_or_reuse("job-1", "text", "user-1", "hash-1")
+    durability_repo.create_or_reuse_job("job-1", "hash-1", raw_id)
+
+    before = datetime.now(timezone.utc)
+    job = durability_repo.schedule_retry("job-1", STAGE_SOURCE_CHUNKS, "source_piece:1", "model down", [1])
+    delay = (datetime.fromisoformat(job["next_run_at"]) - before).total_seconds()
+
+    assert job["status"] == STATUS_WAITING_RETRY
+    assert 0 <= delay <= 2
 
 
 def test_manual_resume_keeps_completed_checkpoints(monkeypatch):
@@ -610,7 +719,7 @@ class FakeDrafts:
 
 
 class FakeRecallIndex:
-    async def run(self, raw_text: str, user_id: str, chunks: list[dict]) -> dict:
+    async def run(self, raw_text: str, user_id: str, chunks: list[dict], on_progress=None) -> dict:
         chunk = chunks[0]
         key_id = f"key-{chunk['id']}"
         return {
@@ -641,7 +750,7 @@ async def test_listener_note_moved_updates_directory_path(monkeypatch):
     conn.execute("INSERT INTO directories (id, name, parent_id, path, user_id) VALUES ('dir-2', 'NewDir', NULL, '/dir-2/', 'user-1')")
     
     calls = []
-    monkeypatch.setattr(source_chunk_vectors, "update_metadata", lambda chunk_ids, updates, user_id: calls.append((chunk_ids, updates)))
+    monkeypatch.setattr(source_chunk_vectors, "update_metadata", lambda chunk_ids, updates, user_id: calls.append((chunk_ids, updates, user_id)))
 
     await _handle_note_moved({
         "note_id": "note-1",
@@ -654,4 +763,4 @@ async def test_listener_note_moved_updates_directory_path(monkeypatch):
     assert row["directory_path"] == "/dir-2/"
     
     # Check Chroma calls
-    assert calls == [(["chunk-1"], {"directory_path": "/dir-2/"})]
+    assert calls == [(["chunk-1"], {"directory_path": "/dir-2/"}, "user-1")]

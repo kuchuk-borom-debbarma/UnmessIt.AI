@@ -24,6 +24,10 @@ from .models import (
 )
 
 
+class IngestPaused(RuntimeError):
+    """Raised inside a running worker when the user pauses the job."""
+
+
 def create_or_reuse_job(job_id: str, content_hash: str, raw_input_id: str) -> IngestJob:
     """Create one durable job per exact input hash."""
     existing = get_by_hash(content_hash)
@@ -44,6 +48,7 @@ def create_or_reuse_job(job_id: str, content_hash: str, raw_input_id: str) -> In
         (job_id, content_hash, raw_input_id, STATUS_QUEUED, STAGE_RAW_INPUT, "{}"),
     )
     conn.commit()
+    _publish_changed(job_id)
     return get(job_id)
 
 
@@ -59,6 +64,7 @@ def _requeue_aborted(job_id: str, raw_input_id: str) -> None:
         (raw_input_id, STATUS_QUEUED, STAGE_RAW_INPUT, job_id),
     )
     get_connection().commit()
+    _publish_changed(job_id)
 
 
 def get(job_id: str) -> IngestJob | None:
@@ -140,6 +146,9 @@ def list_resumable_jobs() -> list[IngestJob]:
 
 def start_stage(job_id: str, stage: str) -> None:
     """Mark a job stage as running."""
+    job = get(job_id)
+    if not job or job["status"] == STATUS_PAUSED:
+        raise IngestPaused(job_id)
     get_connection().execute(
         """
         UPDATE ingest_jobs
@@ -149,6 +158,7 @@ def start_stage(job_id: str, stage: str) -> None:
         (STATUS_RUNNING, stage, job_id),
     )
     get_connection().commit()
+    _publish_changed(job_id)
 
 
 def set_raw_input(job_id: str, raw_input_id: str) -> None:
@@ -158,19 +168,59 @@ def set_raw_input(job_id: str, raw_input_id: str) -> None:
         (raw_input_id, job_id),
     )
     get_connection().commit()
+    _publish_changed(job_id)
 
 
 def reset_attempts(job_id: str) -> None:
     """A successful unit resets retries for the next failing unit."""
+    job = get(job_id)
+    metadata = {**((job or {}).get("metadata") or {})}
+    metadata.pop("failed_unit_key", None)
     get_connection().execute(
-        "UPDATE ingest_jobs SET attempt_count = 0, error = NULL, next_run_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (job_id,),
+        """
+        UPDATE ingest_jobs
+        SET attempt_count = 0, error = NULL, next_run_at = NULL,
+            metadata = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (json.dumps(metadata, ensure_ascii=False), job_id),
     )
     get_connection().commit()
+    _publish_changed(job_id)
+
+
+def update_metadata(job_id: str, updates: dict[str, Any]) -> None:
+    """Merge inspectable progress metadata into a job row."""
+    if not updates:
+        return
+    progress_message = updates.pop("progress_message", None)
+    if progress_message:
+        _publish_progress(job_id, str(progress_message))
+    if not updates:
+        return
+    job = get(job_id)
+    if not job:
+        return
+    metadata = {**(job.get("metadata") or {})}
+    metadata.update(updates)
+    get_connection().execute(
+        "UPDATE ingest_jobs SET metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (json.dumps(metadata, ensure_ascii=False), job_id),
+    )
+    get_connection().commit()
+    _publish_changed(job_id)
 
 
 def complete(job_id: str, metadata: dict[str, Any]) -> None:
     """Mark a job complete with final counts."""
+    progress_message = metadata.pop("progress_message", None)
+    if progress_message:
+        _publish_progress(job_id, str(progress_message))
+    job = get(job_id)
+    merged_metadata = {**((job or {}).get("metadata") or {}), **metadata}
+    merged_metadata.pop("progress_message", None)
+    merged_metadata.pop("progress_logs", None)
+    merged_metadata.pop("failed_unit_key", None)
     get_connection().execute(
         """
         UPDATE ingest_jobs
@@ -178,9 +228,10 @@ def complete(job_id: str, metadata: dict[str, Any]) -> None:
             metadata = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
-        (STATUS_COMPLETE, STATUS_COMPLETE, json.dumps(metadata, ensure_ascii=False), job_id),
+        (STATUS_COMPLETE, STATUS_COMPLETE, json.dumps(merged_metadata, ensure_ascii=False), job_id),
     )
     get_connection().commit()
+    _publish_changed(job_id)
 
 
 def abort(job_id: str, error: str, metadata: dict[str, Any] | None = None) -> None:
@@ -199,18 +250,22 @@ def abort(job_id: str, error: str, metadata: dict[str, Any] | None = None) -> No
         (STATUS_ABORTED, STAGE_ABORTED, error[:500], json.dumps(merged_metadata, ensure_ascii=False), job_id),
     )
     conn.commit()
+    _publish_changed(job_id)
 
 
-def schedule_retry(job_id: str, stage: str, unit_key: str, error: str) -> IngestJob:
+def schedule_retry(job_id: str, stage: str, unit_key: str, error: str, backoff_seconds: list[int] | None = None) -> IngestJob:
     """Schedule a bounded retry for the failed unit.
 
     The delay prevents tight loops around a down model/API while preserving the
     exact unit that needs to resume next.
     """
     job = get(job_id)
+    if job and job["status"] == STATUS_PAUSED:
+        return job
     attempt = (job["attempt_count"] if job else 0) + 1
     status = STATUS_FAILED if attempt >= RETRY_LIMIT else STATUS_WAITING_RETRY
-    delay = BACKOFF_SECONDS[min(attempt - 1, len(BACKOFF_SECONDS) - 1)]
+    backoff = backoff_seconds or BACKOFF_SECONDS
+    delay = backoff[min(attempt - 1, len(backoff) - 1)]
     next_run_at = None if status == STATUS_FAILED else _after(delay)
     metadata = {**((job or {}).get("metadata") or {}), "failed_unit_key": unit_key}
     get_connection().execute(
@@ -223,6 +278,7 @@ def schedule_retry(job_id: str, stage: str, unit_key: str, error: str) -> Ingest
         (status, stage, attempt, next_run_at, error[:500], json.dumps(metadata, ensure_ascii=False), job_id),
     )
     get_connection().commit()
+    _publish_changed(job_id)
     return get(job_id)
 
 
@@ -237,6 +293,7 @@ def resume(job_id: str) -> None:
         (STATUS_QUEUED, job_id),
     )
     get_connection().commit()
+    _publish_changed(job_id)
 
 
 def pause(job_id: str) -> None:
@@ -250,10 +307,14 @@ def pause(job_id: str) -> None:
         (STATUS_PAUSED, job_id, STATUS_QUEUED, STATUS_RUNNING, STATUS_WAITING_RETRY),
     )
     get_connection().commit()
+    _publish_changed(job_id)
 
 
 def start_checkpoint(job_id: str, stage: str, unit_key: str) -> None:
     """Mark one deterministic work unit as running."""
+    job = get(job_id)
+    if not job or job["status"] == STATUS_PAUSED:
+        raise IngestPaused(job_id)
     get_connection().execute(
         """
         INSERT INTO ingest_checkpoints (job_id, stage, unit_key, status, metadata)
@@ -340,6 +401,8 @@ def delete_job(job_id: str) -> bool:
     conn.execute("DELETE FROM ingest_checkpoints WHERE job_id = ?", (job_id,))
     cursor = conn.execute("DELETE FROM ingest_jobs WHERE id = ?", (job_id,))
     conn.commit()
+    if cursor.rowcount > 0:
+        _publish_changed(job_id)
     return cursor.rowcount > 0
 
 
@@ -368,3 +431,19 @@ def _now() -> str:
 
 def _after(seconds: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+
+def _publish_changed(job_id: str) -> None:
+    try:
+        from .events import publish_job_changed
+        publish_job_changed(job_id)
+    except Exception:
+        pass
+
+
+def _publish_progress(job_id: str, message: str) -> None:
+    try:
+        from .events import publish_job_progress
+        publish_job_progress(job_id, message)
+    except Exception:
+        pass

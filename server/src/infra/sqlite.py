@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 
 SERVER_DIR = Path(__file__).resolve().parents[2]
-DATA_DIR = SERVER_DIR / "data"
+DATA_DIR = Path(os.environ.get("UNMESSIT_DATA_DIR", SERVER_DIR / "data"))
 RESOURCES_DIR = SERVER_DIR / "resources"
 DEFAULT_DB_PATH = DATA_DIR / "sqlite.db"
 
@@ -40,12 +40,14 @@ def init_db() -> None:
     conn = get_connection()
     conn.executescript(schema_path.read_text())
     _migrate_ingest_job_status(conn)
+    _ensure_unique_ingest_content_hash(conn)
     _add_column_if_missing(conn, "raw_inputs", "content_hash", "TEXT")
     _add_column_if_missing(conn, "raw_inputs", "user_id", "TEXT REFERENCES users(id) ON DELETE CASCADE")
     _add_column_if_missing(conn, "recall_keys", "user_id", "TEXT REFERENCES users(id) ON DELETE CASCADE")
     _add_column_if_missing(conn, "source_chunks", "user_id", "TEXT REFERENCES users(id) ON DELETE CASCADE")
     _add_column_if_missing(conn, "recall_links", "user_id", "TEXT REFERENCES users(id) ON DELETE CASCADE")
     _add_column_if_missing(conn, "notes", "deleted_at", "DATETIME")
+    _add_column_if_missing(conn, "notes", "directory_id", "TEXT REFERENCES directories(id) ON DELETE SET NULL")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_inputs_job_id ON raw_inputs(job_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_inputs_content_hash ON raw_inputs(content_hash)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_inputs_user_id ON raw_inputs(user_id)")
@@ -54,7 +56,34 @@ def init_db() -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_recall_links_user_id ON recall_links(user_id)")
     _add_column_if_missing(conn, "user_config_presets", "llm_rate_limit_per_minute", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(conn, "user_config_presets", "embedding_rate_limit_per_minute", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(conn, "user_config_presets", "embedding_batch_size", "INTEGER NOT NULL DEFAULT 100")
+    _add_column_if_missing(conn, "user_config_presets", "ingest_retry_backoff_seconds", "TEXT NOT NULL DEFAULT '5,15,30,60,120'")
     _add_column_if_missing(conn, "source_chunks", "directory_path", "TEXT")
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS user_processing_settings (
+            user_id TEXT PRIMARY KEY,
+            embedding_provider TEXT NOT NULL DEFAULT 'openai',
+            embedding_model TEXT NOT NULL DEFAULT 'text-embedding-3-small',
+            embedding_batch_size INTEGER NOT NULL DEFAULT 100,
+            chunk_size INTEGER NOT NULL DEFAULT 1000,
+            chunk_overlap INTEGER NOT NULL DEFAULT 200,
+            ingest_retry_backoff_seconds TEXT NOT NULL DEFAULT '5,15,30,60,120',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS user_rotation_config (
+            user_id TEXT PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            preset_ids JSON NOT NULL DEFAULT '[]',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        """
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_directories_user_name ON directories(user_id, name)")
     conn.commit()
 
@@ -66,10 +95,26 @@ def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, de
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
+def _ensure_unique_ingest_content_hash(conn: sqlite3.Connection) -> None:
+    """Durability reuses one job per exact input hash; enforce that invariant."""
+    duplicates = conn.execute(
+        "SELECT 1 FROM ingest_jobs GROUP BY content_hash HAVING COUNT(*) > 1 LIMIT 1"
+    ).fetchone()
+    if duplicates:
+        return
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_ingest_jobs_content_hash'"
+    ).fetchone()
+    if row and str(row["sql"] or "").upper().startswith("CREATE UNIQUE INDEX"):
+        return
+    conn.execute("DROP INDEX IF EXISTS idx_ingest_jobs_content_hash")
+    conn.execute("CREATE UNIQUE INDEX idx_ingest_jobs_content_hash ON ingest_jobs(content_hash)")
+
+
 def _migrate_ingest_job_status(conn: sqlite3.Connection) -> None:
-    """Rebuild old durability tables so `aborted` is an allowed terminal state."""
+    """Rebuild old durability tables so `aborted` and `paused` are allowed states."""
     row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ingest_jobs'").fetchone()
-    if not row or "'aborted'" in row["sql"]:
+    if not row or "'paused'" in row["sql"]:
         return
 
     # SQLite cannot alter CHECK constraints, so this one migration rebuilds the
@@ -87,7 +132,7 @@ def _migrate_ingest_job_status(conn: sqlite3.Connection) -> None:
             id TEXT PRIMARY KEY,
             content_hash TEXT NOT NULL,
             raw_input_id TEXT,
-            status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'waiting_retry', 'complete', 'failed', 'aborted')),
+            status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'waiting_retry', 'complete', 'failed', 'aborted', 'paused')),
             stage TEXT NOT NULL,
             attempt_count INTEGER NOT NULL DEFAULT 0,
             next_run_at DATETIME,

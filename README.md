@@ -20,7 +20,7 @@ Stop digging through folders to find what you wrote weeks ago. Just dump your no
 
 ## Minor Features
 
-- **AI Presets**: Configure distinct presets with custom LLMs, embedding models, and chunking strategies per workspace/project.
+- **AI Configuration**: Keep chunking and embedding settings stable while rotating ordered API lanes for per-job failover.
 - **Transparent Indexing**: Track the indexing progress of every note in real-time. See exactly when jobs are queued, running, or failed.
 - **Durable Execution**: Long-running indexing jobs are checkpointed in SQLite, so they can gracefully pause and resume if an API provider times out.
 - **Memory Inspection**: View exact source chunks and recall links generated from your notes to understand how the AI sees your data.
@@ -28,6 +28,7 @@ Stop digging through folders to find what you wrote weeks ago. Just dump your no
 ## Next Up
 
 - **Custom Knowledge Connections**: Teach the AI by manually linking notes, entities, or concepts together, overriding or extending the automated knowledge graph.
+- **Conversation History**: Add chat history for multi-turn conversations.
 
 ## Far Far in the Future
 
@@ -55,7 +56,7 @@ http://localhost:2831
 ```
 
 1. Sign up for a local account.
-2. Open **Settings** and add an OpenAI API key preset.
+2. Open **Settings** and create one OpenAI config preset.
 3. Create a note.
 4. Wait for it to index.
 5. Filter the AI search scope to specific directories (optional).
@@ -68,6 +69,10 @@ http://localhost:2831
 SERVER_PORT=8080 WEB_PORT=3000 docker compose -f docker-compose.prod.yml up -d
 ```
 *(If you changed `WEB_PORT`, go to `http://localhost:<WEB_PORT>` instead)*
+
+Docker publishes both the web app and API on `0.0.0.0`, so another device can use `http://<host-ip>:<WEB_PORT>`. The Docker web image proxies API calls to the server container, so remote browsers do not need `localhost:2317` baked into the frontend.
+
+If a config preset points at a host-local OpenAI-compatible server such as LM Studio, Docker automatically rewrites loopback base URLs like `http://127.0.0.1:1234/v1` or `http://localhost:1234/v1` to `http://host.docker.internal:1234/v1` at runtime. See [Docker Networking](./server/docs/DOCKER_NETWORKING.md) for details.
 
 If you are deploying to a specific domain or need advanced networking configuration, you can also manually override `VITE_API_BASE_URL` and `CORS_ORIGINS` directly:
 ```bash

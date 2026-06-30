@@ -1,7 +1,8 @@
 import { Outlet } from 'react-router-dom'
 import { FloatingDock } from './FloatingDock'
 // import { motion } from 'framer-motion'
-import { ConfigProvider, useConfig } from '../../lib/context/ConfigContext'
+import { ConfigProvider } from '../../lib/context/ConfigContext'
+import { useConfig } from '../../lib/context/useConfig'
 import { AlertTriangle, ChevronRight, ServerOff } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { useEffect, useState } from 'react'
@@ -55,7 +56,7 @@ function GlobalWarningBanner() {
         </div>
         <div>
           <h3 className="text-sm font-bold text-accent-500 tracking-tight">Missing AI Configuration</h3>
-          <p className="text-xs font-medium text-accent-500/80 hidden sm:block">Configure an AI preset before using UnmessIt.AI.</p>
+          <p className="text-xs font-medium text-accent-500/80 hidden sm:block">Create one AI config preset before using UnmessIt.AI.</p>
         </div>
       </div>
       <NavLink to="/settings" className="premium-btn premium-btn-primary h-9 px-4">

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 from functools import lru_cache
 from typing import Any
 
@@ -8,7 +9,8 @@ import chromadb
 from chromadb.utils import embedding_functions
 
 from src.infra.rate_limit import RateLimitedEmbeddingFunction, get_limiter
-from src.infra.settings import get_user_settings
+from src.infra.settings import get_user_setting_candidates, get_user_settings
+from src.infra.progress import report_progress_sync, set_last_rotation_snapshot
 from src.infra.sqlite import DATA_DIR
 
 logger = logging.getLogger(__name__)
@@ -23,12 +25,11 @@ def _get_client():
 
 
 @lru_cache(maxsize=100)
-def _collection(user_id: str):
+def _collection(user_id: str, processing_hash: str):
     """Create or reuse the persistent Chroma collection for a specific user."""
-    settings = get_user_settings(user_id)
-    embedding_function = _embedding_function(user_id)
+    embedding_function = RotatingEmbeddingFunction(user_id)
     client = _get_client()
-    collection_name = f"statements_{user_id}"
+    collection_name = f"statements_{_name_part(user_id)}_{processing_hash[:8]}"
     try:
         return client.get_or_create_collection(collection_name, embedding_function=embedding_function)
     except ValueError as exc:
@@ -43,14 +44,19 @@ def upsert(ids: list[str], texts: list[str], metadatas: list[dict[str, Any]], us
     """Insert or replace vector documents."""
     if not ids:
         return
-    _collection(user_id).upsert(ids=ids, documents=texts, metadatas=metadatas)
+    _user_collection(user_id).upsert(ids=ids, documents=texts, metadatas=metadatas)
+
+
+def collection(user_id: str):
+    """Return the configured Chroma collection for repository-level maintenance."""
+    return _user_collection(user_id)
 
 
 def existing_ids(ids: list[str], user_id: str) -> set[str]:
     """Return vector IDs already present in the collection."""
     if not ids:
         return set()
-    result = _collection(user_id).get(ids=ids)
+    result = _user_collection(user_id).get(ids=ids)
     return set(result.get("ids") or [])
 
 
@@ -58,7 +64,7 @@ def delete(ids: list[str], user_id: str) -> None:
     """Delete vector documents by ID."""
     if not ids:
         return
-    _collection(user_id).delete(ids=ids)
+    _user_collection(user_id).delete(ids=ids)
 
 
 def search(query: str, user_id: str, top_k: int = 8, where: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -66,7 +72,7 @@ def search(query: str, user_id: str, top_k: int = 8, where: dict[str, Any] | Non
     kwargs = {"query_texts": [query], "n_results": top_k}
     if where:
         kwargs["where"] = where
-    results = _collection(user_id).query(**kwargs)
+    results = _user_collection(user_id).query(**kwargs)
     if not results["ids"] or not results["ids"][0]:
         return []
 
@@ -88,27 +94,94 @@ def search(query: str, user_id: str, top_k: int = 8, where: dict[str, Any] | Non
 def reset(user_id: str) -> None:
     """Drop the vector collection and clear the cached handle for a user."""
     client = _get_client()
-    collection_name = f"statements_{user_id}"
-    try:
-        client.delete_collection(collection_name)
-    except Exception:
-        pass
+    prefix = f"statements_{_name_part(user_id)}_"
+    for item in client.list_collections():
+        name = getattr(item, "name", str(item))
+        if name.startswith(prefix):
+            try:
+                client.delete_collection(name)
+            except Exception:
+                pass
     _collection.cache_clear()
-    client.get_or_create_collection(collection_name, embedding_function=_embedding_function(user_id))
+    _user_collection(user_id)
 
 
-def _embedding_function(user_id: str):
-    """Build the configured embedding function for Chroma."""
+def _user_collection(user_id: str):
     settings = get_user_settings(user_id)
-    if settings.embedding_provider == "openai":
+    digest = hashlib.sha256(settings.processing_signature().encode("utf-8")).hexdigest()
+    return _collection(user_id, digest)
+
+
+class RotatingEmbeddingFunction(chromadb.EmbeddingFunction):
+    """Chroma embedding callback that tries rotation lanes in order."""
+
+    @staticmethod
+    def name() -> str:
+        return "RotatingEmbeddingFunction"
+
+    def __init__(self, user_id: str) -> None:
+        self.user_id = user_id
+
+    def get_config(self) -> dict:
+        return {"user_id": self.user_id}
+
+    def __call__(self, input):
+        candidates = get_user_setting_candidates(self.user_id)
+        errors = []
+        for index, settings in enumerate(candidates, start=1):
+            report_progress_sync(
+                f"Embedding rotation preset {index}/{len(candidates)} selected: {settings.preset_name}",
+                {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "attempt": index, "total": len(candidates)},
+            )
+            try:
+                # httpx (via openai) will mistakenly try to grab the asyncio event loop 
+                # inside worker threads if sniffio inherits the main thread's ContextVar.
+                try:
+                    import sniffio
+                    sniffio.current_async_library_cvar.set(None)
+                except Exception:
+                    pass
+                
+                result = _embedding_function_for_key(settings.embedding_cache_key())(input)
+                set_last_rotation_snapshot(settings.rotation_snapshot())
+                report_progress_sync(
+                    f"Embedding rotation preset succeeded: {settings.preset_name}",
+                    {"preset_id": settings.preset_id, "preset_name": settings.preset_name},
+                )
+                return result
+            except Exception as exc:
+                errors.append(f"{settings.preset_name}: {exc}")
+                report_progress_sync(
+                    f"Embedding rotation preset failed: {settings.preset_name}",
+                    {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "error": str(exc)[:500]},
+                )
+        report_progress_sync("All embedding rotation presets failed.", {"errors": errors})
+        raise RuntimeError("All embedding rotation presets failed: " + "; ".join(errors))
+
+
+@lru_cache(maxsize=100)
+def _embedding_function_for_key(cache_key: tuple):
+    (
+        _preset_id,
+        provider,
+        model,
+        base_url,
+        api_key,
+        rate_limit,
+    ) = cache_key
+    if provider == "openai":
         fn = embedding_functions.OpenAIEmbeddingFunction(
-            api_key=settings.embedding_api_key or "dummy-key",
-            api_base=settings.embedding_base_url or "https://api.openai.com/v1",
-            model_name=settings.embedding_model,
+            api_key=api_key or "dummy-key",
+            api_base=base_url or "https://api.openai.com/v1",
+            model_name=model,
         )
     else:
-        raise ValueError(f"Unsupported embedding provider: {settings.embedding_provider}")
+        raise ValueError(f"Unsupported embedding provider: {provider}")
 
-    if settings.embedding_rate_limit_per_minute > 0:
-        return RateLimitedEmbeddingFunction(fn, get_limiter(settings.embedding_rate_limit_per_minute))
+    if rate_limit > 0:
+        return RateLimitedEmbeddingFunction(fn, get_limiter(rate_limit))
     return fn
+
+
+def _name_part(value: str) -> str:
+    return "".join(char if char.isalnum() else "_" for char in value)[:40] or "default"
