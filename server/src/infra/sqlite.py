@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 
 SERVER_DIR = Path(__file__).resolve().parents[2]
-DATA_DIR = SERVER_DIR / "data"
+DATA_DIR = Path(os.environ.get("UNMESSIT_DATA_DIR", SERVER_DIR / "data"))
 RESOURCES_DIR = SERVER_DIR / "resources"
 DEFAULT_DB_PATH = DATA_DIR / "sqlite.db"
 
