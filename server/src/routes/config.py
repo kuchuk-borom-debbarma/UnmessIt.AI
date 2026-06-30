@@ -44,20 +44,10 @@ class PresetCreate(BaseModel):
 
 
 class ProcessingSettingsPayload(BaseModel):
-    embedding_provider: str = "openai"
-    embedding_model: str = "text-embedding-3-small"
     embedding_batch_size: int = 100
     chunk_size: int = 1000
     chunk_overlap: int = 200
     ingest_retry_backoff_seconds: str = "5,15,30,60,120"
-
-    @field_validator("embedding_provider")
-    @classmethod
-    def openai_only(cls, value: str) -> str:
-        normalized = value.lower()
-        if normalized != "openai":
-            raise ValueError("Only OpenAI provider is supported")
-        return normalized
 
     @field_validator("ingest_retry_backoff_seconds")
     @classmethod
@@ -202,8 +192,6 @@ def get_active_config(user_id: str = Depends(get_current_user_id)) -> dict[str, 
 
 def _processing_response(settings: dict[str, Any]) -> dict[str, Any]:
     return {
-        "embedding_provider": settings.get("embedding_provider", "openai"),
-        "embedding_model": settings.get("embedding_model", "text-embedding-3-small"),
         "embedding_batch_size": int(settings.get("embedding_batch_size", 100)),
         "chunk_size": int(settings.get("chunk_size", 1000)),
         "chunk_overlap": int(settings.get("chunk_overlap", 200)),

@@ -37,8 +37,8 @@ class Settings:
         self.preset_id = str(preset.get("id") or "")
         self.preset_name = str(preset.get("name") or "Default")
 
-        self.embedding_provider = (processing.get("embedding_provider") or "openai").lower()
-        self.embedding_model = processing.get("embedding_model") or "text-embedding-3-small"
+        self.embedding_provider = (preset.get("embedding_provider") or "openai").lower()
+        self.embedding_model = preset.get("embedding_model") or "text-embedding-3-small"
         self.embedding_base_url = _docker_reachable_url(preset.get("embedding_base_url"))
         self.embedding_api_key = preset.get("embedding_api_key") or ""
         self.embedding_rate_limit_per_minute = int(preset.get("embedding_rate_limit_per_minute", 0))
@@ -84,8 +84,6 @@ class Settings:
 
     def processing_snapshot(self) -> dict:
         return {
-            "embedding_provider": self.embedding_provider,
-            "embedding_model": self.embedding_model,
             "embedding_batch_size": self.embedding_batch_size,
             "chunk_size": self.chunk_size,
             "chunk_overlap": self.chunk_overlap,
@@ -99,6 +97,8 @@ class Settings:
             "llm_provider": self.llm_provider,
             "llm_model": self.llm_model,
             "llm_base_url": self.llm_base_url,
+            "embedding_provider": self.embedding_provider,
+            "embedding_model": self.embedding_model,
             "embedding_base_url": self.embedding_base_url,
             "llm_rate_limit_per_minute": self.llm_rate_limit_per_minute,
             "embedding_rate_limit_per_minute": self.embedding_rate_limit_per_minute,

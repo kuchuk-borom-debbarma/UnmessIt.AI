@@ -35,8 +35,6 @@ export type Preset = {
 }
 
 export type ProcessingSettings = {
-  embedding_provider: string
-  embedding_model: string
   embedding_batch_size: number
   chunk_size: number
   chunk_overlap: number

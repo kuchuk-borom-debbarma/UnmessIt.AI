@@ -56,7 +56,7 @@ http://localhost:2831
 ```
 
 1. Sign up for a local account.
-2. Open **Settings**, set processing options, and add at least one OpenAI rotation lane.
+2. Open **Settings** and create one OpenAI config preset.
 3. Create a note.
 4. Wait for it to index.
 5. Filter the AI search scope to specific directories (optional).
@@ -72,7 +72,7 @@ SERVER_PORT=8080 WEB_PORT=3000 docker compose -f docker-compose.prod.yml up -d
 
 Docker publishes both the web app and API on `0.0.0.0`, so another device can use `http://<host-ip>:<WEB_PORT>`. The Docker web image proxies API calls to the server container, so remote browsers do not need `localhost:2317` baked into the frontend.
 
-If a rotation lane points at a host-local OpenAI-compatible server such as LM Studio, Docker automatically rewrites loopback base URLs like `http://127.0.0.1:1234/v1` or `http://localhost:1234/v1` to `http://host.docker.internal:1234/v1` at runtime. See [Docker Networking](./server/docs/DOCKER_NETWORKING.md) for details.
+If a config preset points at a host-local OpenAI-compatible server such as LM Studio, Docker automatically rewrites loopback base URLs like `http://127.0.0.1:1234/v1` or `http://localhost:1234/v1` to `http://host.docker.internal:1234/v1` at runtime. See [Docker Networking](./server/docs/DOCKER_NETWORKING.md) for details.
 
 If you are deploying to a specific domain or need advanced networking configuration, you can also manually override `VITE_API_BASE_URL` and `CORS_ORIGINS` directly:
 ```bash

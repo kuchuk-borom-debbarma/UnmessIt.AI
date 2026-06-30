@@ -10,8 +10,6 @@ from src.infra.sqlite import get_connection
 logger = logging.getLogger(__name__)
 
 PROCESSING_DEFAULTS = {
-    "embedding_provider": "openai",
-    "embedding_model": "text-embedding-3-small",
     "embedding_batch_size": 100,
     "chunk_size": 1000,
     "chunk_overlap": 200,
@@ -78,8 +76,8 @@ def save_processing(settings: dict[str, Any], user_id: str) -> None:
         """,
         (
             user_id,
-            settings.get("embedding_provider", PROCESSING_DEFAULTS["embedding_provider"]).lower(),
-            settings.get("embedding_model", PROCESSING_DEFAULTS["embedding_model"]),
+            "openai",
+            "text-embedding-3-small",
             int(settings.get("embedding_batch_size", PROCESSING_DEFAULTS["embedding_batch_size"])),
             int(settings.get("chunk_size", PROCESSING_DEFAULTS["chunk_size"])),
             int(settings.get("chunk_overlap", PROCESSING_DEFAULTS["chunk_overlap"])),
@@ -230,6 +228,16 @@ def set_active(preset_id: str, user_id: str) -> bool:
         
     conn.execute("UPDATE user_config_presets SET is_active = 0 WHERE user_id = ?", (user_id,))
     conn.execute("UPDATE user_config_presets SET is_active = 1 WHERE id = ?", (preset_id,))
+    conn.execute(
+        """
+        INSERT INTO user_rotation_config (user_id, enabled, preset_ids)
+        VALUES (?, 0, COALESCE((SELECT preset_ids FROM user_rotation_config WHERE user_id = ?), '[]'))
+        ON CONFLICT(user_id) DO UPDATE SET
+            enabled=0,
+            updated_at=CURRENT_TIMESTAMP
+        """,
+        (user_id, user_id),
+    )
     conn.commit()
     _clear_settings_cache()
     return True

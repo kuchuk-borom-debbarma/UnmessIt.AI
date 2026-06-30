@@ -56,7 +56,7 @@ function GlobalWarningBanner() {
         </div>
         <div>
           <h3 className="text-sm font-bold text-accent-500 tracking-tight">Missing AI Configuration</h3>
-          <p className="text-xs font-medium text-accent-500/80 hidden sm:block">Configure processing settings and a rotation lane before using UnmessIt.AI.</p>
+          <p className="text-xs font-medium text-accent-500/80 hidden sm:block">Create one AI config preset before using UnmessIt.AI.</p>
         </div>
       </div>
       <NavLink to="/settings" className="premium-btn premium-btn-primary h-9 px-4">

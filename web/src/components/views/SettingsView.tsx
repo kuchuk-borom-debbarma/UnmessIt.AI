@@ -21,7 +21,7 @@ import type { Preset, ProcessingSettings, RotationConfig } from '../../lib/api'
 import { useConfig } from '../../lib/context/useConfig'
 import { cn } from '../../lib/utils'
 
-type RotationDraft = {
+type ConfigDraft = {
   name: string
   llm_provider: string
   llm_model: string
@@ -31,6 +31,8 @@ type RotationDraft = {
   llm_max_retries: number
   llm_max_tokens: number
   llm_rate_limit_per_minute: number
+  embedding_provider: string
+  embedding_model: string
   embedding_base_url: string
   embedding_api_key: string
   embedding_rate_limit_per_minute: number
@@ -39,16 +41,14 @@ type RotationDraft = {
 type Toast = { tone: 'success' | 'danger'; message: string }
 
 const defaultProcessing: ProcessingSettings = {
-  embedding_provider: 'openai',
-  embedding_model: 'text-embedding-3-small',
   embedding_batch_size: 100,
   chunk_size: 1000,
   chunk_overlap: 200,
   ingest_retry_backoff_seconds: '5,15,30,60,120',
 }
 
-const defaultLane: RotationDraft = {
-  name: 'New Lane',
+const defaultConfig: ConfigDraft = {
+  name: 'OpenAI',
   llm_provider: 'openai',
   llm_model: 'gpt-4o',
   llm_base_url: '',
@@ -57,6 +57,8 @@ const defaultLane: RotationDraft = {
   llm_max_retries: 2,
   llm_max_tokens: 2048,
   llm_rate_limit_per_minute: 0,
+  embedding_provider: 'openai',
+  embedding_model: 'text-embedding-3-small',
   embedding_base_url: '',
   embedding_api_key: '',
   embedding_rate_limit_per_minute: 0,
@@ -86,9 +88,10 @@ export function SettingsView({ token }: { token: string }) {
   const [processing, setProcessing] = useState<ProcessingSettings>(defaultProcessing)
   const [rotationEnabled, setRotationEnabled] = useState(false)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
-  const [laneDraft, setLaneDraft] = useState<RotationDraft>(defaultLane)
+  const [draft, setDraft] = useState<ConfigDraft>(defaultConfig)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [formOpen, setFormOpen] = useState(false)
+  const [modalOpen, setModalOpen] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [showLoading, setShowLoading] = useState(false)
   const [toast, setToast] = useState<Toast | null>(null)
@@ -98,6 +101,7 @@ export function SettingsView({ token }: { token: string }) {
     return () => clearTimeout(timer)
   }, [])
 
+  const activePreset = presets.find((preset) => preset.is_active === 1)
   const selectedPresets = useMemo(
     () => selectedIds.map((id) => presets.find((preset) => preset.id === id)).filter(Boolean) as Preset[],
     [presets, selectedIds],
@@ -126,15 +130,64 @@ export function SettingsView({ token }: { token: string }) {
     void load()
   }, [load])
 
-  const saveProcessing = async () => {
+  const openNewConfig = () => {
+    setDraft(defaultConfig)
+    setEditingId(null)
+    setModalOpen(true)
+  }
+
+  const openEditConfig = (preset: Preset) => {
+    setDraft({
+      name: preset.name,
+      llm_provider: preset.llm_provider,
+      llm_model: preset.llm_model,
+      llm_base_url: preset.llm_base_url || '',
+      llm_api_key: '',
+      llm_temperature: preset.llm_temperature,
+      llm_max_retries: preset.llm_max_retries,
+      llm_max_tokens: preset.llm_max_tokens,
+      llm_rate_limit_per_minute: preset.llm_rate_limit_per_minute,
+      embedding_provider: preset.embedding_provider,
+      embedding_model: preset.embedding_model,
+      embedding_base_url: preset.embedding_base_url || '',
+      embedding_api_key: '',
+      embedding_rate_limit_per_minute: preset.embedding_rate_limit_per_minute,
+    })
+    setEditingId(preset.id)
+    setModalOpen(true)
+  }
+
+  const saveConfig = async () => {
     setToast(null)
+    const payload = {
+      ...draft,
+      embedding_batch_size: processing.embedding_batch_size,
+      chunk_size: processing.chunk_size,
+      chunk_overlap: processing.chunk_overlap,
+      ingest_retry_backoff_seconds: processing.ingest_retry_backoff_seconds,
+    }
     try {
-      await api('/configs/processing', { method: 'PUT', token, body: JSON.stringify(processing) })
-      setToast({ tone: 'success', message: 'Processing settings saved.' })
+      await api<{ id: string }>(editingId ? `/configs/presets/${editingId}` : '/configs/presets', {
+        method: editingId ? 'PUT' : 'POST',
+        token,
+        body: JSON.stringify(payload),
+      })
+      setToast({ tone: 'success', message: editingId ? 'Config updated.' : 'Config created.' })
+      setModalOpen(false)
+      setEditingId(null)
+      await load()
       await checkConfig()
     } catch (err) {
-      setToast({ tone: 'danger', message: err instanceof Error ? err.message : 'Processing save failed' })
+      setToast({ tone: 'danger', message: err instanceof Error ? err.message : 'Config save failed' })
     }
+  }
+
+  const setActive = async (presetId: string) => {
+    await api(`/configs/presets/${presetId}/activate`, { method: 'PUT', token })
+    setRotationEnabled(false)
+    await api('/configs/rotation', { method: 'PUT', token, body: JSON.stringify({ enabled: false, preset_ids: selectedIds }) })
+    await load()
+    await checkConfig()
   }
 
   const saveRotation = async () => {
@@ -145,7 +198,7 @@ export function SettingsView({ token }: { token: string }) {
         token,
         body: JSON.stringify({ enabled: rotationEnabled, preset_ids: selectedIds }),
       })
-      setToast({ tone: 'success', message: 'Rotation order saved.' })
+      setToast({ tone: 'success', message: rotationEnabled ? 'Rotation enabled.' : 'Rotation disabled.' })
       await load()
       await checkConfig()
     } catch (err) {
@@ -153,52 +206,14 @@ export function SettingsView({ token }: { token: string }) {
     }
   }
 
-  const saveLane = async () => {
+  const saveProcessing = async () => {
     setToast(null)
-    const payload = {
-      ...laneDraft,
-      embedding_provider: processing.embedding_provider,
-      embedding_model: processing.embedding_model,
-      embedding_batch_size: processing.embedding_batch_size,
-      chunk_size: processing.chunk_size,
-      chunk_overlap: processing.chunk_overlap,
-      ingest_retry_backoff_seconds: processing.ingest_retry_backoff_seconds,
-    }
     try {
-      const endpoint = editingId ? `/configs/presets/${editingId}` : '/configs/presets'
-      await api<{ id: string }>(endpoint, {
-        method: editingId ? 'PUT' : 'POST',
-        token,
-        body: JSON.stringify(payload),
-      })
-      setToast({ tone: 'success', message: editingId ? 'Rotation lane updated.' : 'Rotation lane created.' })
-      setLaneDraft(defaultLane)
-      setEditingId(null)
-      setFormOpen(false)
-      await load()
-      await checkConfig()
+      await api('/configs/processing', { method: 'PUT', token, body: JSON.stringify(processing) })
+      setToast({ tone: 'success', message: 'Processing settings saved.' })
     } catch (err) {
-      setToast({ tone: 'danger', message: err instanceof Error ? err.message : 'Lane save failed' })
+      setToast({ tone: 'danger', message: err instanceof Error ? err.message : 'Processing save failed' })
     }
-  }
-
-  const editLane = (preset: Preset) => {
-    setLaneDraft({
-      name: preset.name,
-      llm_provider: preset.llm_provider,
-      llm_model: preset.llm_model,
-      llm_base_url: preset.llm_base_url || '',
-      llm_api_key: '',
-      llm_temperature: preset.llm_temperature,
-      llm_max_retries: preset.llm_max_retries,
-      llm_max_tokens: preset.llm_max_tokens,
-      llm_rate_limit_per_minute: preset.llm_rate_limit_per_minute,
-      embedding_base_url: preset.embedding_base_url || '',
-      embedding_api_key: '',
-      embedding_rate_limit_per_minute: preset.embedding_rate_limit_per_minute,
-    })
-    setEditingId(preset.id)
-    setFormOpen(true)
   }
 
   const moveSelected = (id: string, delta: -1 | 1) => {
@@ -228,183 +243,347 @@ export function SettingsView({ token }: { token: string }) {
 
       <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <h1 className="mb-2 text-4xl font-extrabold tracking-tight">AI Configuration</h1>
-          <p className="font-medium text-muted-foreground">Processing stays fixed; rotation lanes fail over per job or query.</p>
+          <h1 className="mb-2 text-4xl font-extrabold tracking-tight">AI Settings</h1>
+          <p className="max-w-2xl font-medium text-muted-foreground">
+            Start with one config preset. Rotation is optional and only helps when you want automatic fallback.
+          </p>
         </div>
-        <button
-          className="premium-btn premium-btn-primary h-12 gap-2 px-5"
-          onClick={() => {
-            setLaneDraft(defaultLane)
-            setEditingId(null)
-            setFormOpen(true)
-          }}
-        >
-          <Plus size={18} /> Add Lane
+        <button className="premium-btn premium-btn-primary h-12 gap-2 px-5" onClick={openNewConfig}>
+          <Plus size={18} /> Create New Config
         </button>
       </header>
 
       <section className="bento-card p-6 md:p-8">
-        <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
-            <h2 className="text-2xl font-bold">Processing</h2>
-            <p className="mt-1 text-sm font-medium text-muted-foreground">Stable chunking and embedding settings. Rotation never changes these mid-job.</p>
+            <h2 className="text-2xl font-bold">How AI Should Run</h2>
+            <p className="mt-1 text-sm font-medium text-muted-foreground">
+              Use one specific config for normal use. Turn on rotation only when you have multiple fallback configs.
+            </p>
           </div>
-          <button className="premium-btn premium-btn-secondary h-11 gap-2 px-4" onClick={saveProcessing}>
-            <Save size={17} /> Save
+          <ModeBadge rotationEnabled={rotationEnabled} activePreset={activePreset} />
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <button
+            className={cn(
+              'rounded-lg border p-5 text-left transition-colors',
+              !rotationEnabled ? 'border-primary-500/60 bg-primary-500/10' : 'border-border bg-input/40 hover:bg-input',
+            )}
+            onClick={() => setRotationEnabled(false)}
+          >
+            <div className="mb-2 flex items-center gap-2 text-lg font-bold">
+              <CheckCircle2 size={20} /> Use One Config
+            </div>
+            <p className="text-sm leading-6 text-muted-foreground">
+              Best for most people. Pick one config and UnmessIt will use it for LLM and embedding calls.
+            </p>
+            <div className="mt-4 text-sm font-bold text-foreground">
+              Current: {activePreset?.name || 'No config selected'}
+            </div>
+          </button>
+
+          <button
+            className={cn(
+              'rounded-lg border p-5 text-left transition-colors',
+              rotationEnabled ? 'border-primary-500/60 bg-primary-500/10' : 'border-border bg-input/40 hover:bg-input',
+            )}
+            onClick={() => setRotationEnabled(true)}
+          >
+            <div className="mb-2 flex items-center gap-2 text-lg font-bold">
+              <RotateCw size={20} /> Use Rotation
+            </div>
+            <p className="text-sm leading-6 text-muted-foreground">
+              Optional. Choose two or more configs. If the first fails during a job/query, the next one is tried.
+            </p>
+            <div className="mt-4 text-sm font-bold text-foreground">
+              Selected: {selectedIds.length} config{selectedIds.length === 1 ? '' : 's'}
+            </div>
           </button>
         </div>
 
-        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
-          <Field label="Embedding model">
-            <input className="premium-input bg-transparent" value={processing.embedding_model} onChange={(e) => setProcessing({ ...processing, embedding_model: e.target.value })} />
-          </Field>
-          <Field label="Embedding batch size">
-            <input type="number" className="premium-input bg-transparent" value={processing.embedding_batch_size} onChange={(e) => setProcessing({ ...processing, embedding_batch_size: Number(e.target.value) || 100 })} />
-          </Field>
-          <Field label="Retry backoff seconds">
-            <input className="premium-input bg-transparent" value={processing.ingest_retry_backoff_seconds} onChange={(e) => setProcessing({ ...processing, ingest_retry_backoff_seconds: e.target.value })} />
-          </Field>
-          <Field label="Chunk size">
-            <input type="number" className="premium-input bg-transparent" value={processing.chunk_size} onChange={(e) => setProcessing({ ...processing, chunk_size: Number(e.target.value) || 1000 })} />
-          </Field>
-          <Field label="Chunk overlap">
-            <input type="number" className="premium-input bg-transparent" value={processing.chunk_overlap} onChange={(e) => setProcessing({ ...processing, chunk_overlap: Number(e.target.value) || 0 })} />
-          </Field>
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
-            <div className="mb-1 flex items-center gap-2 font-bold text-amber-300">
-              <AlertTriangle size={16} /> Hard rule
-            </div>
-            Rotation lanes only change API access and rate limits. Chunking, embedding model, and batch size are fixed for the whole job.
-          </div>
-        </div>
-      </section>
-
-      <section className="bento-card p-6 md:p-8">
-        <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-          <div>
-            <h2 className="flex items-center gap-2 text-2xl font-bold"><RotateCw size={22} /> Rotation</h2>
-            <p className="mt-1 text-sm font-medium text-muted-foreground">Each job/query starts at lane 1. If it fails, the next lane is tried. No last-good pointer is saved.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex h-11 cursor-pointer items-center gap-3 rounded-lg border border-border bg-input px-4 text-sm font-bold">
-              <input type="checkbox" checked={rotationEnabled} onChange={(e) => setRotationEnabled(e.target.checked)} />
-              Enable rotation
-            </label>
-            <button className="premium-btn premium-btn-primary h-11 gap-2 px-4 disabled:cursor-not-allowed disabled:opacity-50" disabled={rotationInvalid} onClick={saveRotation}>
-              <Save size={17} /> Save order
-            </button>
-          </div>
+        <div className="mt-5 flex justify-end">
+          <button className="premium-btn premium-btn-primary h-11 gap-2 px-4 disabled:cursor-not-allowed disabled:opacity-50" disabled={rotationInvalid} onClick={saveRotation}>
+            <Save size={17} /> Save Mode
+          </button>
         </div>
 
         {rotationInvalid && (
-          <div className="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm font-semibold text-red-300">
-            Rotation needs at least two selected lanes.
+          <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm font-semibold text-red-300">
+            Rotation needs at least two selected configs. Choose more configs below or switch back to one config.
           </div>
         )}
+      </section>
 
-        {selectedPresets.length > 0 && (
-          <div className="mb-6">
-            <div className="mb-3 text-xs font-bold uppercase tracking-widest text-muted-foreground">Current rotation order</div>
-            <div className="space-y-2">
-              {selectedPresets.map((preset, index) => (
-                <div key={preset.id} className="flex items-center gap-3 rounded-lg border border-border/60 bg-input/40 p-3">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary-500/15 text-sm font-black text-primary-400">{index + 1}</div>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-bold">{preset.name}</div>
-                    <div className="truncate text-xs font-mono text-muted-foreground">{preset.llm_model}{preset.llm_rate_limit_per_minute > 0 ? ` · ${preset.llm_rate_limit_per_minute} LLM RPM` : ''}</div>
-                  </div>
-                  <button className="icon-btn" onClick={() => moveSelected(preset.id, -1)} aria-label="Move lane up"><ArrowUp size={17} /></button>
-                  <button className="icon-btn" onClick={() => moveSelected(preset.id, 1)} aria-label="Move lane down"><ArrowDown size={17} /></button>
-                  <button className="icon-btn text-red-400 hover:bg-red-500/10" onClick={() => setSelectedIds((ids) => ids.filter((id) => id !== preset.id))} aria-label="Remove lane from rotation"><X size={17} /></button>
-                </div>
-              ))}
-            </div>
+      <section className="bento-card p-6 md:p-8">
+        <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 className="text-2xl font-bold">Config Presets</h2>
+            <p className="mt-1 text-sm font-medium text-muted-foreground">
+              A config stores model names, API keys, base URLs, and rate limits. Embedding model lives here too.
+            </p>
           </div>
-        )}
-
-        <AnimatePresence>
-          {formOpen && (
-            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="mb-6 overflow-hidden">
-              <div className="rounded-lg border border-border/70 bg-background/30 p-5">
-                <div className="mb-5 flex items-center justify-between">
-                  <h3 className="text-xl font-bold">{editingId ? 'Edit rotation lane' : 'New rotation lane'}</h3>
-                  <button className="icon-btn" onClick={() => setFormOpen(false)} aria-label="Close lane form"><X size={18} /></button>
-                </div>
-                <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-                  <Field label="Lane name"><input className="premium-input bg-transparent" value={laneDraft.name} onChange={(e) => setLaneDraft({ ...laneDraft, name: e.target.value })} /></Field>
-                  <Field label="LLM model"><input className="premium-input bg-transparent" value={laneDraft.llm_model} onChange={(e) => setLaneDraft({ ...laneDraft, llm_model: e.target.value })} /></Field>
-                  <Field label="LLM API key">
-                    <SecretInput value={laneDraft.llm_api_key} placeholder={editingId ? 'Leave blank to keep existing key' : 'sk-...'} onChange={(value) => setLaneDraft({ ...laneDraft, llm_api_key: value })} />
-                  </Field>
-                  <Field label="Embedding API key">
-                    <SecretInput value={laneDraft.embedding_api_key} placeholder={editingId ? 'Leave blank to keep existing key' : 'sk-...'} onChange={(value) => setLaneDraft({ ...laneDraft, embedding_api_key: value })} />
-                  </Field>
-                  <Field label="LLM base URL"><input className="premium-input bg-transparent" value={laneDraft.llm_base_url} onChange={(e) => setLaneDraft({ ...laneDraft, llm_base_url: e.target.value })} placeholder="https://api.openai.com/v1" /></Field>
-                  <Field label="Embedding base URL"><input className="premium-input bg-transparent" value={laneDraft.embedding_base_url} onChange={(e) => setLaneDraft({ ...laneDraft, embedding_base_url: e.target.value })} placeholder="https://api.openai.com/v1" /></Field>
-                  <Field label="LLM rate limit"><input type="number" className="premium-input bg-transparent" value={laneDraft.llm_rate_limit_per_minute} onChange={(e) => setLaneDraft({ ...laneDraft, llm_rate_limit_per_minute: Number(e.target.value) || 0 })} /></Field>
-                  <Field label="Embedding rate limit"><input type="number" className="premium-input bg-transparent" value={laneDraft.embedding_rate_limit_per_minute} onChange={(e) => setLaneDraft({ ...laneDraft, embedding_rate_limit_per_minute: Number(e.target.value) || 0 })} /></Field>
-                  <Field label="Max tokens"><input type="number" className="premium-input bg-transparent" value={laneDraft.llm_max_tokens} onChange={(e) => setLaneDraft({ ...laneDraft, llm_max_tokens: Number(e.target.value) || 2048 })} /></Field>
-                  <Field label="Max retries"><input type="number" className="premium-input bg-transparent" value={laneDraft.llm_max_retries} onChange={(e) => setLaneDraft({ ...laneDraft, llm_max_retries: Number(e.target.value) || 0 })} /></Field>
-                </div>
-                <div className="mt-6 flex justify-end gap-3">
-                  <button className="premium-btn premium-btn-secondary h-11 px-5" onClick={() => setFormOpen(false)}>Cancel</button>
-                  <button className="premium-btn premium-btn-primary h-11 gap-2 px-5" onClick={saveLane}><Save size={17} /> Save lane</button>
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+          <button className="premium-btn premium-btn-secondary h-11 gap-2 px-4" onClick={openNewConfig}>
+            <Plus size={17} /> New Config
+          </button>
+        </div>
 
         <div className="grid grid-cols-1 gap-4">
           {presets.map((preset) => {
             const selected = selectedIds.includes(preset.id)
             return (
-              <motion.div key={preset.id} layout className={cn('flex flex-col gap-4 rounded-lg border p-4 transition-colors md:flex-row md:items-center', selected ? 'border-primary-500/50 bg-primary-500/5' : 'border-border/60 bg-input/30')}>
-                <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-4">
-                  <input className="mt-1" type="checkbox" checked={selected} onChange={(e) => setSelectedIds((ids) => e.target.checked ? [...ids, preset.id] : ids.filter((id) => id !== preset.id))} />
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="truncate text-lg font-bold">{preset.name}</h3>
-                      {preset.is_active === 1 && <span className="rounded-full bg-primary-500/15 px-2 py-0.5 text-xs font-bold text-primary-400">Default</span>}
-                      {selected && <span className="rounded-full bg-accent-500/15 px-2 py-0.5 text-xs font-bold text-accent-400">In rotation</span>}
+              <motion.div
+                key={preset.id}
+                layout
+                className={cn(
+                  'rounded-lg border p-4 transition-colors',
+                  preset.is_active === 1 && !rotationEnabled ? 'border-primary-500/60 bg-primary-500/10' : 'border-border/60 bg-input/30',
+                )}
+              >
+                <div className="flex flex-col gap-4 md:flex-row md:items-center">
+                  <label className="flex min-w-0 flex-1 items-start gap-4">
+                    <input
+                      className="mt-1"
+                      type="checkbox"
+                      checked={selected}
+                      onChange={(e) => setSelectedIds((ids) => e.target.checked ? [...ids, preset.id] : ids.filter((id) => id !== preset.id))}
+                      aria-label={`Use ${preset.name} in rotation`}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="truncate text-lg font-bold">{preset.name}</h3>
+                        {preset.is_active === 1 && <span className="rounded-full bg-primary-500/15 px-2 py-0.5 text-xs font-bold text-primary-400">Specific config</span>}
+                        {selected && <span className="rounded-full bg-accent-500/15 px-2 py-0.5 text-xs font-bold text-accent-400">Rotation</span>}
+                      </div>
+                      <div className="mt-1 text-xs font-mono text-muted-foreground">
+                        LLM {preset.llm_model} · Embedding {preset.embedding_model}
+                      </div>
                     </div>
-                    <div className="mt-1 text-xs font-mono text-muted-foreground">
-                      {preset.llm_model} · embedding API lane{preset.embedding_rate_limit_per_minute > 0 ? ` · ${preset.embedding_rate_limit_per_minute} embedding RPM` : ''}
-                    </div>
-                  </div>
-                </label>
-                <div className="flex items-center gap-2">
-                  {preset.is_active !== 1 && (
-                    <button className="icon-btn text-primary-400" onClick={() => api(`/configs/presets/${preset.id}/activate`, { method: 'PUT', token }).then(load).then(checkConfig)} aria-label="Set default lane">
-                      <CheckCircle2 size={18} />
+                  </label>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button className="premium-btn premium-btn-secondary h-10 px-3" onClick={() => void setActive(preset.id)}>
+                      Use this
                     </button>
-                  )}
-                  <button className="icon-btn text-amber-400" onClick={() => editLane(preset)} aria-label="Edit lane"><Pencil size={18} /></button>
-                  <button
-                    className="icon-btn text-red-400 hover:bg-red-500/10"
-                    onClick={() => {
-                      if (confirm('Delete rotation lane?')) {
-                        void api(`/configs/presets/${preset.id}`, { method: 'DELETE', token }).then(load).then(checkConfig)
-                      }
-                    }}
-                    aria-label="Delete lane"
-                  >
-                    <Trash2 size={18} />
-                  </button>
+                    <button className="icon-btn text-amber-400" onClick={() => openEditConfig(preset)} aria-label="Edit config">
+                      <Pencil size={18} />
+                    </button>
+                    <button
+                      className="icon-btn text-red-400 hover:bg-red-500/10"
+                      onClick={() => {
+                        if (confirm('Delete config preset?')) void api(`/configs/presets/${preset.id}`, { method: 'DELETE', token }).then(load).then(checkConfig)
+                      }}
+                      aria-label="Delete config"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
                 </div>
               </motion.div>
             )
           })}
         </div>
 
-        {presets.length === 0 && !formOpen && (
+        {presets.length === 0 && (
           <div className="py-16 text-center text-muted-foreground">
             <Settings className="mx-auto mb-4 opacity-50" size={44} />
-            <p>No rotation lanes configured. Add one to start using AI features.</p>
+            <p>No config presets yet. Create one to start using AI features.</p>
           </div>
         )}
       </section>
+
+      {rotationEnabled && selectedPresets.length > 0 && (
+        <section className="bento-card p-6 md:p-8">
+          <h2 className="mb-1 flex items-center gap-2 text-2xl font-bold">
+            <RotateCw size={22} /> Rotation Order
+          </h2>
+          <p className="mb-5 text-sm font-medium text-muted-foreground">
+            Each job/query starts at 1. If that config fails, the next one is tried. This order is not a queue and no last-good state is saved.
+          </p>
+          <div className="space-y-2">
+            {selectedPresets.map((preset, index) => (
+              <div key={preset.id} className="flex items-center gap-3 rounded-lg border border-border/60 bg-input/40 p-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary-500/15 text-sm font-black text-primary-400">{index + 1}</div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-bold">{preset.name}</div>
+                  <div className="truncate text-xs font-mono text-muted-foreground">{preset.llm_model} · {preset.embedding_model}</div>
+                </div>
+                <button className="icon-btn" onClick={() => moveSelected(preset.id, -1)} aria-label="Move config up"><ArrowUp size={17} /></button>
+                <button className="icon-btn" onClick={() => moveSelected(preset.id, 1)} aria-label="Move config down"><ArrowDown size={17} /></button>
+                <button className="icon-btn text-red-400 hover:bg-red-500/10" onClick={() => setSelectedIds((ids) => ids.filter((id) => id !== preset.id))} aria-label="Remove config from rotation"><X size={17} /></button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="bento-card p-6 md:p-8">
+        <button className="flex w-full items-center justify-between text-left" onClick={() => setAdvancedOpen((value) => !value)}>
+          <div>
+            <h2 className="text-2xl font-bold">Advanced Processing</h2>
+            <p className="mt-1 text-sm font-medium text-muted-foreground">Usually safe to leave alone. These settings do not rotate mid-job.</p>
+          </div>
+          <span className="text-sm font-bold text-primary-400">{advancedOpen ? 'Hide' : 'Show'}</span>
+        </button>
+
+        {advancedOpen && (
+          <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-4">
+            <Field label="Embedding batch size">
+              <input type="number" className="premium-input bg-transparent" value={processing.embedding_batch_size} onChange={(e) => setProcessing({ ...processing, embedding_batch_size: Number(e.target.value) || 100 })} />
+            </Field>
+            <Field label="Chunk size">
+              <input type="number" className="premium-input bg-transparent" value={processing.chunk_size} onChange={(e) => setProcessing({ ...processing, chunk_size: Number(e.target.value) || 1000 })} />
+            </Field>
+            <Field label="Chunk overlap">
+              <input type="number" className="premium-input bg-transparent" value={processing.chunk_overlap} onChange={(e) => setProcessing({ ...processing, chunk_overlap: Number(e.target.value) || 0 })} />
+            </Field>
+            <Field label="Retry backoff">
+              <input className="premium-input bg-transparent" value={processing.ingest_retry_backoff_seconds} onChange={(e) => setProcessing({ ...processing, ingest_retry_backoff_seconds: e.target.value })} />
+            </Field>
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200 lg:col-span-3">
+              <div className="mb-1 flex items-center gap-2 font-bold text-amber-300">
+                <AlertTriangle size={16} /> Fixed during a job
+              </div>
+              Chunking, batch size, and retry backoff are job settings. Config presets can change LLM and embedding models; these processing knobs stay stable.
+            </div>
+            <div className="flex items-end">
+              <button className="premium-btn premium-btn-secondary h-11 w-full gap-2 px-4" onClick={saveProcessing}>
+                <Save size={17} /> Save Advanced
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <AnimatePresence>
+        {modalOpen && (
+          <ConfigModal
+            draft={draft}
+            editing={Boolean(editingId)}
+            onClose={() => setModalOpen(false)}
+            onSave={saveConfig}
+            onChange={setDraft}
+          />
+        )}
+      </AnimatePresence>
     </div>
+  )
+}
+
+function ModeBadge({ rotationEnabled, activePreset }: { rotationEnabled: boolean; activePreset?: Preset }) {
+  return (
+    <div className="rounded-lg border border-border bg-input px-4 py-3 text-sm font-semibold text-muted-foreground">
+      {rotationEnabled ? 'Rotation mode' : `Specific config: ${activePreset?.name || 'none'}`}
+    </div>
+  )
+}
+
+function ConfigModal({
+  draft,
+  editing,
+  onClose,
+  onSave,
+  onChange,
+}: {
+  draft: ConfigDraft
+  editing: boolean
+  onClose: () => void
+  onSave: () => void
+  onChange: (draft: ConfigDraft) => void
+}) {
+  return (
+    <motion.div
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-background/80 p-4 backdrop-blur-md"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      <motion.div
+        role="dialog"
+        aria-modal="true"
+        aria-label={editing ? 'Edit config preset' : 'Create config preset'}
+        className="max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-lg border border-border bg-card p-6 shadow-2xl md:p-8"
+        initial={{ opacity: 0, y: 18, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 18, scale: 0.98 }}
+      >
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-bold">{editing ? 'Edit Config' : 'Create New Config'}</h2>
+            <p className="mt-1 text-sm font-medium text-muted-foreground">
+              Save one complete model setup. You can use it directly or include it in rotation later.
+            </p>
+          </div>
+          <button className="icon-btn" onClick={onClose} aria-label="Close modal"><X size={18} /></button>
+        </div>
+
+        <div className="space-y-6">
+          <Field label="Config name">
+            <input className="premium-input bg-transparent" value={draft.name} onChange={(e) => onChange({ ...draft, name: e.target.value })} placeholder="OpenAI production" />
+          </Field>
+
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+            <section className="rounded-lg border border-border/70 bg-input/25 p-4">
+              <h3 className="mb-4 font-bold">Answer Model</h3>
+              <div className="space-y-4">
+                <Field label="LLM model">
+                  <input className="premium-input bg-transparent" value={draft.llm_model} onChange={(e) => onChange({ ...draft, llm_model: e.target.value })} placeholder="gpt-4o" />
+                </Field>
+                <Field label="LLM API key">
+                  <SecretInput value={draft.llm_api_key} placeholder={editing ? 'Leave blank to keep existing key' : 'sk-...'} onChange={(value) => onChange({ ...draft, llm_api_key: value })} />
+                </Field>
+                <Field label="LLM base URL">
+                  <input className="premium-input bg-transparent" value={draft.llm_base_url} onChange={(e) => onChange({ ...draft, llm_base_url: e.target.value })} placeholder="https://api.openai.com/v1" />
+                </Field>
+                <Field label="LLM rate limit">
+                  <input type="number" className="premium-input bg-transparent" value={draft.llm_rate_limit_per_minute} onChange={(e) => onChange({ ...draft, llm_rate_limit_per_minute: Number(e.target.value) || 0 })} />
+                </Field>
+              </div>
+            </section>
+
+            <section className="rounded-lg border border-border/70 bg-input/25 p-4">
+              <h3 className="mb-4 font-bold">Embedding Model</h3>
+              <div className="space-y-4">
+                <Field label="Embedding model">
+                  <input className="premium-input bg-transparent" value={draft.embedding_model} onChange={(e) => onChange({ ...draft, embedding_model: e.target.value })} placeholder="text-embedding-3-small" />
+                </Field>
+                <Field label="Embedding API key">
+                  <SecretInput value={draft.embedding_api_key} placeholder={editing ? 'Leave blank to keep existing key' : 'sk-...'} onChange={(value) => onChange({ ...draft, embedding_api_key: value })} />
+                </Field>
+                <Field label="Embedding base URL">
+                  <input className="premium-input bg-transparent" value={draft.embedding_base_url} onChange={(e) => onChange({ ...draft, embedding_base_url: e.target.value })} placeholder="https://api.openai.com/v1" />
+                </Field>
+                <Field label="Embedding rate limit">
+                  <input type="number" className="premium-input bg-transparent" value={draft.embedding_rate_limit_per_minute} onChange={(e) => onChange({ ...draft, embedding_rate_limit_per_minute: Number(e.target.value) || 0 })} />
+                </Field>
+              </div>
+            </section>
+          </div>
+
+          <details className="rounded-lg border border-border/70 bg-input/20 p-4">
+            <summary className="cursor-pointer text-sm font-bold text-muted-foreground">Advanced answer options</summary>
+            <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+              <Field label="Max tokens">
+                <input type="number" className="premium-input bg-transparent" value={draft.llm_max_tokens} onChange={(e) => onChange({ ...draft, llm_max_tokens: Number(e.target.value) || 2048 })} />
+              </Field>
+              <Field label="Max retries">
+                <input type="number" className="premium-input bg-transparent" value={draft.llm_max_retries} onChange={(e) => onChange({ ...draft, llm_max_retries: Number(e.target.value) || 0 })} />
+              </Field>
+              <Field label="Temperature">
+                <input type="number" step="0.1" className="premium-input bg-transparent" value={draft.llm_temperature} onChange={(e) => onChange({ ...draft, llm_temperature: Number(e.target.value) || 0 })} />
+              </Field>
+            </div>
+          </details>
+        </div>
+
+        <div className="mt-8 flex justify-end gap-3 border-t border-border/60 pt-5">
+          <button className="premium-btn premium-btn-secondary h-11 px-5" onClick={onClose}>Cancel</button>
+          <button className="premium-btn premium-btn-primary h-11 gap-2 px-5" onClick={onSave}>
+            <Save size={17} /> Save Config
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
   )
 }
 

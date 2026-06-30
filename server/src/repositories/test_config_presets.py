@@ -18,17 +18,16 @@ def _db(monkeypatch):
     return conn
 
 
-def test_processing_settings_are_independent_from_rotation_lanes(monkeypatch):
+def test_processing_settings_do_not_override_config_models(monkeypatch):
     _db(monkeypatch)
     config_presets.save({
         "name": "lane-a",
         "llm_model": "gpt-a",
         "llm_api_key": "secret-a",
-        "embedding_model": "legacy-ignored",
+        "embedding_model": "embed-lane",
         "chunk_size": 111,
     }, "user-1")
     config_presets.save_processing({
-        "embedding_model": "embed-stable",
         "embedding_batch_size": 12,
         "chunk_size": 900,
         "chunk_overlap": 90,
@@ -38,7 +37,7 @@ def test_processing_settings_are_independent_from_rotation_lanes(monkeypatch):
     settings = get_user_setting_candidates("user-1")[0]
 
     assert settings.llm_model == "gpt-a"
-    assert settings.embedding_model == "embed-stable"
+    assert settings.embedding_model == "embed-lane"
     assert settings.embedding_batch_size == 12
     assert settings.chunk_size == 900
     assert settings.chunk_overlap == 90
@@ -57,3 +56,15 @@ def test_rotation_candidates_keep_saved_order_without_persisted_pointer(monkeypa
 
     assert [item.preset_name for item in candidates] == ["second", "first"]
     assert before == after
+
+
+def test_activating_specific_config_disables_rotation(monkeypatch):
+    _db(monkeypatch)
+    first = config_presets.save({"name": "first"}, "user-1")
+    second = config_presets.save({"name": "second"}, "user-1")
+    config_presets.save_rotation_config("user-1", True, [first, second])
+
+    assert config_presets.set_active(second, "user-1")
+
+    assert config_presets.get_rotation_config("user-1")["enabled"] == 0
+    assert get_user_setting_candidates("user-1")[0].preset_name == "second"

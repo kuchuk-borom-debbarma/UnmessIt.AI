@@ -6,7 +6,7 @@ Engineering snapshot as of 2026-07-01.
 
 UnmessIt.AI is a source-backed personal RAG app for evolving user notes. The product goal is simple: users store messy text, then ask questions later and get answers grounded in the exact saved sources.
 
-The current implementation is OpenAI-standard only. Users configure stable processing settings and ordered OpenAI rotation lanes in the app Settings screen. Server environment variables are for runtime concerns such as JWT, CORS, dev routes, and logging.
+The current implementation is OpenAI-standard only. Users configure specific OpenAI config presets, optional rotation, and advanced processing settings in the app Settings screen. Server environment variables are for runtime concerns such as JWT, CORS, dev routes, and logging.
 
 ## Current App Shape
 
@@ -33,7 +33,7 @@ The current implementation is OpenAI-standard only. Users configure stable proce
 - Chroma vector indexes for source chunks and recall keys, with durable ingest batching missing vectors per stage (ChromaDB client acts as a global singleton to prevent SQLite locking).
 - Retrieval with query breakdown, vector search, lexical search, recall-key search, linked-chunk expansion, dedupe, rerank, and Context Engineering (context packing/distillation).
 - Source-backed answer generation with citations to specific `note_id`s, source chunks, and an expandable Retrieval Analysis Trace.
-- Settings UI separates stable processing settings from ordered API rotation lanes. Chunk size, overlap, embedding model, batch size, and retry backoff stay fixed per job/request; API keys, base URLs, model lanes, and rate limits can rotate on failure.
+- Settings UI lets users choose one specific config preset or optional rotation. Config presets own LLM and embedding models/API info; advanced processing owns chunk size, overlap, batch size, and retry backoff.
 - Jobs UI for durable ingest job status, stage tracking, pause, stop, resume, and delete; updates arrive through SSE with a slow fallback refresh.
 - Paginated Note Insights UI for inspecting recall keys and links per note (replaced global memory UI).
 
@@ -141,7 +141,7 @@ Development-only routes:
 
 - Background ingest workers are in-process threads, not a distributed queue.
 - SQLite and Chroma are still beta storage choices, not a production multi-region data layer.
-- Chroma collection names are per user and embedding processing signature. Rebuild/migration remains manual if embedding dimensions change.
+- Chroma collection names are per user and active embedding/config signature. Rebuild/migration remains manual if embedding dimensions change.
 - Timeline answers use source order, spans, `source_time`, `event_time`, and `time_label` hints; there is no dedicated temporal ordering layer yet.
 - Recall quality controls broad reasoning quality.
 - There is no LLM response cache table.
