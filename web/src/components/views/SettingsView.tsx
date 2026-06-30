@@ -14,6 +14,7 @@ import {
   Settings,
   Trash2,
   X,
+  Info,
 } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { api } from '../../lib/api'
@@ -29,7 +30,7 @@ type ConfigDraft = {
   llm_api_key: string
   llm_temperature: number
   llm_max_retries: number
-  llm_max_tokens: number
+  llm_max_tokens?: number | null
   llm_rate_limit_per_minute: number
   embedding_provider: string
   embedding_model: string
@@ -55,7 +56,7 @@ const defaultConfig: ConfigDraft = {
   llm_api_key: '',
   llm_temperature: 0,
   llm_max_retries: 2,
-  llm_max_tokens: 2048,
+  llm_max_tokens: undefined,
   llm_rate_limit_per_minute: 0,
   embedding_provider: 'openai',
   embedding_model: 'text-embedding-3-small',
@@ -428,16 +429,16 @@ export function SettingsView({ token }: { token: string }) {
 
         {advancedOpen && (
           <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-4">
-            <Field label="Embedding batch size">
+            <Field label="Embedding batch size" helpText="Number of documents embedded at once. High: faster ingestion but risks rate limits/OOM. Low: safer but slower.">
               <input type="number" className="premium-input bg-transparent" value={processing.embedding_batch_size} onChange={(e) => setProcessing({ ...processing, embedding_batch_size: Number(e.target.value) || 100 })} />
             </Field>
-            <Field label="Chunk size">
+            <Field label="Chunk size" helpText="Characters per text chunk. High: retains more context but might dilute specific facts. Low: more precise retrieval but risks losing context.">
               <input type="number" className="premium-input bg-transparent" value={processing.chunk_size} onChange={(e) => setProcessing({ ...processing, chunk_size: Number(e.target.value) || 1000 })} />
             </Field>
-            <Field label="Chunk overlap">
+            <Field label="Chunk overlap" helpText="Characters overlapping between chunks. Prevents cutting off sentences mid-thought.">
               <input type="number" className="premium-input bg-transparent" value={processing.chunk_overlap} onChange={(e) => setProcessing({ ...processing, chunk_overlap: Number(e.target.value) || 0 })} />
             </Field>
-            <Field label="Retry backoff">
+            <Field label="Retry backoff" helpText="Comma-separated seconds to wait between retry attempts.">
               <input className="premium-input bg-transparent" value={processing.ingest_retry_backoff_seconds} onChange={(e) => setProcessing({ ...processing, ingest_retry_backoff_seconds: e.target.value })} />
             </Field>
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200 lg:col-span-3">
@@ -535,7 +536,7 @@ function ConfigModal({
                 <Field label="LLM base URL">
                   <input className="premium-input bg-transparent" value={draft.llm_base_url} onChange={(e) => onChange({ ...draft, llm_base_url: e.target.value })} placeholder="https://api.openai.com/v1" />
                 </Field>
-                <Field label="LLM rate limit">
+                <Field label="LLM rate limit" helpText="Max requests per minute. 0 means unlimited.">
                   <input type="number" className="premium-input bg-transparent" value={draft.llm_rate_limit_per_minute} onChange={(e) => onChange({ ...draft, llm_rate_limit_per_minute: Number(e.target.value) || 0 })} />
                 </Field>
               </div>
@@ -553,7 +554,7 @@ function ConfigModal({
                 <Field label="Embedding base URL">
                   <input className="premium-input bg-transparent" value={draft.embedding_base_url} onChange={(e) => onChange({ ...draft, embedding_base_url: e.target.value })} placeholder="https://api.openai.com/v1" />
                 </Field>
-                <Field label="Embedding rate limit">
+                <Field label="Embedding rate limit" helpText="Max requests per minute. 0 means unlimited.">
                   <input type="number" className="premium-input bg-transparent" value={draft.embedding_rate_limit_per_minute} onChange={(e) => onChange({ ...draft, embedding_rate_limit_per_minute: Number(e.target.value) || 0 })} />
                 </Field>
               </div>
@@ -563,13 +564,13 @@ function ConfigModal({
           <details className="rounded-lg border border-border/70 bg-input/20 p-4">
             <summary className="cursor-pointer text-sm font-bold text-muted-foreground">Advanced answer options</summary>
             <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
-              <Field label="Max tokens">
-                <input type="number" className="premium-input bg-transparent" value={draft.llm_max_tokens} onChange={(e) => onChange({ ...draft, llm_max_tokens: Number(e.target.value) || 2048 })} />
+              <Field label="Max tokens" helpText="Limits response length. Low: truncates answers. High (or empty): uses full model capability.">
+                <input type="number" className="premium-input bg-transparent" value={draft.llm_max_tokens ?? ''} onChange={(e) => onChange({ ...draft, llm_max_tokens: e.target.value ? Number(e.target.value) : undefined })} placeholder="Default" />
               </Field>
-              <Field label="Max retries">
+              <Field label="Max retries" helpText="Number of times to retry on transient API errors.">
                 <input type="number" className="premium-input bg-transparent" value={draft.llm_max_retries} onChange={(e) => onChange({ ...draft, llm_max_retries: Number(e.target.value) || 0 })} />
               </Field>
-              <Field label="Temperature">
+              <Field label="Temperature" helpText="Controls randomness. 0.0 is deterministic and focused, 1.0 is creative.">
                 <input type="number" step="0.1" className="premium-input bg-transparent" value={draft.llm_temperature} onChange={(e) => onChange({ ...draft, llm_temperature: Number(e.target.value) || 0 })} />
               </Field>
             </div>
@@ -587,10 +588,13 @@ function ConfigModal({
   )
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, helpText, children }: { label: string; helpText?: string; children: ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-xs font-bold uppercase tracking-wider text-foreground/80">{label}</span>
+      <span className="mb-1.5 flex items-center text-xs font-bold uppercase tracking-wider text-foreground/80">
+        {label}
+        {helpText && <Info className="ml-1.5 inline-block shrink-0 text-muted-foreground/70 hover:text-foreground" size={14} title={helpText} />}
+      </span>
       {children}
     </label>
   )

@@ -31,7 +31,7 @@ class Settings:
         self.llm_api_key = preset.get("llm_api_key") or ""
         self.llm_temperature = float(preset.get("llm_temperature", 0.0))
         self.llm_max_retries = int(preset.get("llm_max_retries", 2))
-        self.llm_max_tokens = int(preset.get("llm_max_tokens", 2048))
+        self.llm_max_tokens = int(preset["llm_max_tokens"]) if preset.get("llm_max_tokens") is not None else None
         self.llm_rate_limit_per_minute = int(preset.get("llm_rate_limit_per_minute", 0))
 
         self.preset_id = str(preset.get("id") or "")

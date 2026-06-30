@@ -17,7 +17,7 @@ class PresetCreate(BaseModel):
     llm_api_key: str | None = None
     llm_temperature: float = 0.0
     llm_max_retries: int = 2
-    llm_max_tokens: int = 2048
+    llm_max_tokens: int | None = None
     embedding_provider: str = "openai"
     embedding_model: str = "text-embedding-3-small"
     embedding_base_url: str | None = None
@@ -69,7 +69,7 @@ class PresetResponse(BaseModel):
     llm_base_url: str | None
     llm_temperature: float
     llm_max_retries: int
-    llm_max_tokens: int
+    llm_max_tokens: int | None = None
     embedding_provider: str
     embedding_model: str
     embedding_base_url: str | None

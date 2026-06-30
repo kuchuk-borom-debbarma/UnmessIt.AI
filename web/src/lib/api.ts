@@ -22,7 +22,7 @@ export type Preset = {
   llm_base_url?: string | null
   llm_temperature: number
   llm_max_retries: number
-  llm_max_tokens: number
+  llm_max_tokens?: number | null
   embedding_provider: string
   embedding_model: string
   embedding_base_url?: string | null

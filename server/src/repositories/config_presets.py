@@ -200,7 +200,7 @@ def save(preset: dict[str, Any], user_id: str) -> str:
             preset.get("llm_api_key", ""),
             float(preset.get("llm_temperature", 0.0)),
             int(preset.get("llm_max_retries", 2)),
-            int(preset.get("llm_max_tokens", 2048)),
+            int(preset["llm_max_tokens"]) if preset.get("llm_max_tokens") is not None else None,
             preset.get("embedding_provider", "openai").lower(),
             preset.get("embedding_model", "text-embedding-3-small"),
             preset.get("embedding_base_url"),
