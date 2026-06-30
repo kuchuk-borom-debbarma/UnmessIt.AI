@@ -50,8 +50,9 @@ def update_metadata(chunk_ids: list[str], metadata_updates: dict[str, Any], user
     """Update metadata for existing source chunk vectors (merges with existing)."""
     if not chunk_ids:
         return
+    vector_ids = [vector_id(cid) for cid in chunk_ids]
     collection = chroma._collection(user_id)
-    results = collection.get(ids=chunk_ids, include=["metadatas"])
+    results = collection.get(ids=vector_ids, include=["metadatas"])
     existing_metadatas = results.get("metadatas") or []
     existing_ids = results.get("ids") or []
     
@@ -76,20 +77,24 @@ def search(query: str, user_id: str, top_k: int = 8, within_directories: list[st
     if within_directories:
         resolved_paths = set()
         for dir_id in within_directories:
-            subs = directories.list_subtree(dir_id, user_id)
+            d = directories.get(dir_id, user_id)
+            if d:
+                resolved_paths.add(d["path"])
+            subs = directories.list_subtree(dir_id, user_id, limit=1000).get("data", [])
             resolved_paths.update([sub["path"] for sub in subs])
             
         if not resolved_paths:
             where_conditions.append({"directory_path": "__NO_MATCH__"})
-        elif len(resolved_paths) == 1:
-            where_conditions.append({"directory_path": list(resolved_paths)[0]})
         else:
             where_conditions.append({"directory_path": {"$in": list(resolved_paths)}})
             
     if excluding_directories:
         resolved_paths = set()
         for dir_id in excluding_directories:
-            subs = directories.list_subtree(dir_id, user_id)
+            d = directories.get(dir_id, user_id)
+            if d:
+                resolved_paths.add(d["path"])
+            subs = directories.list_subtree(dir_id, user_id, limit=1000).get("data", [])
             resolved_paths.update([sub["path"] for sub in subs])
             
         if len(resolved_paths) == 1:
