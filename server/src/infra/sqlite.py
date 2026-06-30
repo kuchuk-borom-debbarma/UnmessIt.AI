@@ -67,9 +67,9 @@ def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, de
 
 
 def _migrate_ingest_job_status(conn: sqlite3.Connection) -> None:
-    """Rebuild old durability tables so `aborted` is an allowed terminal state."""
+    """Rebuild old durability tables so `aborted` and `paused` are allowed states."""
     row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ingest_jobs'").fetchone()
-    if not row or "'aborted'" in row["sql"]:
+    if not row or "'paused'" in row["sql"]:
         return
 
     # SQLite cannot alter CHECK constraints, so this one migration rebuilds the
@@ -87,7 +87,7 @@ def _migrate_ingest_job_status(conn: sqlite3.Connection) -> None:
             id TEXT PRIMARY KEY,
             content_hash TEXT NOT NULL,
             raw_input_id TEXT,
-            status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'waiting_retry', 'complete', 'failed', 'aborted')),
+            status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'waiting_retry', 'complete', 'failed', 'aborted', 'paused')),
             stage TEXT NOT NULL,
             attempt_count INTEGER NOT NULL DEFAULT 0,
             next_run_at DATETIME,

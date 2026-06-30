@@ -550,6 +550,29 @@ async def test_durable_source_chunks_resume_from_next_unfinished_piece(monkeypat
     assert len(source_chunks.get_by_raw_input_id(raw_id)) == 2
 
 
+async def test_durable_runner_pause_stops_after_current_unit(monkeypatch):
+    _patch_memory_db(monkeypatch)
+
+    raw_id = raw_inputs.save_or_reuse("job-1", "one two", "user-1", "hash-1")
+    job = durability_repo.create_or_reuse_job("job-1", "hash-1", raw_id)
+
+    class PausingDrafts(FakeDrafts):
+        async def run(self, window: dict, user_id: str) -> list[dict]:
+            result = await super().run(window, user_id)
+            if window["text"] == "one":
+                durability_repo.pause(job["id"])
+            return result
+
+    drafts = PausingDrafts()
+    runner = DurableIngestRunner(FakeWindows(), drafts, SourceChunkAssemblerChain(), FakeRecallIndex())
+
+    await runner.run_once(job["id"])
+
+    assert durability_repo.get(job["id"])["status"] == "paused"
+    assert drafts.calls == ["one"]
+    assert len(source_chunks.get_by_raw_input_id(raw_id)) == 1
+
+
 def test_durable_retry_cap_marks_job_failed(monkeypatch):
     _patch_memory_db(monkeypatch)
     raw_id = raw_inputs.save_or_reuse("job-1", "text", "user-1", "hash-1")

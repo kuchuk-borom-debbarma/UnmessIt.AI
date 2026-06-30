@@ -16,6 +16,7 @@ from .models import (
     STAGE_RAW_INPUT,
     STAGE_SOURCE_CHUNKS,
     STAGE_SOURCE_VECTORS,
+    STATUS_PAUSED,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,9 +50,12 @@ class DurableIngestRunner:
     async def run_once(self, job_id: str) -> None:
         """Run until complete or until one graph node schedules retry."""
         job = await asyncio.to_thread(repository.get, job_id)
-        if not job:
+        if not job or job["status"] == STATUS_PAUSED:
             return
-        await self.graph.ainvoke({"job_id": job_id})
+        try:
+            await self.graph.ainvoke({"job_id": job_id})
+        except repository.IngestPaused:
+            return
 
     def _build_graph(self):
         """Build the fixed durable ingest workflow once per runner."""

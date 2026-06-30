@@ -24,6 +24,10 @@ from .models import (
 )
 
 
+class IngestPaused(RuntimeError):
+    """Raised inside a running worker when the user pauses the job."""
+
+
 def create_or_reuse_job(job_id: str, content_hash: str, raw_input_id: str) -> IngestJob:
     """Create one durable job per exact input hash."""
     existing = get_by_hash(content_hash)
@@ -140,6 +144,9 @@ def list_resumable_jobs() -> list[IngestJob]:
 
 def start_stage(job_id: str, stage: str) -> None:
     """Mark a job stage as running."""
+    job = get(job_id)
+    if not job or job["status"] == STATUS_PAUSED:
+        raise IngestPaused(job_id)
     get_connection().execute(
         """
         UPDATE ingest_jobs
@@ -208,6 +215,8 @@ def schedule_retry(job_id: str, stage: str, unit_key: str, error: str) -> Ingest
     exact unit that needs to resume next.
     """
     job = get(job_id)
+    if job and job["status"] == STATUS_PAUSED:
+        return job
     attempt = (job["attempt_count"] if job else 0) + 1
     status = STATUS_FAILED if attempt >= RETRY_LIMIT else STATUS_WAITING_RETRY
     delay = BACKOFF_SECONDS[min(attempt - 1, len(BACKOFF_SECONDS) - 1)]
@@ -254,6 +263,9 @@ def pause(job_id: str) -> None:
 
 def start_checkpoint(job_id: str, stage: str, unit_key: str) -> None:
     """Mark one deterministic work unit as running."""
+    job = get(job_id)
+    if not job or job["status"] == STATUS_PAUSED:
+        raise IngestPaused(job_id)
     get_connection().execute(
         """
         INSERT INTO ingest_checkpoints (job_id, stage, unit_key, status, metadata)

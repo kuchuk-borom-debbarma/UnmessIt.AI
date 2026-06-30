@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS ingest_jobs (
     id TEXT PRIMARY KEY,
     content_hash TEXT NOT NULL,
     raw_input_id TEXT,
-    status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'waiting_retry', 'complete', 'failed', 'aborted')),
+    status TEXT NOT NULL CHECK(status IN ('queued', 'running', 'waiting_retry', 'complete', 'failed', 'aborted', 'paused')),
     stage TEXT NOT NULL,
     attempt_count INTEGER NOT NULL DEFAULT 0,
     next_run_at DATETIME,
