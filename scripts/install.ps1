@@ -57,7 +57,7 @@ if (-not $JWT_SECRET) {
 }
 
 Write-Host "`nDownloading docker-compose.prod.yml..." -ForegroundColor Blue
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/main/docker-compose.prod.yml" -OutFile "docker-compose.prod.yml"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/staging/docker-compose.prod.yml" -OutFile "docker-compose.prod.yml"
 
 Write-Host "Generating .env file..."
 @"

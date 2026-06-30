@@ -41,12 +41,12 @@ The easiest way to run UnmessIt.AI is using our pre-built Docker images. You don
 
 **Mac / Linux**
 ```bash
-bash <(curl -s https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/main/scripts/install.sh)
+bash <(curl -s https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/staging/scripts/install.sh)
 ```
 
 **Windows (PowerShell)**
 ```powershell
-iwr -useb https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/main/scripts/install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/staging/scripts/install.ps1 | iex
 ```
 
 Open your browser to:

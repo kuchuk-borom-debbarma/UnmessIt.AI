@@ -74,7 +74,7 @@ fi
 
 echo ""
 echo -e "${BLUE}Downloading docker-compose.prod.yml...${NC}"
-curl -s -O https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/main/docker-compose.prod.yml
+curl -s -O https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/staging/docker-compose.prod.yml
 
 echo "Generating .env file..."
 cat > .env << EOL
