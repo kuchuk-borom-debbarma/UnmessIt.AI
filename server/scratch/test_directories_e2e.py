@@ -159,6 +159,26 @@ async def run_e2e():
     print(f"Search 'Personal' hits after move: {len(hits)}")
     assert len(hits) == 2
     
+    print("\n--- 6. Testing Soft Delete & Restore Sync ---")
+    
+    # Soft delete note1 (now in Personal directory)
+    notes.delete(note1, user_id)
+    bus.publish("note.soft_deleted", {"note_id": note1, "user_id": user_id})
+    await asyncio.sleep(0.5)
+    
+    hits = source_chunk_vectors.search("test", user_id, top_k=10, within_directories=[root_personal])
+    print(f"Search 'Personal' hits after soft delete: {len(hits)}")
+    assert len(hits) == 1  # Note1 should be gone, only Grocery list remains
+    
+    # Restore note1
+    notes.restore(note1, user_id)
+    bus.publish("note.restored", {"note_id": note1, "user_id": user_id})
+    await asyncio.sleep(0.5)
+    
+    hits = source_chunk_vectors.search("test", user_id, top_k=10, within_directories=[root_personal])
+    print(f"Search 'Personal' hits after restore: {len(hits)}")
+    assert len(hits) == 2  # Note1 should be back
+    
     print("\n✅ All Edge Cases and E2E Scenarios PASSED!")
 
 if __name__ == "__main__":
