@@ -12,7 +12,7 @@ export default function IngestView() {
     
     setStatus('loading')
     try {
-      const response = await axios.post('http://localhost:8000/ingest/', { text })
+      const response = await axios.post('http://localhost:2317/ingest/', { text })
       setJobId(response.data.job_id)
       setStatus('success')
       setText('')

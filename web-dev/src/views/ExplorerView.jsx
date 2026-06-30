@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { ChevronDown, ChevronRight, Clock, Database, FileText, Link2, PlayCircle, RefreshCw, Tags, Trash2, Trash, RotateCcw, AlertOctagon } from 'lucide-react';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = 'http://localhost:2317';
 
 const Pill = ({ children, tone = 'muted' }) => (
   <span className={`detail-pill ${tone}`}>{children}</span>

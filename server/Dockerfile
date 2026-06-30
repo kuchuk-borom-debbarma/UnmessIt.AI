@@ -30,5 +30,5 @@ COPY resources ./resources
 # Add the virtual environment to PATH
 ENV PATH="/app/.venv/bin:$PATH"
 
-EXPOSE 8000
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 2317
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "2317"]
