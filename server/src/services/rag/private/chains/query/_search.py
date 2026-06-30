@@ -87,6 +87,7 @@ async def _evidence_for(sub_query: str, global_query: str, user_id: str, extract
         _recall_keys(sub_query, user_id, extracted_subjects),
     )
     linked_ids = await asyncio.to_thread(recall.linked_source_chunk_ids, [key["id"] for key in recall_keys], user_id, 12, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
+    linked_chunks = await asyncio.to_thread(source_chunks.get_by_ids, linked_ids, user_id)
     chunks, _ = _rank_chunks(sub_query, [*vector_chunks, *lexical_chunks, *linked_chunks])
     
     top_chunks = chunks[:MAX_EVIDENCE_CHUNKS]
