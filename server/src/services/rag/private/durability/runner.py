@@ -166,26 +166,30 @@ class DurableIngestRunner:
             return existing
 
         for index, text_piece in enumerate(windows):
-            # ponytail: single line metadata update to reuse existing SSE machinery
-            await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": f"Summarizing chunk {index + 1} of {len(windows)}"})
             unit_key = _source_piece_key(raw_input_id, text_piece)
             is_done = await asyncio.to_thread(repository.checkpoint_complete, job_id, STAGE_SOURCE_CHUNKS, unit_key)
             if is_done:
                 logger.info("ingest_unit_reuse job_id=%s stage=%s unit=%s", job_id, STAGE_SOURCE_CHUNKS, unit_key)
                 continue
-            await self._run_unit(job_id, STAGE_SOURCE_CHUNKS, unit_key, lambda tp=text_piece: self._build_source_piece(raw_input_id, raw_text, user_id, tp, unit_key, directory_path), user_id)
+            await self._run_unit(job_id, STAGE_SOURCE_CHUNKS, unit_key, lambda tp=text_piece, idx=index, tot=len(windows): self._build_source_piece(job_id, idx, tot, raw_input_id, raw_text, user_id, tp, unit_key, directory_path), user_id)
             current_chunks = await asyncio.to_thread(source_chunks.get_by_raw_input_id, raw_input_id)
             await asyncio.to_thread(repository.update_metadata, job_id, {"source_chunk_count": len(current_chunks)})
         chunks = await asyncio.to_thread(source_chunks.get_by_raw_input_id, raw_input_id)
         await asyncio.to_thread(repository.update_metadata, job_id, {"source_chunk_count": len(chunks)})
         return chunks
 
-    async def _build_source_piece(self, raw_input_id: str, raw_text: str, user_id: str, text_piece: SourceWindow, unit_key: str, directory_path: str | None) -> tuple[str, dict[str, Any]]:
+    async def _build_source_piece(self, job_id: str, index: int, total: int, raw_input_id: str, raw_text: str, user_id: str, text_piece: SourceWindow, unit_key: str, directory_path: str | None) -> tuple[str, dict[str, Any]]:
         """Summarize one text piece, then save the full piece as evidence."""
+        snippet = (text_piece["text"][:25].replace('\n', ' ') + "...") if len(text_piece["text"]) > 25 else text_piece["text"].replace('\n', ' ')
+        await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": f"Summarizing chunk {index + 1}/{total} (Drafting): \"{snippet}\""})
         drafts: list[SourceChunkDraft] = await self.source_chunk_drafts.run(text_piece, user_id)
+        
+        await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": f"Summarizing chunk {index + 1}/{total} (Assembling): \"{snippet}\""})
         chunks = await self.source_chunk_assembler.run(raw_input_id, raw_text, user_id, drafts, directory_path)
-        for index, chunk in enumerate(chunks):
-            chunk["id"] = _stable_id("source_chunk", unit_key, str(index), chunk["text"])
+        
+        await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": f"Summarizing chunk {index + 1}/{total} (Saving): \"{snippet}\""})
+        for c_idx, chunk in enumerate(chunks):
+            chunk["id"] = _stable_id("source_chunk", unit_key, str(c_idx), chunk["text"])
         await asyncio.to_thread(source_chunks.save_many, chunks)
         chunk_ids = [chunk["id"] for chunk in chunks]
         return ",".join(chunk_ids), {"source_chunk_ids": chunk_ids}
@@ -196,7 +200,6 @@ class DurableIngestRunner:
         await asyncio.to_thread(repository.update_metadata, job_id, {"recall_chunk_count": len(chunks)})
         linked_chunk_ids = await asyncio.to_thread(recall.source_chunks_with_links, [chunk["id"] for chunk in chunks], user_id)
         for index, chunk in enumerate(chunks):
-            await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": f"Generating recall links for chunk {index + 1} of {len(chunks)}"})
             unit_key = f"recall_chunk:{chunk['id']}"
             is_done = await asyncio.to_thread(repository.checkpoint_complete, job_id, STAGE_RECALL, unit_key)
             if is_done or chunk["id"] in linked_chunk_ids:
@@ -204,7 +207,7 @@ class DurableIngestRunner:
                 await self._update_recall_counts(job_id, chunks, user_id)
                 logger.info("ingest_unit_reuse job_id=%s stage=%s unit=%s", job_id, STAGE_RECALL, unit_key)
                 continue
-            await self._run_unit(job_id, STAGE_RECALL, unit_key, lambda c=chunk: self._build_recall(raw_text, user_id, c), user_id)
+            await self._run_unit(job_id, STAGE_RECALL, unit_key, lambda c=chunk, idx=index, tot=len(chunks): self._build_recall(job_id, idx, tot, raw_text, user_id, c), user_id)
             await self._update_recall_counts(job_id, chunks, user_id)
 
     async def _update_recall_counts(self, job_id: str, chunks: list[SourceChunk], user_id: str) -> None:
@@ -217,21 +220,25 @@ class DurableIngestRunner:
             "recall_link_count": recall_link_count,
         })
 
-    async def _build_recall(self, raw_text: str, user_id: str, chunk: SourceChunk) -> tuple[str, dict[str, Any]]:
+    async def _build_recall(self, job_id: str, index: int, total: int, raw_text: str, user_id: str, chunk: SourceChunk) -> tuple[str, dict[str, Any]]:
         """Run recall indexing for one source chunk."""
-        index = await self.recall_index.run(raw_text, user_id, [chunk])
+        snippet = (chunk["text"][:25].replace('\n', ' ') + "...") if len(chunk["text"]) > 25 else chunk["text"].replace('\n', ' ')
+        await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": f"Recall for chunk {index + 1}/{total} (Extracting): \"{snippet}\""})
+        index_result = await self.recall_index.run(raw_text, user_id, [chunk])
         logger.info(
             "ingest_recall_index_result chunk_id=%s keys=%s links=%s analysis=%s",
             chunk["id"],
-            len(index["recall_keys"]),
-            len(index["recall_links"]),
-            index.get("analysis", {}),
+            len(index_result["recall_keys"]),
+            len(index_result["recall_links"]),
+            index_result.get("analysis", {}),
         )
-        if not index["recall_links"]:
+        if not index_result["recall_links"]:
             raise ValueError("recall produced no links")
-        saved_links = await asyncio.to_thread(recall.save_index, index, user_id)
+        
+        await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": f"Recall for chunk {index + 1}/{total} (Saving links): \"{snippet}\""})
+        saved_links = await asyncio.to_thread(recall.save_index, index_result, user_id)
         logger.info("ingest_recall_saved chunk_id=%s saved_links=%s", chunk["id"], saved_links)
-        return chunk["id"], {"saved_links": saved_links, "recall_keys": [key["id"] for key in index["recall_keys"]]}
+        return chunk["id"], {"saved_links": saved_links, "recall_keys": [key["id"] for key in index_result["recall_keys"]]}
 
     async def _recall_vectors(self, job_id: str, keys: list[dict[str, Any]]) -> None:
         """Index only missing recall-key vectors."""
@@ -246,7 +253,11 @@ class DurableIngestRunner:
                 continue
             missing.append((unit_key, key))
         if missing:
-            await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": f"Generating {len(missing)} embeddings"})
+            key_names = [k[1]["name"] for k in missing[:2]]
+            names_str = ", ".join(f"'{name}'" for name in key_names)
+            if len(missing) > 2:
+                names_str += f" and {len(missing) - 2} more"
+            await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": f"Generating {len(missing)} key embeddings ({names_str})"})
             await self._run_batch_units(
                 job_id,
                 STAGE_RECALL_VECTORS,
@@ -268,7 +279,8 @@ class DurableIngestRunner:
                 continue
             missing.append((unit_key, chunk))
         if missing:
-            await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": f"Saving {len(missing)} chunks"})
+            snippet = missing[0][1]["text"][:25].replace('\n', ' ') + "..."
+            await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": f"Generating {len(missing)} chunk embeddings (e.g. \"{snippet}\")"})
             await self._run_batch_units(
                 job_id,
                 STAGE_SOURCE_VECTORS,
