@@ -208,7 +208,7 @@ export function AskView({ token }: { token: string }) {
               What do you need to know?
             </h1>
             <p className="text-lg md:text-xl text-muted-foreground font-medium max-w-2xl mx-auto">
-              Search across your entire knowledge base in natural language.
+              Ask anything and let the AI synthesize answers from your knowledge base.
             </p>
           </motion.div>
         )}
