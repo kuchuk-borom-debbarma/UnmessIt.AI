@@ -117,14 +117,18 @@ def _embedding_function(user_id: str):
     return RotatingEmbeddingFunction(user_id)
 
 
-class RotatingEmbeddingFunction:
+class RotatingEmbeddingFunction(chromadb.EmbeddingFunction):
     """Chroma embedding callback that tries rotation lanes in order."""
 
-    def name(self) -> str:
+    @staticmethod
+    def name() -> str:
         return "RotatingEmbeddingFunction"
 
     def __init__(self, user_id: str) -> None:
         self.user_id = user_id
+
+    def get_config(self) -> dict:
+        return {"user_id": self.user_id}
 
     def __call__(self, input):
         candidates = get_user_setting_candidates(self.user_id)
