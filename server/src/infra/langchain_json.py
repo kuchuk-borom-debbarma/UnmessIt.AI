@@ -67,6 +67,11 @@ class JsonLLMClient:
         for attempt in range(1, settings.llm_max_retries + 2):
             content = ""
             try:
+                try:
+                    import sniffio
+                    sniffio.current_async_library_cvar.set(None)
+                except Exception:
+                    pass
                 response = llm.invoke(messages)
                 content = response.content if hasattr(response, "content") else str(response)
                 return JsonOutputParser().parse(content)

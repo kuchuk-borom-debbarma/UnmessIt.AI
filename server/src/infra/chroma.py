@@ -134,6 +134,14 @@ class RotatingEmbeddingFunction(chromadb.EmbeddingFunction):
                 {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "attempt": index, "total": len(candidates)},
             )
             try:
+                # httpx (via openai) will mistakenly try to grab the asyncio event loop 
+                # inside worker threads if sniffio inherits the main thread's ContextVar.
+                try:
+                    import sniffio
+                    sniffio.current_async_library_cvar.set(None)
+                except Exception:
+                    pass
+                
                 result = _embedding_function_for_key(settings.embedding_cache_key())(input)
                 set_last_rotation_snapshot(settings.rotation_snapshot())
                 report_progress_sync(
