@@ -21,7 +21,9 @@ The current implementation is OpenAI-standard only. Users configure OpenAI text 
 - Local username/password auth with JWT bearer tokens.
 - Per-user data isolation across notes, directories, tags, raw inputs, source chunks, recall keys, recall links, vectors, and presets.
 - Notes CRUD with directory structures, tag organization, pagination, and a soft/hard delete Trash system.
-- Materialized-path directories for subtree queries.
+- Materialized-path directories for efficient subtree queries and strict 100-nested depth limits.
+- Soft-delete vector synchronization (moving notes to trash masks raw inputs and evicts Chroma vectors; restoring re-indexes instantly).
+- Cross-Domain Directory Filtering for AI queries (restrict RAG search strictly to, or explicitly exclude, entire directory trees).
 - Event-driven note ingestion through the in-memory event bus.
 - Raw input storage as source truth.
 - Durable ingestion jobs with SQLite checkpoints, bounded retry/backoff, pause, and stop controls.
@@ -142,7 +144,7 @@ Development-only routes:
 
 ## Likely Next Steps
 
-- **Query Filtering**: Granular control to filter AI searches by specific directories, tags, or individual notes during querying.
+- **Tag Filtering**: Granular control to filter AI searches by specific tags during querying.
 - Add explicit timeline ordering for timeline-style questions if real examples need it.
 - Add a rebuild-vector-index command for embedding model changes.
 - Add small evaluations for multi-note, broad-recall, and citation correctness.
