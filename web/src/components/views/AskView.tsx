@@ -1,10 +1,11 @@
-import { Search, RefreshCw, ChevronRight, ChevronDown, ChevronUp, CheckCircle2, ExternalLink, Terminal, SlidersHorizontal, Square } from 'lucide-react'
+import { Search, RefreshCw, ChevronRight, ChevronDown, ChevronUp, CheckCircle2, ExternalLink, Terminal, SlidersHorizontal, Square, X } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Link } from 'react-router-dom'
 import { DirectorySearchSelect } from './DirectorySearchSelect'
 import { TagSearchSelect } from './TagSearchSelect'
 import { useAsk } from '../../contexts/AskContext'
+import { useEffect, useRef, memo } from 'react'
 
 type Toast = { tone: 'success' | 'danger'; message: string }
 
@@ -26,9 +27,103 @@ function ToastMessage({ toast }: { toast: Toast }) {
   )
 }
 
+// Isolated terminal component — memo prevents parent re-renders from scrolling the list
+const MiniTerminal = memo(function MiniTerminal({
+  steps, loading, open, onToggle, hasResult
+}: {
+  steps: string[]
+  loading: boolean
+  open: boolean
+  onToggle: () => void
+  hasResult: boolean
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Auto-scroll to bottom when new steps arrive while open
+  useEffect(() => {
+    if (open && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [steps, open])
+
+  if (steps.length === 0) return null
+
+  const lastStep = steps[steps.length - 1]
+
+  return (
+    <div className={cn(
+      "mb-6 rounded-2xl border overflow-hidden transition-all duration-300",
+      loading
+        ? "border-primary-500/30 bg-black/60 shadow-[0_0_24px_rgba(var(--primary-500-rgb),0.08)]"
+        : "border-border/30 bg-black/40"
+    )}>
+      {/* Terminal header bar */}
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-white/[0.03] transition-colors"
+      >
+        <div className="flex items-center gap-1.5">
+          <div className="w-2.5 h-2.5 rounded-full bg-rose-500/70" />
+          <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/70" />
+          <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/70" />
+        </div>
+        <Terminal size={12} className={cn("ml-1", loading ? "text-primary-400" : "text-muted-foreground/60")} />
+        <span className={cn("text-xs font-mono font-medium flex-1 text-left truncate",
+          loading ? "text-primary-300/80" : "text-muted-foreground/60"
+        )}>
+          {loading ? lastStep.split('{')[0].trim() : `${steps.length} steps completed`}
+        </span>
+        {loading && <RefreshCw size={11} className="text-primary-400 animate-spin shrink-0" />}
+        {open ? <ChevronUp size={14} className="text-muted-foreground/50 shrink-0" /> : <ChevronDown size={14} className="text-muted-foreground/50 shrink-0" />}
+      </button>
+
+      {/* Scrollable log body */}
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0 }}
+            animate={{ height: 160 }}
+            exit={{ height: 0 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            className="overflow-hidden"
+          >
+            <div
+              ref={scrollRef}
+              className="h-40 overflow-y-auto px-4 py-3 font-mono text-xs flex flex-col gap-1.5 custom-scrollbar"
+            >
+              {steps.map((step, idx) => {
+                const isLast = idx === steps.length - 1
+                return (
+                  <div
+                    key={idx}
+                    className={cn(
+                      "flex items-start gap-2 leading-relaxed",
+                      isLast && loading ? "text-primary-300" : "text-zinc-500"
+                    )}
+                  >
+                    <span className="shrink-0 mt-px">
+                      {isLast && loading
+                        ? <span className="inline-block w-1.5 h-3 bg-primary-400 animate-pulse rounded-sm" />
+                        : <span className="text-zinc-700">›</span>
+                      }
+                    </span>
+                    <span className="break-all">{step}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+})
+
 export function AskView({ token }: { token: string }) {
   const {
     query, setQuery, loading, showTrace, setShowTrace, showFilters, setShowFilters,
+    terminalOpen, setTerminalOpen,
     withinDirectories, setWithinDirectories, excludingDirectories, setExcludingDirectories,
     withinTags, setWithinTags, excludingTags, setExcludingTags, withinTagsCondition, setWithinTagsCondition,
     result, toast, progressSteps, handleAsk, stopAsk
@@ -210,43 +305,15 @@ export function AskView({ token }: { token: string }) {
         </div>
       </motion.div>
 
-      {/* Progress Steps */}
-      <AnimatePresence>
-        {loading && progressSteps.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0, height: 0, filter: 'blur(10px)' }}
-            animate={{ opacity: 1, height: 'auto', filter: 'blur(0px)' }}
-            exit={{ opacity: 0, height: 0, filter: 'blur(10px)' }}
-            className="mb-8 overflow-hidden"
-          >
-            <div className="bento-card p-6 flex flex-col gap-4">
-              {progressSteps.map((step, idx) => {
-                const isLast = idx === progressSteps.length - 1;
-                return (
-                  <motion.div 
-                    key={idx}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    className={cn(
-                      "flex items-center gap-3 font-mono text-sm",
-                      isLast ? "text-primary-400" : "text-muted-foreground"
-                    )}
-                  >
-                    {isLast ? (
-                      <RefreshCw className="animate-spin" size={16} />
-                    ) : (
-                      <CheckCircle2 size={16} />
-                    )}
-                    <span>{step}</span>
-                  </motion.div>
-                )
-              })}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Mini Terminal — fixed height, persists after result */}
+      <MiniTerminal
+        steps={progressSteps}
+        loading={loading}
+        open={terminalOpen}
+        onToggle={() => setTerminalOpen(!terminalOpen)}
+        hasResult={!!result}
+      />
 
-      {/* The Answer Sheet */}
       <AnimatePresence>
         {result && (
           <motion.div

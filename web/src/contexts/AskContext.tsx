@@ -27,6 +27,8 @@ interface AskContextType {
   setShowTrace: (s: boolean) => void
   showFilters: boolean
   setShowFilters: (s: boolean) => void
+  terminalOpen: boolean
+  setTerminalOpen: (o: boolean) => void
   withinDirectories: string
   setWithinDirectories: (d: string) => void
   excludingDirectories: string
@@ -52,6 +54,7 @@ export function AskProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false)
   const [showTrace, setShowTrace] = useState(false)
   const [showFilters, setShowFilters] = useState(false)
+  const [terminalOpen, setTerminalOpen] = useState(false)
   const [withinDirectories, setWithinDirectories] = useState(() => sessionStorage.getItem('ask_within_dirs') || '')
   const [excludingDirectories, setExcludingDirectories] = useState(() => sessionStorage.getItem('ask_excluding_dirs') || '')
   const [withinTags, setWithinTags] = useState(() => sessionStorage.getItem('ask_within_tags') || '')
@@ -70,6 +73,16 @@ export function AskProvider({ children }: { children: ReactNode }) {
       return saved ? JSON.parse(saved) : []
     } catch { return [] }
   })
+
+  // Buffer for batching SSE events — avoids one setState per SSE message
+  const pendingStepsRef = useRef<string[]>([])
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const flushPending = useCallback(() => {
+    if (pendingStepsRef.current.length === 0) return
+    const batch = pendingStepsRef.current.splice(0)
+    setProgressSteps(prev => [...prev, ...batch])
+  }, [])
 
   useEffect(() => {
     sessionStorage.setItem('ask_query', query)
@@ -100,6 +113,7 @@ export function AskProvider({ children }: { children: ReactNode }) {
   const evtSourceRef = useRef<EventSource | null>(null)
 
   const stopAsk = useCallback(() => {
+    if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
       abortControllerRef.current = null
@@ -108,8 +122,9 @@ export function AskProvider({ children }: { children: ReactNode }) {
       evtSourceRef.current.close()
       evtSourceRef.current = null
     }
+    flushPending()
     setLoading(false)
-  }, [])
+  }, [flushPending])
 
   const handleAsk = useCallback(async (token: string) => {
     if (!query.trim() || loading) return
@@ -117,17 +132,27 @@ export function AskProvider({ children }: { children: ReactNode }) {
     setToast(null)
     setResult(null)
     setProgressSteps([])
+    setTerminalOpen(true)
+    pendingStepsRef.current = []
 
     const clientId = crypto.randomUUID()
     const evtSource = new EventSource(`${API_BASE}/api/retrieval/events/${clientId}`)
     evtSourceRef.current = evtSource
+
     evtSource.addEventListener('progress', (e) => {
       try {
         const evData = JSON.parse(e.data)
         const details = evData.details && Object.keys(evData.details).length > 0
           ? ` ${JSON.stringify(evData.details)}`
           : ''
-        setProgressSteps(prev => [...prev, `${evData.message}${details}`])
+        pendingStepsRef.current.push(`${evData.message}${details}`)
+        // Debounce: flush at most every 120ms to batch rapid events into one render
+        if (!flushTimerRef.current) {
+          flushTimerRef.current = setTimeout(() => {
+            flushTimerRef.current = null
+            flushPending()
+          }, 120)
+        }
       } catch {}
     })
 
@@ -155,23 +180,29 @@ export function AskProvider({ children }: { children: ReactNode }) {
         signal: abortController.signal
       })
       setResult(data)
+      // Collapse terminal once result arrives; user can expand it
+      setTerminalOpen(false)
     } catch (err) {
       console.error(err)
       if (err instanceof Error && err.name !== 'AbortError') {
         setToast({ tone: 'danger', message: err.message })
       }
     } finally {
-      evtSource.close()
-      if (evtSourceRef.current === evtSource) {
-        evtSourceRef.current = null
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current)
+        flushTimerRef.current = null
       }
+      flushPending()
+      evtSource.close()
+      if (evtSourceRef.current === evtSource) evtSourceRef.current = null
       setLoading(false)
     }
-  }, [query, loading, withinDirectories, excludingDirectories, withinTags, excludingTags, withinTagsCondition])
+  }, [query, loading, withinDirectories, excludingDirectories, withinTags, excludingTags, withinTagsCondition, flushPending])
 
   return (
     <AskContext.Provider value={{
       query, setQuery, loading, showTrace, setShowTrace, showFilters, setShowFilters,
+      terminalOpen, setTerminalOpen,
       withinDirectories, setWithinDirectories, excludingDirectories, setExcludingDirectories,
       withinTags, setWithinTags, excludingTags, setExcludingTags, withinTagsCondition, setWithinTagsCondition,
       result, toast, setToast, progressSteps, handleAsk, stopAsk
