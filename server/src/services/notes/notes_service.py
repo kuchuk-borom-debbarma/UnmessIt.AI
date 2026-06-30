@@ -70,6 +70,26 @@ class NotesService:
                 })
         return success
 
+    async def soft_delete_note(self, note_id: str, user_id: str) -> bool:
+        """Soft delete a note and trigger background cleanup."""
+        success = notes.delete(note_id, user_id)
+        if success:
+            self.event_bus.publish("note.soft_deleted", {
+                "note_id": note_id,
+                "user_id": user_id
+            })
+        return success
+
+    async def restore_note(self, note_id: str, user_id: str) -> bool:
+        """Restore a soft-deleted note and trigger background re-indexing."""
+        success = notes.restore(note_id, user_id)
+        if success:
+            self.event_bus.publish("note.restored", {
+                "note_id": note_id,
+                "user_id": user_id
+            })
+        return success
+
     async def hard_delete_note(self, note_id: str, user_id: str) -> bool:
         """Permanently delete a note and trigger background cleanup."""
         success = notes.hard_delete(note_id, user_id)

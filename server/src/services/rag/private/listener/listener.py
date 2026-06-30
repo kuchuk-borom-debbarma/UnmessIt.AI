@@ -104,9 +104,46 @@ def _on_note_hard_deleted(payload: dict[str, Any]) -> None:
     asyncio.create_task(asyncio.to_thread(_cleanup))
 
 
+def _on_note_soft_deleted(payload: dict[str, Any]) -> None:
+    note_id = payload["note_id"]
+    user_id = payload["user_id"]
+    
+    def _cleanup():
+        from src.repositories import raw_inputs, source_chunks, source_chunk_vectors
+        inputs = raw_inputs.list_by_job(note_id, user_id)
+        for row in inputs:
+            input_id = row["id"]
+            chunks = source_chunks.get_by_raw_input_id(input_id)
+            if chunks:
+                source_chunk_vectors.delete([chunk["id"] for chunk in chunks], user_id)
+            raw_inputs.soft_delete(input_id)
+            
+    asyncio.create_task(asyncio.to_thread(_cleanup))
+
+
+def _on_note_restored(payload: dict[str, Any]) -> None:
+    note_id = payload["note_id"]
+    user_id = payload["user_id"]
+    
+    def _restore():
+        from src.repositories import raw_inputs, source_chunks, source_chunk_vectors
+        inputs = raw_inputs.list_by_job(note_id, user_id)
+        for row in inputs:
+            input_id = row["id"]
+            raw_inputs.restore(input_id)
+            # Must fetch chunks after restoring raw_inputs so deleted_at IS NULL filter passes
+            chunks = source_chunks.get_by_raw_input_id(input_id)
+            if chunks:
+                source_chunk_vectors.index(chunks)
+                
+    asyncio.create_task(asyncio.to_thread(_restore))
+
+
 def register_rag_listeners() -> None:
     bus = get_event_bus()
     bus.subscribe("note.created", _on_note_created)
     bus.subscribe("note.updated", _on_note_updated)
     bus.subscribe("note.moved", _on_note_moved)
     bus.subscribe("note.hard_deleted", _on_note_hard_deleted)
+    bus.subscribe("note.soft_deleted", _on_note_soft_deleted)
+    bus.subscribe("note.restored", _on_note_restored)
