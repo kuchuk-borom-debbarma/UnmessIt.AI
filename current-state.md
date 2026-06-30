@@ -131,6 +131,7 @@ Development-only routes:
 - ChromaDB SQLite locking is resolved via a global singleton.
 - Route prefixes between frontend and backend are currently aligned.
 - OpenAI-only provider rules are enforced in the config route and reflected in the UI.
+- Retrieval chunk ranking correctly tracks and rewards multiple-path discovery without score duplication, and the Ask UI accurately displays only the citations the LLM ultimately utilized (hiding vector search padding).
 
 ## Current Limits
 

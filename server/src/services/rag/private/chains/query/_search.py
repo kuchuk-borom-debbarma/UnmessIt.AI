@@ -178,6 +178,12 @@ def _rank_chunks(
     merged: dict[str, dict[str, Any]] = {}
     scores: dict[str, float] = {}
     reasons: dict[str, list[str]] = {}
+    
+    # We must explicitly track how many times a chunk appears across the different search paths 
+    # (vector, lexical, recall) to properly reward multiple-path discovery.
+    # We cannot simply append to a reasons list inside the loop because the raw chunks list 
+    # contains duplicates. If we processed duplicates sequentially, we would incorrectly 
+    # multiply the exact-match lexical overlap score over and over again.
     appearances: dict[str, int] = {}
 
     terms = set(_terms(query))
@@ -196,6 +202,8 @@ def _rank_chunks(
             scores[chunk_id] += overlap
             reasons[chunk_id].append(f"query_terms:{overlap}")
             
+        # Reward chunks that were discovered via multiple independent search strategies.
+        # This gives a boost to chunks found by both vector + recall even if they have 0 exact lexical overlap.
         apps = appearances[chunk_id]
         if apps > 1:
             scores[chunk_id] += (apps - 1) * 5

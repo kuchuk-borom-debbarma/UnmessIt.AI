@@ -362,6 +362,9 @@ export function AskView({ token }: { token: string }) {
               <div className="mt-12 pt-8 border-t border-border/50">
                 <h3 className="text-sm font-bold uppercase tracking-widest text-muted-foreground mb-6">Sources Used</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                  {/* We map over citations instead of source_chunks here because source_chunks contains the 
+                      entire raw retrieval context (which includes unrelated padding chunks from vector search's 
+                      fixed top-K behavior). citations contains only what the AI actually decided to use. */}
                   {result.citations.map((citation, i) => (
                     <Link 
                       key={i} 
