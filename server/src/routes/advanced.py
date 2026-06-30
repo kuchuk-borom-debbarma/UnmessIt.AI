@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+from starlette.requests import Request
 
 from src.repositories import dev, raw_inputs, source_chunk_vectors, source_chunks
 from src.repositories import recall as recall_repo
 from src.routes.auth_utils import get_current_user_id
+from src.services.auth import get_auth_service
+from src.infra.sse import get_sse_service
 from src.services.rag.rag_service import get_rag_service
 
 router = APIRouter(prefix="/api/advanced", tags=["advanced"])
@@ -86,6 +91,27 @@ async def ingest_jobs(
     _user_id: str = Depends(get_current_user_id)
 ) -> dict:
     return {"status": "success", **get_rag_service().list_ingest_jobs(_user_id, page, limit)}
+
+
+@router.get("/ingest_jobs/events")
+async def ingest_job_events(request: Request, token: str | None = None) -> StreamingResponse:
+    """Stream current-user ingest job changes."""
+    bearer = request.headers.get("authorization", "")
+    auth_token = token or (bearer[7:] if bearer.lower().startswith("bearer ") else "")
+    user = get_auth_service().verify_token(auth_token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid authentication credentials")
+
+    async def event_generator():
+        try:
+            async for event in get_sse_service().subscribe(f"ingest_jobs:{user['id']}"):
+                if await request.is_disconnected():
+                    break
+                yield f"event: {event.event}\ndata: {json.dumps(event.data)}\n\n"
+        except Exception:
+            pass
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.post("/ingest_jobs/{job_id}/resume")

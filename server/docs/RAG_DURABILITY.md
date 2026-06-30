@@ -418,10 +418,14 @@ cleared, and the completion is logged.
 
 Retries are bounded.
 
-Current constants:
+Current defaults:
 
 - retry limit: `5`
-- backoff seconds: `30`, `120`, `300`, `900`, `1800`
+- backoff seconds: `5`, `15`, `30`, `60`, `120`
+
+Backoff seconds are configurable per active user preset as a comma-separated
+list such as `5,15,30,60,120`. Invalid entries are ignored and values above
+one hour are dropped.
 
 When a unit fails:
 

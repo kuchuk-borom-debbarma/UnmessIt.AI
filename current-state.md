@@ -26,15 +26,15 @@ The current implementation is OpenAI-standard only. Users configure OpenAI text 
 - Cross-Domain Filtering: AI queries can be explicitly constrained by or excluded from specific directories and tag combinations (supporting ANY, ALL, and NOT logic) inside the vector store.
 - Event-driven note ingestion through the in-memory event bus.
 - Raw input storage as source truth.
-- Durable ingestion jobs with SQLite checkpoints, bounded retry/backoff, pause, and stop controls.
+- Durable ingestion jobs with SQLite checkpoints, configurable bounded retry/backoff, pause, and stop controls.
 - Lossless source chunks chosen by source position, not by LLM importance.
 - LLM summaries for chunks without replacing source text.
 - Recall keys and recall links for entities, topics, tasks, events, questions, and other reusable handles.
 - Chroma vector indexes for source chunks and recall keys, with durable ingest batching missing vectors per stage (ChromaDB client acts as a global singleton to prevent SQLite locking).
 - Retrieval with query breakdown, vector search, lexical search, recall-key search, linked-chunk expansion, dedupe, rerank, and Context Engineering (context packing/distillation).
 - Source-backed answer generation with citations to specific `note_id`s, source chunks, and an expandable Retrieval Analysis Trace.
-- Settings UI for OpenAI presets, API keys, model names, base URLs, max tokens, retries, chunk size, chunk overlap, and rate limits.
-- Jobs UI for durable ingest job status, stage tracking, pause, stop, resume, and delete.
+- Settings UI for OpenAI presets, API keys, model names, base URLs, max tokens, retries, chunk size, chunk overlap, rate limits, and ingest retry backoff.
+- Jobs UI for durable ingest job status, stage tracking, pause, stop, resume, and delete; updates arrive through SSE with a slow fallback refresh.
 - Paginated Note Insights UI for inspecting recall keys and links per note (replaced global memory UI).
 
 ## Active Ingestion Shape
@@ -102,6 +102,7 @@ Advanced authenticated inspection:
 - `GET /api/advanced/raw_inputs/{input_id}`
 - `DELETE /api/advanced/raw_inputs/{input_id}/hard`
 - `GET /api/advanced/ingest_jobs`
+- `GET /api/advanced/ingest_jobs/events`
 - `POST /api/advanced/ingest_jobs/{job_id}/resume`
 - `DELETE /api/advanced/ingest_jobs/{job_id}`
 

@@ -30,6 +30,7 @@ export type Preset = {
   embedding_rate_limit_per_minute: number
   chunk_size: number
   chunk_overlap: number
+  ingest_retry_backoff_seconds: string
 }
 
 type Options = RequestInit & { token?: string | null }

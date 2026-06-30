@@ -2,6 +2,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
 
+from src.infra.settings import parse_retry_backoff_seconds
 from src.routes.auth_utils import get_current_user_id
 from src.repositories import config_presets
 
@@ -25,6 +26,7 @@ class PresetCreate(BaseModel):
     embedding_rate_limit_per_minute: int = 0
     chunk_size: int = 1000
     chunk_overlap: int = 200
+    ingest_retry_backoff_seconds: str = "5,15,30,60,120"
 
     @field_validator("llm_provider", "embedding_provider")
     @classmethod
@@ -33,6 +35,11 @@ class PresetCreate(BaseModel):
         if normalized != "openai":
             raise ValueError("Only OpenAI provider is supported")
         return normalized
+
+    @field_validator("ingest_retry_backoff_seconds")
+    @classmethod
+    def valid_backoff(cls, value: str) -> str:
+        return ",".join(str(item) for item in parse_retry_backoff_seconds(value))
 
 
 class PresetResponse(BaseModel):
@@ -52,6 +59,7 @@ class PresetResponse(BaseModel):
     embedding_rate_limit_per_minute: int
     chunk_size: int
     chunk_overlap: int
+    ingest_retry_backoff_seconds: str
 
 
 @router.get("/presets")
@@ -128,4 +136,5 @@ def get_active_config(user_id: str = Depends(get_current_user_id)) -> dict[str, 
         "embedding_rate_limit_per_minute": settings.embedding_rate_limit_per_minute,
         "chunk_size": settings.chunk_size,
         "chunk_overlap": settings.chunk_overlap,
+        "ingest_retry_backoff_seconds": ",".join(str(item) for item in settings.ingest_retry_backoff_seconds),
     }

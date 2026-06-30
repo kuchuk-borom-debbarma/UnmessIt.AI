@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -617,6 +618,19 @@ def test_durable_retry_cap_marks_job_failed(monkeypatch):
 
     assert job["status"] == STATUS_FAILED
     assert job["attempt_count"] == 5
+
+
+def test_durable_retry_uses_configured_backoff(monkeypatch):
+    _patch_memory_db(monkeypatch)
+    raw_id = raw_inputs.save_or_reuse("job-1", "text", "user-1", "hash-1")
+    durability_repo.create_or_reuse_job("job-1", "hash-1", raw_id)
+
+    before = datetime.now(timezone.utc)
+    job = durability_repo.schedule_retry("job-1", STAGE_SOURCE_CHUNKS, "source_piece:1", "model down", [1])
+    delay = (datetime.fromisoformat(job["next_run_at"]) - before).total_seconds()
+
+    assert job["status"] == STATUS_WAITING_RETRY
+    assert 0 <= delay <= 2
 
 
 def test_manual_resume_keeps_completed_checkpoints(monkeypatch):

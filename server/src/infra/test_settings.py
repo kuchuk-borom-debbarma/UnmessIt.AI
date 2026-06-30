@@ -34,6 +34,7 @@ def test_ai_settings_use_user_preset_values(monkeypatch):
         "embedding_model": "preset-embedding-model",
         "embedding_base_url": "https://preset.example/v1",
         "embedding_api_key": "preset-embedding-key",
+        "ingest_retry_backoff_seconds": "1,2,5",
     }
 
     settings = Settings(preset)
@@ -46,6 +47,13 @@ def test_ai_settings_use_user_preset_values(monkeypatch):
     assert settings.embedding_model == "preset-embedding-model"
     assert settings.embedding_base_url == "https://preset.example/v1"
     assert settings.embedding_api_key == "preset-embedding-key"
+    assert settings.ingest_retry_backoff_seconds == [1, 2, 5]
+
+
+def test_ai_settings_sanitize_retry_backoff_seconds():
+    settings = Settings({"ingest_retry_backoff_seconds": "0, bad, 12, 99999"})
+
+    assert settings.ingest_retry_backoff_seconds == [0, 12]
 
 
 def test_ai_settings_rewrite_loopback_base_urls_in_docker(monkeypatch):

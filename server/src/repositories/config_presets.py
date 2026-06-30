@@ -61,8 +61,8 @@ def save(preset: dict[str, Any], user_id: str) -> str:
             llm_provider, llm_model, llm_base_url, llm_api_key, llm_temperature, llm_max_retries, llm_max_tokens,
             embedding_provider, embedding_model, embedding_base_url, embedding_api_key,
             llm_rate_limit_per_minute, embedding_rate_limit_per_minute,
-            chunk_size, chunk_overlap
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            chunk_size, chunk_overlap, ingest_retry_backoff_seconds
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name=excluded.name,
             is_active=excluded.is_active,
@@ -81,6 +81,7 @@ def save(preset: dict[str, Any], user_id: str) -> str:
             embedding_rate_limit_per_minute=excluded.embedding_rate_limit_per_minute,
             chunk_size=excluded.chunk_size,
             chunk_overlap=excluded.chunk_overlap,
+            ingest_retry_backoff_seconds=excluded.ingest_retry_backoff_seconds,
             updated_at=CURRENT_TIMESTAMP
         """,
         (
@@ -103,6 +104,7 @@ def save(preset: dict[str, Any], user_id: str) -> str:
             int(preset.get("embedding_rate_limit_per_minute", 0)),
             int(preset.get("chunk_size", 1000)),
             int(preset.get("chunk_overlap", 200)),
+            preset.get("ingest_retry_backoff_seconds", "5,15,30,60,120"),
         ),
     )
     conn.commit()

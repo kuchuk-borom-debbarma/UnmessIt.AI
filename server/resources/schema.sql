@@ -220,6 +220,7 @@ CREATE TABLE IF NOT EXISTS user_config_presets (
     
     chunk_size INTEGER NOT NULL DEFAULT 1000,
     chunk_overlap INTEGER NOT NULL DEFAULT 200,
+    ingest_retry_backoff_seconds TEXT NOT NULL DEFAULT '5,15,30,60,120',
     
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,

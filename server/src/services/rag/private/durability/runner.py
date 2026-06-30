@@ -7,6 +7,7 @@ from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from src.infra.settings import NoActivePresetError, get_user_settings
 from src.repositories import recall, recall_key_vectors, source_chunk_vectors, source_chunks
 from src.services.rag.models import SourceChunk, SourceChunkDraft, SourceWindow
 from . import repository
@@ -169,7 +170,7 @@ class DurableIngestRunner:
             if is_done:
                 logger.info("ingest_unit_reuse job_id=%s stage=%s unit=%s", job_id, STAGE_SOURCE_CHUNKS, unit_key)
                 continue
-            await self._run_unit(job_id, STAGE_SOURCE_CHUNKS, unit_key, lambda tp=text_piece: self._build_source_piece(raw_input_id, raw_text, user_id, tp, unit_key, directory_path))
+            await self._run_unit(job_id, STAGE_SOURCE_CHUNKS, unit_key, lambda tp=text_piece: self._build_source_piece(raw_input_id, raw_text, user_id, tp, unit_key, directory_path), user_id)
             current_chunks = await asyncio.to_thread(source_chunks.get_by_raw_input_id, raw_input_id)
             await asyncio.to_thread(repository.update_metadata, job_id, {"source_chunk_count": len(current_chunks)})
         chunks = await asyncio.to_thread(source_chunks.get_by_raw_input_id, raw_input_id)
@@ -199,7 +200,7 @@ class DurableIngestRunner:
                 await self._update_recall_counts(job_id, chunks, user_id)
                 logger.info("ingest_unit_reuse job_id=%s stage=%s unit=%s", job_id, STAGE_RECALL, unit_key)
                 continue
-            await self._run_unit(job_id, STAGE_RECALL, unit_key, lambda c=chunk: self._build_recall(raw_text, user_id, c))
+            await self._run_unit(job_id, STAGE_RECALL, unit_key, lambda c=chunk: self._build_recall(raw_text, user_id, c), user_id)
             await self._update_recall_counts(job_id, chunks, user_id)
 
     async def _update_recall_counts(self, job_id: str, chunks: list[SourceChunk], user_id: str) -> None:
@@ -246,6 +247,7 @@ class DurableIngestRunner:
                 STAGE_RECALL_VECTORS,
                 [(unit_key, key["id"], {}) for unit_key, key in missing],
                 lambda: asyncio.to_thread(recall_key_vectors.index, [key for _, key in missing]),
+                missing[0][1]["user_id"],
             )
 
     async def _source_vectors(self, job_id: str, chunks: list[SourceChunk]) -> None:
@@ -266,9 +268,10 @@ class DurableIngestRunner:
                 STAGE_SOURCE_VECTORS,
                 [(unit_key, chunk["id"], {}) for unit_key, chunk in missing],
                 lambda: asyncio.to_thread(source_chunk_vectors.index, [chunk for _, chunk in missing]),
+                missing[0][1]["user_id"],
             )
 
-    async def _run_unit(self, job_id: str, stage: str, unit_key: str, work) -> None:
+    async def _run_unit(self, job_id: str, stage: str, unit_key: str, work, user_id: str | None = None) -> None:
         """Run one unit and convert failures into durable retry state."""
         await asyncio.to_thread(repository.start_checkpoint, job_id, stage, unit_key)
         logger.info("ingest_unit_start job_id=%s stage=%s unit=%s", job_id, stage, unit_key)
@@ -279,14 +282,14 @@ class DurableIngestRunner:
             logger.info("ingest_unit_complete job_id=%s stage=%s unit=%s", job_id, stage, unit_key)
         except Exception as exc:
             await asyncio.to_thread(repository.fail_checkpoint, job_id, stage, unit_key, str(exc))
-            job = await asyncio.to_thread(repository.schedule_retry, job_id, stage, unit_key, str(exc))
+            job = await asyncio.to_thread(repository.schedule_retry, job_id, stage, unit_key, str(exc), _retry_backoff(user_id))
             logger.info(
                 "ingest_unit_retry job_id=%s stage=%s unit=%s status=%s attempt=%s error=%s",
                 job_id, stage, unit_key, job["status"], job["attempt_count"], str(exc),
             )
             raise
 
-    async def _run_batch_units(self, job_id: str, stage: str, units: list[tuple[str, str, dict[str, Any]]], work) -> None:
+    async def _run_batch_units(self, job_id: str, stage: str, units: list[tuple[str, str, dict[str, Any]]], work, user_id: str | None = None) -> None:
         """Run one batch while preserving per-unit checkpoints."""
         for unit_key, _, _ in units:
             await asyncio.to_thread(repository.start_checkpoint, job_id, stage, unit_key)
@@ -301,7 +304,7 @@ class DurableIngestRunner:
             for unit_key, _, _ in units:
                 await asyncio.to_thread(repository.fail_checkpoint, job_id, stage, unit_key, str(exc))
             retry_unit = units[0][0]
-            job = await asyncio.to_thread(repository.schedule_retry, job_id, stage, retry_unit, str(exc))
+            job = await asyncio.to_thread(repository.schedule_retry, job_id, stage, retry_unit, str(exc), _retry_backoff(user_id))
             logger.info(
                 "ingest_batch_retry job_id=%s stage=%s units=%s status=%s attempt=%s error=%s",
                 job_id, stage, len(units), job["status"], job["attempt_count"], str(exc),
@@ -312,6 +315,15 @@ class DurableIngestRunner:
 def _raw_input(raw_input_id: str) -> dict[str, Any] | None:
     from src.repositories import raw_inputs
     return raw_inputs.get(raw_input_id)
+
+
+def _retry_backoff(user_id: str | None) -> list[int] | None:
+    if not user_id:
+        return None
+    try:
+        return get_user_settings(user_id).ingest_retry_backoff_seconds
+    except NoActivePresetError:
+        return None
 
 
 def _source_piece_key(raw_input_id: str, text_piece: SourceWindow) -> str:

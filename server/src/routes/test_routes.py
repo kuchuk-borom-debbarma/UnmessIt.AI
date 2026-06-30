@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
+
+import pytest
+from fastapi import HTTPException
 
 from src.routes import advanced as advanced_route
 from src.routes import dev as dev_route
@@ -128,3 +132,15 @@ def test_advanced_hard_delete_uses_user_scoped_vectors(monkeypatch):
 
     assert response["status"] == "success"
     assert calls == [(["chunk-1"], "user-1")]
+
+
+def test_advanced_ingest_job_events_requires_auth(monkeypatch):
+    class FakeAuth:
+        def verify_token(self, token: str):
+            return None
+
+    request = SimpleNamespace(headers={}, is_disconnected=lambda: False)
+    monkeypatch.setattr(advanced_route, "get_auth_service", lambda: FakeAuth())
+
+    with pytest.raises(HTTPException):
+        asyncio.run(advanced_route.ingest_job_events(request))

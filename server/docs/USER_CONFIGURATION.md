@@ -12,7 +12,7 @@ Configuration for any given user request is resolved in the following sequence:
    The most recent configurations are cached in an `lru_cache` within the application memory to minimize database read overhead. This cache clears automatically when a preset is activated or modified.
 
 2. **Database (SQLite `user_config_presets` Table)**
-   If not cached, the application reads the currently active preset for the `user_id` from the SQLite database. Presets contain OpenAI text model names, embedding model names, API keys, optional base URLs, and chunk settings.
+   If not cached, the application reads the currently active preset for the `user_id` from the SQLite database. Presets contain OpenAI text model names, embedding model names, API keys, optional base URLs, chunk settings, rate limits, and ingest retry backoff seconds.
 
 3. **Application Defaults**
    If a user has no active preset, AI work raises `NoActivePresetError` and the API returns `428` with code `no_active_preset`. Provider secrets and model endpoints are never loaded from `.env`; users define those values in Settings.
@@ -22,6 +22,13 @@ Configuration for any given user request is resolved in the following sequence:
 Only the `openai` provider is supported. The `/configs` route validates both `llm_provider` and `embedding_provider` and rejects anything else.
 
 Optional base URLs remain available for endpoints that follow OpenAI-compatible request and response behavior. There is no Ollama/local-provider branch in active code.
+
+## Ingest Retry Backoff
+
+Each preset stores `ingest_retry_backoff_seconds` as a comma-separated list,
+for example `5,15,30,60,120`. Durable ingest uses this list when provider,
+indexing, or embedding work fails. Invalid entries are ignored, values over one
+hour are dropped, and an empty result falls back to the default list.
 
 ## Late-Binding Architecture (LangChain & Embeddings)
 Because configuration is dynamic, we do not initialize global AI text or embedding clients on application startup. Instead, we use a **late-binding** approach.

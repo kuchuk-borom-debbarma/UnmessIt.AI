@@ -23,6 +23,7 @@ type PresetDraft = {
   embedding_rate_limit_per_minute: number
   chunk_size: number
   chunk_overlap: number
+  ingest_retry_backoff_seconds: string
 }
 
 const defaultDraft: PresetDraft = {
@@ -42,6 +43,7 @@ const defaultDraft: PresetDraft = {
   embedding_rate_limit_per_minute: 0,
   chunk_size: 1000,
   chunk_overlap: 200,
+  ingest_retry_backoff_seconds: '5,15,30,60,120',
 }
 
 type Toast = { tone: 'success' | 'danger'; message: string }
@@ -136,6 +138,7 @@ export function SettingsView({ token }: { token: string }) {
       embedding_rate_limit_per_minute: preset.embedding_rate_limit_per_minute,
       chunk_size: preset.chunk_size,
       chunk_overlap: preset.chunk_overlap,
+      ingest_retry_backoff_seconds: preset.ingest_retry_backoff_seconds || defaultDraft.ingest_retry_backoff_seconds,
     })
     setEditingId(preset.id)
     setIsFormOpen(true)
@@ -294,6 +297,11 @@ export function SettingsView({ token }: { token: string }) {
                         </p>
                         <input type="number" className="premium-input bg-transparent" value={draft.chunk_overlap} onChange={e => setDraft({ ...draft, chunk_overlap: parseInt(e.target.value) || 200 })} placeholder="200" />
                       </div>
+                      <div>
+                        <label className="block text-xs font-bold mb-1 text-foreground/90">Retry Backoff (Seconds)</label>
+                        <p className="text-[11px] leading-relaxed text-muted-foreground mb-2.5">Comma-separated ingest retry delays after provider or indexing failures.</p>
+                        <input className="premium-input bg-transparent" value={draft.ingest_retry_backoff_seconds} onChange={e => setDraft({ ...draft, ingest_retry_backoff_seconds: e.target.value })} placeholder="5,15,30,60,120" />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -343,7 +351,7 @@ export function SettingsView({ token }: { token: string }) {
                 </div>
                 <div className="p-4 rounded-lg bg-input border border-border/50 sm:col-span-2">
                   <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Chunking</div>
-                  <div className="text-sm font-semibold text-foreground/90">{preset.chunk_size} chars &middot; {preset.chunk_overlap} overlap</div>
+                  <div className="text-sm font-semibold text-foreground/90">{preset.chunk_size} chars &middot; {preset.chunk_overlap} overlap &middot; retry {preset.ingest_retry_backoff_seconds || defaultDraft.ingest_retry_backoff_seconds}s</div>
                 </div>
               </div>
             </div>

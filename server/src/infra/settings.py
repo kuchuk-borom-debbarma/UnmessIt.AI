@@ -41,6 +41,23 @@ class Settings:
         
         self.chunk_size = int(preset.get("chunk_size", 1000))
         self.chunk_overlap = int(preset.get("chunk_overlap", 200))
+        self.ingest_retry_backoff_seconds = parse_retry_backoff_seconds(
+            preset.get("ingest_retry_backoff_seconds")
+        )
+
+
+def parse_retry_backoff_seconds(value: object) -> list[int]:
+    """Parse preset CSV retry delays, bounded enough to avoid typo foot-guns."""
+    text = str(value or "5,15,30,60,120")
+    seconds = []
+    for part in text.split(","):
+        try:
+            item = int(part.strip())
+        except ValueError:
+            continue
+        if 0 <= item <= 3600:
+            seconds.append(item)
+    return seconds[:10] or [5, 15, 30, 60, 120]
 
 
 def _docker_reachable_url(url: str | None) -> str | None:
