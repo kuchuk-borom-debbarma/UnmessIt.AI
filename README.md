@@ -16,6 +16,8 @@ Stop digging through folders to find what you wrote weeks ago. Just dump your no
 - **Always Up to Date**: Live, event-driven ingest means new notes are indexed as soon as you save them. No waiting for batch jobs to run.
 - **Flexible Organization**: Structure your knowledge your way. We don't force a new system—use unlimited nested directories and flexible tags to keep things organized.
 
+- **Tag Filtering**: Apply granular filtering to your AI searches using specific tags across your entire workspace.
+
 ## Minor Features
 
 - **AI Presets**: Configure distinct presets with custom LLMs, embedding models, and chunking strategies per workspace/project.
@@ -25,7 +27,6 @@ Stop digging through folders to find what you wrote weeks ago. Just dump your no
 
 ## Next Up
 
-- **Tag Filtering**: Apply granular filtering to your AI searches using specific tags across your entire workspace.
 - **Custom Knowledge Connections**: Teach the AI by manually linking notes, entities, or concepts together, overriding or extending the automated knowledge graph.
 
 ## Far Far in the Future
@@ -36,10 +37,14 @@ Stop digging through folders to find what you wrote weeks ago. Just dump your no
 
 ## Fast Start (Local Run)
 
-Docker is the easiest way to get started:
+The easiest way to run UnmessIt.AI is using our pre-built Docker images. You don't need to build anything from source!
 
 ```bash
-docker compose up --build
+# Download the production compose file
+curl -O https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/main/docker-compose.prod.yml
+
+# Start the application in the background
+docker compose -f docker-compose.prod.yml up -d
 ```
 
 Open your browser to:
@@ -58,13 +63,13 @@ http://localhost:2831
 
 *(Optional)* You can customize the server and web ports by setting the `SERVER_PORT` and `WEB_PORT` environment variables. They work out of the box and automatically configure CORS and API URLs:
 ```bash
-SERVER_PORT=8080 WEB_PORT=3000 docker compose up --build
+SERVER_PORT=8080 WEB_PORT=3000 docker compose -f docker-compose.prod.yml up -d
 ```
 *(If you changed `WEB_PORT`, go to `http://localhost:<WEB_PORT>` instead)*
 
 If you are deploying to a specific domain or need advanced networking configuration, you can also manually override `VITE_API_BASE_URL` and `CORS_ORIGINS` directly:
 ```bash
-CORS_ORIGINS="https://my-frontend.com" VITE_API_BASE_URL="https://api.my-backend.com" docker compose up --build
+CORS_ORIGINS="https://my-frontend.com" VITE_API_BASE_URL="https://api.my-backend.com" docker compose -f docker-compose.prod.yml up -d
 ```
 ## Manual Development
 
