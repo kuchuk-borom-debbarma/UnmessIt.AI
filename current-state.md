@@ -153,6 +153,7 @@ Development-only routes:
 - Add small evaluations for multi-note, broad-recall, and citation correctness.
 - Replace in-process jobs with a real queue/lease only when multi-process deployment needs it.
 - Add route contract tests for frontend-used endpoints.
+- **Conversation History**: Add chat history for multi-turn conversations.
 
 ## Far Far in the Future
 

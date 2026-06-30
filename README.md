@@ -28,6 +28,7 @@ Stop digging through folders to find what you wrote weeks ago. Just dump your no
 ## Next Up
 
 - **Custom Knowledge Connections**: Teach the AI by manually linking notes, entities, or concepts together, overriding or extending the automated knowledge graph.
+- **Conversation History**: Add chat history for multi-turn conversations.
 
 ## Far Far in the Future
 
