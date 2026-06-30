@@ -17,7 +17,8 @@ RUN uv sync --frozen --no-dev
 # Final slim runtime image
 FROM python:3.12-slim
 
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    UNMESSIT_DOCKER=1
 WORKDIR /app
 
 # Copy the built virtual environment from the builder

@@ -69,6 +69,10 @@ SERVER_PORT=8080 WEB_PORT=3000 docker compose -f docker-compose.prod.yml up -d
 ```
 *(If you changed `WEB_PORT`, go to `http://localhost:<WEB_PORT>` instead)*
 
+Docker publishes both the web app and API on `0.0.0.0`, so another device can use `http://<host-ip>:<WEB_PORT>`. The Docker web image proxies API calls to the server container, so remote browsers do not need `localhost:2317` baked into the frontend.
+
+If your AI preset points at a host-local OpenAI-compatible server such as LM Studio, Docker automatically rewrites loopback base URLs like `http://127.0.0.1:1234/v1` or `http://localhost:1234/v1` to `http://host.docker.internal:1234/v1` at runtime. See [Docker Networking](./server/docs/DOCKER_NETWORKING.md) for details.
+
 If you are deploying to a specific domain or need advanced networking configuration, you can also manually override `VITE_API_BASE_URL` and `CORS_ORIGINS` directly:
 ```bash
 CORS_ORIGINS="https://my-frontend.com" VITE_API_BASE_URL="https://api.my-backend.com" docker compose -f docker-compose.prod.yml up -d

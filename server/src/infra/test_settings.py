@@ -46,3 +46,23 @@ def test_ai_settings_use_user_preset_values(monkeypatch):
     assert settings.embedding_model == "preset-embedding-model"
     assert settings.embedding_base_url == "https://preset.example/v1"
     assert settings.embedding_api_key == "preset-embedding-key"
+
+
+def test_ai_settings_rewrite_loopback_base_urls_in_docker(monkeypatch):
+    monkeypatch.setenv("UNMESSIT_DOCKER", "1")
+    preset = {
+        "llm_base_url": "http://localhost:1234/v1",
+        "embedding_base_url": "http://127.0.0.1:1234/v1",
+    }
+
+    settings = Settings(preset)
+
+    assert settings.llm_base_url == "http://host.docker.internal:1234/v1"
+    assert settings.embedding_base_url == "http://host.docker.internal:1234/v1"
+
+
+def test_ai_settings_leave_external_base_urls_in_docker(monkeypatch):
+    monkeypatch.setenv("UNMESSIT_DOCKER", "1")
+    settings = Settings({"llm_base_url": "https://integrate.api.nvidia.com/v1"})
+
+    assert settings.llm_base_url == "https://integrate.api.nvidia.com/v1"

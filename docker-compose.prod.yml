@@ -2,19 +2,22 @@ services:
   server:
     image: ghcr.io/kuchuk-borom-debbarma/unmessitai-server:staging
     ports:
-      - "${SERVER_PORT:-2317}:2317"
+      - "0.0.0.0:${SERVER_PORT:-2317}:2317"
     environment:
       JWT_SECRET: ${JWT_SECRET:-change-me-before-sharing-use-32-plus-bytes}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:${WEB_PORT:-2831},http://127.0.0.1:${WEB_PORT:-2831}}
       ENABLE_DEV_ROUTES: ${ENABLE_DEV_ROUTES:-0}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      UNMESSIT_DOCKER: "1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - server_data:/app/data
 
   web:
     image: ghcr.io/kuchuk-borom-debbarma/unmessitai-web:staging
     ports:
-      - "${WEB_PORT:-2831}:80"
+      - "0.0.0.0:${WEB_PORT:-2831}:80"
     depends_on:
       - server
 

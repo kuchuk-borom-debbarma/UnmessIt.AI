@@ -1,4 +1,4 @@
-export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:2317'
+export const API_BASE = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:2317' : '')
 
 export type AuthResult = { status: 'success' | 'error'; token?: string; message?: string }
 export type Tag = { id: string; name: string }

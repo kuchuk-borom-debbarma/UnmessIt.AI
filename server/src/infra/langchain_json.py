@@ -100,6 +100,6 @@ def _repair_messages(content: str, error: str) -> list:
 
 def _json_response_format(base_url: str) -> dict[str, Any]:
     """Use the JSON mode shape supported by local/OpenAI-compatible hosts."""
-    if "127.0.0.1:1234" in base_url or "localhost:1234" in base_url:
+    if any(host in base_url for host in ("127.0.0.1:1234", "localhost:1234", "host.docker.internal:1234")):
         return {"type": "json_schema", "json_schema": {"name": "json_response", "schema": {"type": "object"}}}
     return {"type": "json_object"}
