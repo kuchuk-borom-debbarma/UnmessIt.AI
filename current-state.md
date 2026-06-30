@@ -21,9 +21,9 @@ The current implementation is OpenAI-standard only. Users configure OpenAI text 
 - Local username/password auth with JWT bearer tokens.
 - Per-user data isolation across notes, directories, tags, raw inputs, source chunks, recall keys, recall links, vectors, and presets.
 - Notes CRUD with directory structures, tag organization, pagination, and a soft/hard delete Trash system.
-- Materialized-path directories for efficient subtree queries and strict 100-nested depth limits.
+- Materialized-path directories for efficient subtree queries. Search leverages an O(1) Vector DB lineage optimization using injected parent boolean flags inside ChromaDB metadata.
 - Soft-delete vector synchronization (moving notes to trash masks raw inputs and evicts Chroma vectors; restoring re-indexes instantly).
-- Cross-Domain Directory Filtering for AI queries (restrict RAG search strictly to, or explicitly exclude, entire directory trees).
+- Cross-Domain Filtering: AI queries can be explicitly constrained by or excluded from specific directories and tag combinations (supporting ANY, ALL, and NOT logic) inside the vector store.
 - Event-driven note ingestion through the in-memory event bus.
 - Raw input storage as source truth.
 - Durable ingestion jobs with SQLite checkpoints, bounded retry/backoff, pause, and stop controls.
@@ -114,7 +114,7 @@ Development-only routes:
 - Backend: Python 3.12, FastAPI, Uvicorn, Pydantic, SQLite.
 - RAG: LangChain, LangGraph, Chroma, OpenAI chat/embedding APIs.
 - Frontend: React 19, Vite, React Router 7, Tailwind CSS 4, Framer Motion, lucide-react.
-- Deployment: Fully dockerized multi-stage builds (Server + Nginx).
+- Deployment: Fully dockerized multi-stage builds (Server + Nginx). Automated GitHub Actions workflow publishes images to GHCR for simple single-node deployments.
 - Testing: pytest, pytest-asyncio, TypeScript build, oxlint.
 
 ## What Is Good Now
@@ -144,8 +144,7 @@ Development-only routes:
 
 ## Likely Next Steps
 
-- **Durable Pub/Sub**: Implement durable pub/sub using idempotency and a transactional outbox pattern to guarantee event delivery between the Notes and RAG domains.
-- **Tag Filtering**: Granular control to filter AI searches by specific tags during querying.
+- **Durable Pub/Sub & Caching**: Implement durable pub/sub using a Transactional Outbox pattern in SQLite to guarantee event delivery between Notes and RAG domains. We plan to introduce a lightweight Redis instance to act simultaneously as a distributed cache and a durable message broker (via Redis Streams with consumer groups).
 - **Custom Knowledge Connections**: Give users the ability to manually teach the AI connections by wiring explicit recall links between concepts or notes.
 - Add explicit timeline ordering for timeline-style questions if real examples need it.
 - Add a rebuild-vector-index command for embedding model changes.

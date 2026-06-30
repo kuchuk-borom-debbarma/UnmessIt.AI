@@ -1,13 +1,21 @@
-This PR introduces the highly requested Cross-Domain Directory Filtering feature and synchronizes RAG vectors with the Trash system.
+## What was done
 
-## Changes Included
-- **Materialized-Path Directory Filtering**: AI searches can now be restricted to (or explicitly exclude) entire directory subtrees without expensive recursive database CTEs.
-- **Dynamic Retrieval Operators**: Cross-links SQLite domain hierarchy with ChromaDB `$in` and `$nin` metadata querying to enforce strict organizational scopes.
-- **RAG Soft Delete Sync**: Trash management is now fully synchronized. Moving a note to the trash emits a `note.soft_deleted` event that instantly evicts vector bounds from ChromaDB.
-- **Instant Restore**: Emitting `note.restored` instantly re-pushes existing `source_chunks` back into ChromaDB without queuing an LLM job.
-- **Cascading Move Support**: Moving notes automatically ripples through to patch ChromaDB metadata paths.
-- **UI Enhancements**: Added an interactive `DirectorySearchSelect` component in the Ask UI allowing users to granularly scope their query.
+This PR introduces comprehensive tag filtering to the RAG retrieval pipeline and fundamentally optimizes the directory filtering architecture for massive scale.
 
-## Testing
-- E2E tests have been authored and verified across deep directory structures (100+ nested limits), verifying semantic `$in` matching and async EventBus synchronization.
-- Frontend builds passing strict TypeScript rules.
+### 1. Tag Filtering (ANY / ALL Support)
+- **Backend API Updates:** The `/tags/search` endpoint is now paginated for performance.
+- **Frontend Integration:** Added a new `TagSearchSelect.tsx` component that allows users to filter the AI search context by tags. It supports both `ANY` and `ALL` logical operators.
+- **RAG Pipeline:** Plumbed `within_tags`, `excluding_tags`, and `within_tags_condition` through `AskView.tsx` -> `RAGService` -> `QueryState` -> `_search.py` -> `ChromaDB` / `SQLite` / `Recall`.
+
+### 2. O(1) Directory Lineage Search Optimization
+Previously, directory filtering required an expensive string prefix query in SQLite to resolve all nested child directories before vector search, which was hard-capped at 1000 paths and degraded linearly with depth.
+
+- **Index-time Lineage Materialization:** During ingestion, the background listener now splits the note's directory materialized path (`/A/B/C/`) and injects a boolean flag for **every parent in its lineage** directly into ChromaDB metadata (`dir_A: True`, `dir_B: True`, `dir_C: True`).
+- **O(1) Vector Filtering:** The SQLite path resolution has been entirely removed from the vector search path! We now leverage native ChromaDB `$or` and `$ne` boolean logic during vector retrieval, enabling lightning-fast subtree inclusion and exclusion regardless of depth or scale.
+- **Dynamic Re-indexing:** Updated the RAG event listener `_handle_note_moved` to automatically drop and re-index a note's source chunks in Chroma whenever it is moved, ensuring there are no orphaned or stale boolean lineage flags.
+
+### 3. Infinite Scroll Pagination
+- Updated both `DirectorySearchSelect.tsx` and `TagSearchSelect.tsx` to use `IntersectionObserver` for seamless infinite scrolling on massive tag and directory datasets.
+
+### Testing
+- Wrote an integration test script mocking Chroma chunks and metadata to rigorously verify the native tag operators (ANY/ALL) and the directory lineage boolean flags. All filters successfully execute in $O(1)$ directly inside the Vector DB.
