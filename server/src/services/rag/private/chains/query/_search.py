@@ -41,7 +41,7 @@ async def search_node(state: QueryState) -> dict[str, Any]:
     within_tags_condition = state.get("within_tags_condition", "any")
 
     async def _search_and_report(sq: str):
-        res = await _evidence_for(sq, user_id, extracted_subjects, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
+        res = await _evidence_for(sq, state.get("query", ""), user_id, extracted_subjects, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
         if reporter:
             await reporter.report(f"Gathered evidence for: '{sq}'")
         return res
@@ -78,7 +78,7 @@ def finalize_chunks(raw_chunks: list[dict[str, Any]], query: str) -> tuple[list[
 # ── internal helpers ─────────────────────────────────────────────────────────
 
 
-async def _evidence_for(sub_query: str, user_id: str, extracted_subjects: list[str], within_directories: list[str], excluding_directories: list[str], within_tags: list[str], excluding_tags: list[str], within_tags_condition: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+async def _evidence_for(sub_query: str, global_query: str, user_id: str, extracted_subjects: list[str], within_directories: list[str], excluding_directories: list[str], within_tags: list[str], excluding_tags: list[str], within_tags_condition: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Run all three search paths for one sub-query concurrently where possible."""
     # Vector search and lexical search can run in parallel; recall key lookup is cheap.
     (vector_chunks, vector_ids), lexical_chunks, recall_keys = await asyncio.gather(
@@ -87,10 +87,13 @@ async def _evidence_for(sub_query: str, user_id: str, extracted_subjects: list[s
         _recall_keys(sub_query, user_id, extracted_subjects),
     )
     linked_ids = await asyncio.to_thread(recall.linked_source_chunk_ids, [key["id"] for key in recall_keys], user_id, 12, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
-    linked_chunks = await asyncio.to_thread(source_chunks.get_by_ids, linked_ids, user_id)
-
     chunks, _ = _rank_chunks(sub_query, [*vector_chunks, *lexical_chunks, *linked_chunks])
-    chunks, _ = _pack_context(sub_query, chunks[:MAX_EVIDENCE_CHUNKS], budget=_CONTEXT_CHARS_PER_PASS)
+    
+    top_chunks = chunks[:MAX_EVIDENCE_CHUNKS]
+    baseline_lengths = {chunk["id"]: len(str(chunk.get("text", ""))) for chunk in top_chunks}
+    
+    combined_query = f"{global_query} {sub_query}".strip()
+    chunks, pack_trace = _pack_context(combined_query, top_chunks, budget=_CONTEXT_CHARS_PER_PASS)
 
     trace_part = {
         "sub_query": sub_query,
@@ -101,6 +104,7 @@ async def _evidence_for(sub_query: str, user_id: str, extracted_subjects: list[s
         "recall_keys": [{"id": key["id"], "name": key["name"]} for key in recall_keys],
         "linked_source_chunk_count": len(linked_chunks),
         "source_chunk_count": len(chunks),
+        "baseline_lengths": baseline_lengths,
     }
     return chunks, trace_part
 
@@ -238,6 +242,7 @@ def _pack_context(
         packed.append(next_chunk)
         if after_chars >= budget:
             break
+            
     return packed, {
         "context_chars_before_packing": before_chars,
         "context_chars_after_packing": after_chars,

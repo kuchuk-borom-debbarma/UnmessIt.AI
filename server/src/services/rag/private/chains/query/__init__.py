@@ -48,6 +48,16 @@ class QueryEvidenceChain:
         if reporter:
             await reporter.report("Deduplicating, re-ranking, and context-packing evidence...")
         chunks, finalize_trace = finalize_chunks(raw_chunks, query)
+        
+        # Calculate true baseline chars (unique across all subqueries before budget dropping)
+        global_unique_chunks = {}
+        for t in trace_parts:
+            global_unique_chunks.update(t.get("baseline_lengths", {}))
+            
+        true_before_chars = sum(global_unique_chunks.values())
+        if true_before_chars > 0:
+            finalize_trace["context_chars_before_packing"] = true_before_chars
+            finalize_trace["context_chars_saved"] = max(true_before_chars - finalize_trace.get("context_chars_after_packing", 0), 0)
 
         trace = {
             "mode": "source_chunks_with_recall_expansion",
