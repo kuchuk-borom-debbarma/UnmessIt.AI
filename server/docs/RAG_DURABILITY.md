@@ -6,7 +6,7 @@ The short version:
 
 ```txt
 POST /ingest/
--> RagService.ingest(...)
+-> submit_ingest_job(...)
 -> DurableIngest.submit(...)
 -> save or reuse raw input
 -> create or reuse ingest job
@@ -114,17 +114,27 @@ same unit safely without creating duplicate checkpoint rows.
 
 ## Submit Flow
 
-`POST /ingest/` calls `get_rag_service().ingest(...)` and immediately returns:
+`POST /ingest/` calls `submit_ingest_job(...)` and immediately returns:
 
 ```json
-{ "status": "processing", "job_id": "..." }
+{
+  "job_id": "...",
+  "status": "queued",
+  "raw_input_id": "...",
+  "source_chunks": [],
+  "analysis": {
+    "stage": "raw_input",
+    "attempt_count": 0,
+    "metadata": {}
+  }
+}
 ```
 
 The request does not wait for LLM calls or vector indexing.
 
-Inside `RagServiceImpl.ingest(...)`:
+Inside `submit_ingest_job(...)`:
 
-1. A job id is created if the route did not pass one.
+1. A job id is created if the caller did not pass one.
 2. `DurableIngest.submit(...)` is called.
 3. The returned job row is converted to the ingest response shape.
 
@@ -166,14 +176,14 @@ Each resumable job is scheduled once in the current process.
 
 `DurableScheduler` is intentionally small.
 
-It keeps an in-memory `_running` set guarded by a `threading.Lock`. That prevents
-two background threads in the same Python process from running the same job id
-at the same time.
+It keeps an in-memory `_running` set. That prevents two asyncio tasks in the same
+Python process from running the same job id at the same time.
 
-For each scheduled job it starts one daemon thread. The thread loops until the
-job becomes `complete`, becomes `failed`, disappears, or finishes all work.
+For each scheduled job it starts one background asyncio task. The task loops
+until the job becomes `complete`, `failed`, `aborted`, `paused`, disappears, or
+finishes all work.
 
-If a job is `waiting_retry`, the thread sleeps until `next_run_at` before trying
+If a job is `waiting_retry`, the task sleeps until `next_run_at` before trying
 again.
 
 This is local-process durability, not a distributed queue. If multiple server
@@ -407,6 +417,7 @@ Manual resume and pause are exposed through authenticated beta UI routes:
 ```txt
 POST /api/advanced/ingest_jobs/{job_id}/resume
 POST /api/advanced/ingest_jobs/{job_id}/pause
+POST /api/advanced/ingest_jobs/{job_id}/stop
 DELETE /api/advanced/ingest_jobs/{job_id}
 GET /api/advanced/ingest_jobs
 ```
@@ -416,6 +427,8 @@ Development-only mirrors also exist when `ENABLE_DEV_ROUTES=1`:
 ```txt
 GET /dev/ingest_jobs
 POST /dev/ingest_jobs/{job_id}/resume
+POST /dev/ingest_jobs/{job_id}/pause
+POST /dev/ingest_jobs/{job_id}/stop
 DELETE /dev/ingest_jobs/{job_id}
 ```
 
@@ -447,12 +460,16 @@ Authenticated advanced routes:
 
 - `GET /api/advanced/ingest_jobs`: list jobs for the current user.
 - `POST /api/advanced/ingest_jobs/{job_id}/resume`: manually resume a current-user job.
+- `POST /api/advanced/ingest_jobs/{job_id}/pause`: pause a current-user job.
+- `POST /api/advanced/ingest_jobs/{job_id}/stop`: abort a current-user job.
 - `DELETE /api/advanced/ingest_jobs/{job_id}`: delete a current-user job record.
 
 Dev routes, when enabled:
 
 - `GET /dev/ingest_jobs`: list jobs newest first.
 - `POST /dev/ingest_jobs/{job_id}/resume`: manually resume a job.
+- `POST /dev/ingest_jobs/{job_id}/pause`: pause a job.
+- `POST /dev/ingest_jobs/{job_id}/stop`: abort a job.
 - `DELETE /dev/ingest_jobs/{job_id}`: delete a job record.
 - `DELETE /dev/facts`: wipe active memory, vectors, jobs, and checkpoints.
 
@@ -528,7 +545,7 @@ The current system is deliberately simple.
 
 Known limits:
 
-- The scheduler is in-process and thread-based.
+- The scheduler is in-process and asyncio-task-based.
 - There is no distributed lock across multiple server processes.
 - There is no LLM response cache table yet.
 - There is no archive/dead-letter table yet; aborted jobs stay in `ingest_jobs`

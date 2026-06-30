@@ -70,7 +70,7 @@ Temporal fields are hints, not truth:
 
 If recall indexing fails, raw input, source chunks, and vector index should still remain usable.
 
-The implementation lives under `server/src/services/rag/`. Ingestion is triggered asynchronously via events emitted by the Notes service. The event listener submits a durable job through `RagService.ingest(...)`.
+The implementation lives under `server/src/services/rag/`. Ingestion is triggered asynchronously via events emitted by the Notes service. The event listener submits a durable job through `submit_ingest_job(...)`.
 
 For details on the event-driven decoupling between Notes and RAG, see `server/docs/NOTES_AND_INGESTION.md`.
 

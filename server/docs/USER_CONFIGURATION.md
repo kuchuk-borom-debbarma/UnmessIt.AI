@@ -45,6 +45,7 @@ Because API keys and configuration define context windows and embedding models, 
 The `/configs` router provides CRUD operations for managing these presets:
 * `GET /configs/presets` - List all presets for the authenticated user.
 * `POST /configs/presets` - Create a new preset.
+* `PUT /configs/presets/{preset_id}` - Update an existing preset while preserving saved API keys when omitted.
 * `GET /configs/active` - Fetch the currently active preset.
 * `PUT /configs/presets/{preset_id}/activate` - Set a preset as the active context for the user.
 * `DELETE /configs/presets/{preset_id}` - Delete a preset.

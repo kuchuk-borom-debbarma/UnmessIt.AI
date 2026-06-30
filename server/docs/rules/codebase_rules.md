@@ -7,7 +7,7 @@ Keep the server boring, small, and easy to read.
 - `src/routes/` is HTTP delivery only: validate input, call a getter/function, return a response.
 - `src/infra/` owns low-level technology setup: LangChain JSON, SQLite connection/init, Chroma, settings, logging.
 - `src/repositories/` owns plain SQLite/Chroma function modules. Do not add repository classes unless state is unavoidable.
-- `src/services/rag/` owns the product flow: public `RagService`, `get_rag_service()`, private chains, and private durability.
+- `src/services/rag/` owns the product flow: public retrieval service, private chains, durable ingestion pipeline, and job controls.
 
 ## 2. No DI Container
 - Do not use `kink`, `di[...]`, or a composition root.
@@ -17,7 +17,7 @@ Keep the server boring, small, and easy to read.
 
 ## 3. RAG Service
 - `rag_service.py` exposes `RagService` and `get_rag_service()`.
-- `private/rag_service_impl.py` delegates ingestion to `private/durability/`; durability owns the LangGraph ingest workflow, jobs, checkpoints, retry, and resume.
+- `private/pipeline/ingest.py` delegates ingestion to `private/durability/`; durability owns the LangGraph ingest workflow, jobs, checkpoints, retry, pause, stop, and resume.
 - Recall indexing may use a nested LangGraph subgraph for candidate/draft/normalize/retry visibility; keep storage and checkpoint behavior in durability/repositories.
 - Chains expose `run(...)`.
 - If a chain becomes complex, put it in a small directory with local helpers.
