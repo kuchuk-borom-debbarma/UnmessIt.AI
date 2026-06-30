@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.infra.events import get_event_bus
-from src.repositories import notes, tags
+from src.repositories import notes, tags, directories
 
 
 class NotesService:
@@ -55,6 +55,24 @@ class NotesService:
                 "user_id": user_id
             })
         return success
+
+    async def hard_delete_note(self, note_id: str, user_id: str) -> bool:
+        """Permanently delete a note and trigger background cleanup."""
+        success = notes.hard_delete(note_id, user_id)
+        if success:
+            self.event_bus.publish("note.hard_deleted", {
+                "note_id": note_id,
+                "user_id": user_id
+            })
+        return success
+
+    async def delete_directory(self, dir_id: str, user_id: str) -> bool:
+        """Permanently delete a directory and all notes inside it."""
+        notes_in_dir = directories.get_notes_in_subtree(dir_id, user_id)
+        for note in notes_in_dir:
+            await self.hard_delete_note(note["id"], user_id)
+            
+        return directories.delete(dir_id, user_id)
 
 
 _instance = None

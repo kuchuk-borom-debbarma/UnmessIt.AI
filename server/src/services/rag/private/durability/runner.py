@@ -144,7 +144,7 @@ class DurableIngestRunner:
             logger.info("ingest_stage_reuse job_id=%s stage=%s count=%s", job_id, STAGE_SOURCE_CHUNKS, len(existing))
             return existing
 
-        for text_piece in self.source_windows.run(raw_text):
+        for text_piece in self.source_windows.run(raw_text, user_id):
             unit_key = _source_piece_key(raw_input_id, text_piece)
             is_done = await asyncio.to_thread(repository.checkpoint_complete, job_id, STAGE_SOURCE_CHUNKS, unit_key)
             if is_done:

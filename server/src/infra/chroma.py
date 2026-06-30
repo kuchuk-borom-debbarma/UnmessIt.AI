@@ -13,13 +13,21 @@ from src.infra.sqlite import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
+_client = None
+
+def _get_client():
+    global _client
+    if _client is None:
+        _client = chromadb.PersistentClient(path=str(DATA_DIR / "chroma_db"))
+    return _client
+
 
 @lru_cache(maxsize=100)
 def _collection(user_id: str):
     """Create or reuse the persistent Chroma collection for a specific user."""
     settings = get_user_settings(user_id)
     embedding_function = _embedding_function(user_id)
-    client = chromadb.PersistentClient(path=str(DATA_DIR / "chroma_db"))
+    client = _get_client()
     collection_name = f"statements_{user_id}"
     try:
         return client.get_or_create_collection(collection_name, embedding_function=embedding_function)
@@ -79,7 +87,7 @@ def search(query: str, user_id: str, top_k: int = 8, where: dict[str, Any] | Non
 
 def reset(user_id: str) -> None:
     """Drop the vector collection and clear the cached handle for a user."""
-    client = chromadb.PersistentClient(path=str(DATA_DIR / "chroma_db"))
+    client = _get_client()
     collection_name = f"statements_{user_id}"
     try:
         client.delete_collection(collection_name)
@@ -92,14 +100,9 @@ def reset(user_id: str) -> None:
 def _embedding_function(user_id: str):
     """Build the configured embedding function for Chroma."""
     settings = get_user_settings(user_id)
-    if settings.embedding_provider == "ollama":
-        fn = embedding_functions.OllamaEmbeddingFunction(
-            url=settings.embedding_base_url or "http://localhost:11434/api/embeddings",
-            model_name=settings.embedding_model,
-        )
-    elif settings.embedding_provider == "openai":
+    if settings.embedding_provider == "openai":
         fn = embedding_functions.OpenAIEmbeddingFunction(
-            api_key=settings.embedding_api_key,
+            api_key=settings.embedding_api_key or "dummy-key",
             api_base=settings.embedding_base_url or "https://api.openai.com/v1",
             model_name=settings.embedding_model,
         )

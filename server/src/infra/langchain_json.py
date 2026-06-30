@@ -72,26 +72,17 @@ def get_json_client() -> JsonLLMClient:
 def _get_chat_llm(user_id: str):
     """Create the provider-specific LangChain chat model lazily, cached per user."""
     settings = get_user_settings(user_id)
-    if settings.llm_provider == "ollama":
-        from langchain_ollama import ChatOllama
+    
+    from langchain_openai import ChatOpenAI
 
-        llm = ChatOllama(
-            model=settings.llm_model,
-            base_url=settings.llm_base_url or "http://127.0.0.1:11434",
-            temperature=settings.llm_temperature,
-            format="json",
-        )
-    else:
-        from langchain_openai import ChatOpenAI
-
-        llm = ChatOpenAI(
-            model=settings.llm_model,
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key or "dummy-key",
-            temperature=settings.llm_temperature,
-            max_tokens=settings.llm_max_tokens,
-            model_kwargs={"response_format": _json_response_format(settings.llm_base_url or "")},
-        )
+    llm = ChatOpenAI(
+        model=settings.llm_model,
+        base_url=settings.llm_base_url,
+        api_key=settings.llm_api_key or "dummy-key",
+        temperature=settings.llm_temperature,
+        max_tokens=settings.llm_max_tokens,
+        model_kwargs={"response_format": _json_response_format(settings.llm_base_url or "")},
+    )
 
     if settings.llm_rate_limit_per_minute > 0:
         # get_limiter returns a singleton so ingest and retrieval share one token bucket.

@@ -33,9 +33,21 @@ class RagServiceImpl:
         """Resume one durable job from the dev route."""
         return await get_durable_ingest().resume_job(job_id)
 
-    def list_ingest_jobs(self, user_id: str | None = None) -> list[dict]:
+    def list_ingest_jobs(self, user_id: str | None = None, page: int = 1, limit: int = 20) -> dict[str, Any]:
         """List durable jobs for the dev route (sync: read-only, cheap)."""
-        return get_durable_ingest().list_jobs(user_id)
+        return get_durable_ingest().list_jobs(user_id, page, limit)
+
+    def pause_ingest_job(self, job_id: str) -> dict | None:
+        """Pause one durable job."""
+        from src.services.rag.private.durability.repository import pause, get
+        pause(job_id)
+        return get(job_id)
+
+    def stop_ingest_job(self, job_id: str) -> dict | None:
+        """Stop/Abort one durable job."""
+        from src.services.rag.private.durability.repository import abort, get
+        abort(job_id, error="Stopped by user")
+        return get(job_id)
 
     def delete_ingest_job(self, job_id: str) -> bool:
         """Delete one durable job."""

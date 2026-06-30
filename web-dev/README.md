@@ -1,23 +1,25 @@
 # UnmessIt.AI Web Dev
 
-React/Vite development frontend for the UnmessIt.AI memory app.
+Legacy React/Vite development UI kept for reference.
 
-## Screens
+The current product frontend lives in `web/`. Use this directory only when you need the older dev-only screens that talk directly to local inspection routes.
 
-- **Ingest Journal** posts text to `POST /ingest/` and shows the queued durable job id.
-- **Memory Explorer** reads `/dev/seai`, `/dev/recall`, and `/dev/ingest_jobs` to inspect saved source chunks, recall links, and job state.
-- **Ask AI** posts to `POST /api/retrieval/query` and displays the answer, citations, full source chunks, and retrieval trace.
-- **Database** calls `DELETE /dev/facts` to wipe local memory, durability rows, lookup indexes, and vectors.
+## Old Screens
+
+- **Ingest Journal** posts text to `POST /ingest/`.
+- **Memory Explorer** reads `/dev/seai`, `/dev/recall`, and `/dev/ingest_jobs`.
+- **Ask AI** posts to `POST /api/retrieval/query`.
+- **Database** calls `DELETE /dev/facts`.
 
 ## Backend Assumption
 
-The UI currently points at:
+This UI points at:
 
 ```txt
 http://localhost:8000
 ```
 
-Run the FastAPI server before using the UI.
+It requires `ENABLE_DEV_ROUTES=1` for the `/dev/*` screens.
 
 ## Commands
 

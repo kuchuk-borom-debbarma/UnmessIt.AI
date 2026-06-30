@@ -47,7 +47,7 @@ def get_by_ids(chunk_ids: list[str], user_id: str) -> list[dict[str, Any]]:
     placeholders = ",".join(["?"] * len(ids))
     rows = get_connection().execute(
         f"""
-        SELECT sc.id, sc.raw_input_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at
+        SELECT sc.id, sc.raw_input_id, ri.job_id as note_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at
         FROM source_chunks sc
         JOIN raw_inputs ri ON ri.id = sc.raw_input_id
         WHERE sc.id IN ({placeholders}) AND sc.user_id = ? AND ri.deleted_at IS NULL
@@ -62,7 +62,7 @@ def get_by_raw_input_id(raw_input_id: str) -> list[dict[str, Any]]:
     """Load all chunks already saved for one raw input."""
     rows = get_connection().execute(
         """
-        SELECT sc.id, sc.raw_input_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at
+        SELECT sc.id, sc.raw_input_id, ri.job_id as note_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at
         FROM source_chunks sc
         JOIN raw_inputs ri ON ri.id = sc.raw_input_id
         WHERE sc.raw_input_id = ? AND ri.deleted_at IS NULL
@@ -91,7 +91,7 @@ def search(query: str, user_id: str, limit: int = 8) -> list[dict[str, Any]]:
         params.extend([f"%{term}%", f"%{term}%"])
     rows = get_connection().execute(
         f"""
-        SELECT sc.id, sc.raw_input_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at
+        SELECT sc.id, sc.raw_input_id, ri.job_id as note_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at
         FROM source_chunks sc
         JOIN raw_inputs ri ON ri.id = sc.raw_input_id
         WHERE ({where}) AND sc.user_id = ? AND ri.deleted_at IS NULL
@@ -141,6 +141,63 @@ def list_with_raw_inputs(user_id: str | None = None) -> dict[str, Any]:
     for raw_input in raw_inputs:
         raw_input["source_chunks"] = chunks_by_raw.get(raw_input["id"], [])
     return {"total_raw_inputs": len(raw_inputs), "total_source_chunks": len(chunks), "data": raw_inputs}
+
+
+def get_paginated_for_note(note_id: str, user_id: str, page: int = 1, limit: int = 10) -> dict[str, Any]:
+    """Load paginated chunks for a specific note along with their recall links."""
+    conn = get_connection()
+    offset = max(0, (page - 1) * limit)
+
+    count_row = conn.execute(
+        """
+        SELECT COUNT(*) as c
+        FROM source_chunks sc
+        JOIN raw_inputs ri ON ri.id = sc.raw_input_id
+        WHERE ri.job_id = ? AND sc.user_id = ? AND ri.deleted_at IS NULL
+        """,
+        (note_id, user_id)
+    ).fetchone()
+    total = count_row["c"] if count_row else 0
+
+    chunk_rows = conn.execute(
+        """
+        SELECT sc.id, sc.raw_input_id, ri.job_id as note_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at
+        FROM source_chunks sc
+        JOIN raw_inputs ri ON ri.id = sc.raw_input_id
+        WHERE ri.job_id = ? AND sc.user_id = ? AND ri.deleted_at IS NULL
+        ORDER BY sc.created_at ASC
+        LIMIT ? OFFSET ?
+        """,
+        (note_id, user_id, limit, offset)
+    ).fetchall()
+
+    chunks = [_from_row(row) for row in chunk_rows]
+    if not chunks:
+        return {"total": total, "page": page, "limit": limit, "chunks": []}
+
+    chunk_ids = [c["id"] for c in chunks]
+    placeholders = ",".join(["?"] * len(chunk_ids))
+
+    for c in chunks:
+        c["recall_links"] = []
+
+    link_rows = conn.execute(
+        f"""
+        SELECT l.id, l.recall_key_id, l.source_chunk_id, l.relation, l.relation_label, l.confidence, l.reason, l.event_time, l.time_label,
+               k.name, k.kind, k.kind_label
+        FROM recall_links l
+        JOIN recall_keys k ON k.id = l.recall_key_id
+        WHERE l.source_chunk_id IN ({placeholders}) AND l.user_id = ?
+        ORDER BY l.created_at DESC
+        """,
+        [*chunk_ids, user_id]
+    ).fetchall()
+
+    chunk_map = {c["id"]: c for c in chunks}
+    for row in link_rows:
+        chunk_map[row["source_chunk_id"]]["recall_links"].append(dict(row))
+
+    return {"total": total, "page": page, "limit": limit, "chunks": chunks}
 
 
 def _from_row(row) -> dict[str, Any]:

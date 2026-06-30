@@ -25,8 +25,8 @@ Context engineering: instead of sending whole chunk text to the answer model, ea
 - Source chunks are the only citable evidence for semantic facts.
 - Recall keys and recall links are navigation hints, not factual authority.
 - The semantic search pipeline caps evidence before returning it to the agent (`MAX_EVIDENCE_CHUNKS = 12` after merge).
-- The API returns full source chunks, directory metadata, and note metadata so the UI can render rich citations and links.
-- If semantic search generation fails or yields nothing, the agent can fall back to directly reading a note if it knows the ID.
+- The API returns full source chunks, directory metadata, and note metadata fields so the UI can render rich citations and links.
+- If search finds no source chunks, the answer is an explicit "no relevant source chunks" response. The current retrieval path does not run a tool-calling note-browsing agent.
 
 ## Response Shape
 
@@ -71,5 +71,5 @@ Currently, structural note/directory APIs and semantic retrieval are isolated. T
 
 To support these "smart" cross-domain questions in the future:
 1. **Metadata-Aware Vectors:** Inject `directory_id` and tags into ChromaDB vectors during ingestion. This will allow the agent to issue metadata-filtered semantic searches (e.g., `where={"directory_id": "uuid"}`).
-2. **Contextual Chunks:** Ensure that `search_knowledge_base` returns the parent `note_id` and `directory_id` alongside the chunk text so the agent can trace text back to its location.
-3. **Text-to-SQL Tool:** Provide a read-only SQL tool so the agent can execute complex aggregations (e.g., *"Count notes by directory where..."*) directly against the SQLite database.
+2. **Contextual Chunks:** Return the parent `note_id` and `directory_id` alongside chunk text so the answer layer can trace text back to its location.
+3. **Optional SQL/Tool Layer:** Add a read-only SQL/tool layer only if real questions need cross-domain aggregation such as *"Count notes by directory where..."*.

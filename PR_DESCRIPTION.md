@@ -1,39 +1,43 @@
 # Pull Request Description
 
-**Branch:** `feature/auth`
-**Target:** `staging`
-
 ## Overview
-This PR introduces a massive architectural upgrade to the system, transforming a raw single-user RAG script into a multi-tenant, event-driven, agentic note-taking backend. It implements full user authentication and data isolation, extracts a dedicated user-facing Notes/Organization bounded context, completely decouples RAG ingestion via an event bus, and upgrades the query pipeline into a dynamic LangGraph ReAct agent.
+
+This major update transforms UnmessIt.AI into a robust, multi-tenant, event-driven RAG application with a completely overhauled React frontend and fully dockerized deployment. The system now enforces strict per-user data isolation across all domains and introduces advanced retrieval tracing, context engineering, and comprehensive note management capabilities.
 
 ## Major Changes
 
-### 1. Multi-Tenant Auth & Strict Data Isolation
-- **User IDs Everywhere:** Added `user_id` to all core tables (`raw_inputs`, `source_chunks`, `recall_keys`, `recall_links`, etc.) in `schema.sql`.
-- **Repository Enforcement:** Every single repository and RAG pipeline method now explicitly requires and filters by `user_id`, guaranteeing cross-tenant data isolation.
-- **Auth State Machine:** Unified the authentication service state machine and decoupled notifications. Migrated old data to a default user automatically.
-- **Route Protection:** FastApi routes are now protected via JWT authentication (`Depends(get_current_user_id)`).
+### 1. Multi-Tenancy & Unified Auth
+- Enforced strict `user_id` multi-tenancy across all core tables (notes, directories, tags, vectors, recall keys).
+- Unified authentication state machine with local auth and decoupled notification interfaces.
+- Included an automated migration script to assign existing data to a default user.
 
-### 2. New "Notes" Bounded Context & Organization
-- **Dedicated Service:** Replaced the raw RAG `POST /ingest` endpoint with a proper `NotesService` for user-facing CRUD operations on notes, tags, and directories.
-- **Materialized Path Directories:** Implemented a hierarchical folder structure using the Materialized Path pattern (`/parent-uuid/child-uuid/`), allowing extremely fast sub-tree SQL lookups without recursive queries.
-- **Tags Integration:** Added robust Tag management and `note_tags` associations.
+### 2. Event-Driven Ingestion & Note Management
+- Extracted Notes into a dedicated service with an in-memory event bus that decouples note operations from RAG ingestion.
+- Implemented comprehensive Folder CRUD, Note Pagination, and a Soft/Hard Delete Trash system.
+- Added advanced Job Controls: users can now pause, stop, resume, and track detailed progress of background ingestion jobs.
+- Display job status directly on note cards and jobs lists.
 
-### 3. Event-Driven Async Ingestion
-- **Domain Decoupling:** The RAG backend is completely decoupled from the Notes API. 
-- **EventBus Architecture:** Creating or updating a note instantly returns success to the user and fires a `note.created` event via an internal `EventBus`. 
-- **Background Processing:** A dedicated `RagListener` catches these events and quietly handles the heavy LLM summarization, chunking, and vector embedding asynchronously as a background task.
+### 3. Advanced Retrieval & Context Engineering
+- Replaced global memory with a dedicated, paginated Note Insights page (Recall Keys and Links).
+- Introduced Context Engineering in the Ask View, providing transparency on token optimization and reduction metrics.
+- Added an expandable Retrieval Analysis Trace in the Ask View, allowing users to see exactly how their query was broken down and searched.
+- Optimized vector persistence by making the ChromaDB client a global singleton, preventing SQLite database locking issues.
+- Fixed citation links to accurately point to specific `note_id`s.
 
-### 4. Agentic Query Pipeline (Tool-Calling ReAct Agent)
-- **Agent Orchestration:** Upgraded the static retrieval chain to a dynamic LangGraph ReAct tool-calling agent (`QueryAgentChain`).
-- **New Tools:** The LLM now has explicit tools to browse directories (`list_directories`), list note metadata (`list_notes_in_directory`), read full note content (`read_note`), and run semantic RAG pipelines (`search_knowledge_base`).
-- **Structured Outputs via Exceptions:** Used a `StopAgentException` inside a `submit_final_answer` tool to instantly short-circuit the LangGraph loop. This cleanly returns a heavily structured payload (directories, notes, citations, and markdown answers) directly to the UI without error-prone LLM string parsing.
+### 4. UI/UX Rewrite & Polish
+- Completely redesigned the Frontend using Vite, React, Tailwind CSS 4, and Framer Motion.
+- Brand new public Landing Page with animated geometric showcases and user-centric features.
+- Redesigned Ask View with modern animations, preserving query state across tab navigation.
+- Added debounced loading spinners to prevent tab flickering and UI jumps.
+- Configurable settings now support edit functionality and specify rate limits.
 
-### 5. Documentation & Developer Experience
-- **Architecture Docs:** Created `server/docs/NOTES_AND_INGESTION.md` and thoroughly updated `SEAI_RETRIEVAL_FLOW.md` and `SEAI_INDEXING_FLOW.md` to reflect the agentic, event-driven architecture.
-- **Future Planning:** Documented the blueprint for "Smart Cross-Domain Queries" (intersecting semantic search with structural metadata via SQL tools and vector filtering) directly in the retrieval docs.
+### 5. Deployment & Performance
+- Introduced full dockerization with multi-stage builds for the backend server and Nginx for the frontend.
+- Added necessary DB indexes to optimize performance for multi-tenant data access.
+- Implemented `lru_cache` for user settings to speed up frequent lookups, clearing on preset updates.
 
 ## Verification
-- Fully tested in the staging environment.
-- All 23 Pytest unit, integration, and architecture tests pass flawlessly.
-- Verified the local SQLite database migrations and materialized path directory tree lookups operate at expected speeds.
+
+- `cd web && npm run build`
+- `cd web && npm run lint`
+- `cd server && uv run pytest src`

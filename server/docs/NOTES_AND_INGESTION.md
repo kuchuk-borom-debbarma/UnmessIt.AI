@@ -9,6 +9,7 @@ This is the user-facing organizational layer. It is responsible for:
 - Storing the exact text content of what the user wrote (`notes` table).
 - Categorizing notes flexibly (`tags` and `note_tags` tables).
 - Organizing notes hierarchically using a Materialized Path pattern for fast subtree queries (`directories` table).
+- Managing note lifecycles with a Soft/Hard Delete Trash system.
 
 The Notes Service focuses strictly on CRUD operations and organization. It does not perform any LLM calls, chunking, or embedding.
 
@@ -22,7 +23,7 @@ This is the background AI processing layer. It is responsible for:
 
 To keep the Notes API responses fast and the bounded contexts decoupled, the two domains communicate via an asynchronous in-memory `EventBus`.
 
-1. **User Action**: The client sends a request to `POST /notes` with text and optional tags/directory.
+1. **User Action**: The client sends a request to `POST /notes/` with text and optional tags/directory.
 2. **Persistence**: The `NotesService` writes the data to the SQLite `notes` and `note_tags` tables.
 3. **Event Emitted**: The `NotesService` publishes a `note.created` event to the `EventBus`, carrying the `note_id`, `text`, and `user_id`.
 4. **Immediate Response**: The API responds with `200 OK` and the `note_id`.
@@ -43,6 +44,15 @@ SELECT * FROM directories WHERE path LIKE '/parent-uuid/%'
 ```
 This is heavily optimized by the `idx_directories_path` index.
 
-## 4. Updates
+## 4. Trash System (Soft / Hard Delete)
+
+To allow users to safely remove notes without immediate catastrophic loss, the Notes Service implements a Trash system:
+
+1. **Soft Delete (`DELETE /notes/{id}`)**: Marks the note with a `deleted_at` timestamp. 
+2. **Event Cascade**: Emits a `note.deleted` event. The RAG listener catches this and synchronously removes the associated source chunks and recall key vectors from ChromaDB to ensure isolated search contexts, while leaving the durable records in SQLite alone.
+3. **Restore (`POST /notes/{id}/restore`)**: Clears the `deleted_at` flag. Emits a `note.restored` event which prompts the RAG layer to re-index vectors.
+4. **Hard Delete (`DELETE /notes/{id}/hard`)**: Permanently destroys the note from the SQLite database. Emits a `note.hard_deleted` event to cascade the permanent deletion of raw inputs, source chunks, and vectors.
+
+## 5. Updates
 
 When a note is updated (`PUT /notes/{id}`), a `note.updated` event is emitted. The RAG listener catches this and submits the new text using the same `note_id` as the `job_id`. If the text changed, stale raw inputs, source chunks, vectors, checkpoints, and job rows for that note are removed before the new durable job is queued.

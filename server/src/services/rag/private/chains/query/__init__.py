@@ -145,6 +145,7 @@ def _public_chunk(chunk: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": chunk["id"],
         "raw_input_id": chunk["raw_input_id"],
+        "note_id": chunk.get("note_id") or chunk.get("raw_input_id"),
         "summary": chunk.get("summary", ""),
         "text": chunk.get("text", ""),
         "spans": chunk.get("spans", []),

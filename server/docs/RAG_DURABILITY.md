@@ -90,6 +90,7 @@ Statuses:
 - `queued`: ready to run.
 - `running`: currently being worked.
 - `waiting_retry`: failed, but retry is scheduled.
+- `paused`: active job was manually paused and will wait for resume.
 - `complete`: finished successfully.
 - `failed`: retry cap reached; manual resume is required.
 - `aborted`: terminal corrupt-job state, used when required source truth is missing.
@@ -157,6 +158,7 @@ Resumable jobs are:
 - `running`
 - `waiting_retry` with no `next_run_at`
 - `waiting_retry` where `next_run_at` is due
+- *Note: `paused` jobs are intentionally skipped on startup.*
 
 Each resumable job is scheduled once in the current process.
 
@@ -400,13 +402,24 @@ against the currently failing unit, not permanently against the whole job.
 
 ## Manual Resume
 
-Manual resume is exposed through:
+Manual resume and pause are exposed through authenticated beta UI routes:
 
 ```txt
-POST /dev/ingest_jobs/{job_id}/resume
+POST /api/advanced/ingest_jobs/{job_id}/resume
+POST /api/advanced/ingest_jobs/{job_id}/pause
+DELETE /api/advanced/ingest_jobs/{job_id}
+GET /api/advanced/ingest_jobs
 ```
 
-It calls:
+Development-only mirrors also exist when `ENABLE_DEV_ROUTES=1`:
+
+```txt
+GET /dev/ingest_jobs
+POST /dev/ingest_jobs/{job_id}/resume
+DELETE /dev/ingest_jobs/{job_id}
+```
+
+Resume calls:
 
 ```txt
 RagServiceImpl.resume_ingest_job(...)
@@ -430,10 +443,17 @@ rescheduling it, because the missing source text cannot be recreated safely.
 
 ## Dev Visibility
 
-Dev routes:
+Authenticated advanced routes:
+
+- `GET /api/advanced/ingest_jobs`: list jobs for the current user.
+- `POST /api/advanced/ingest_jobs/{job_id}/resume`: manually resume a current-user job.
+- `DELETE /api/advanced/ingest_jobs/{job_id}`: delete a current-user job record.
+
+Dev routes, when enabled:
 
 - `GET /dev/ingest_jobs`: list jobs newest first.
 - `POST /dev/ingest_jobs/{job_id}/resume`: manually resume a job.
+- `DELETE /dev/ingest_jobs/{job_id}`: delete a job record.
 - `DELETE /dev/facts`: wipe active memory, vectors, jobs, and checkpoints.
 
 The wipe route clears durability rows, raw inputs, source chunks, recall keys,
@@ -518,8 +538,9 @@ Known limits:
 - Chroma orphan cleanup for corrupt jobs is deferred to a future rebuild/reset
   index command.
 - Recall returning zero links is treated as retryable failure.
-- Retrieval is intentionally simple and uses durable source chunks with one-hop
-  recall expansion. It is not a planner, reranker, or graph traversal engine.
+- Retrieval uses a small LangGraph flow for query breakdown and parallel search,
+  then deterministic merge, dedupe, rerank, and context packing. It is not a
+  full planner or graph traversal engine.
 
 These limits are acceptable for the current development setup. A production
 multi-process deployment would need a real job lease or queue before running

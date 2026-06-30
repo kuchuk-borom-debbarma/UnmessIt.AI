@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+from typing import Any
 
 from src.repositories import raw_inputs, source_chunk_vectors, source_chunks
 from . import repository
@@ -51,9 +52,9 @@ class DurableIngest:
         """Manually resume a job from the dev route."""
         return await self.scheduler.resume_job(job_id)
 
-    def list_jobs(self, user_id: str | None = None) -> list[dict]:
+    def list_jobs(self, user_id: str | None = None, page: int = 1, limit: int = 20) -> dict[str, Any]:
         """Return durable jobs for dev inspection (sync: read-only, cheap)."""
-        return repository.list_jobs(user_id)
+        return repository.list_jobs(user_id, page, limit)
 
     def delete_job(self, job_id: str) -> bool:
         """Delete one durable job."""

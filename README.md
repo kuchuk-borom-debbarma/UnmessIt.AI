@@ -1,95 +1,59 @@
+<div align="center">
+  <img src="./resources/logo.svg" alt="UnmessIt.AI Logo" width="120" />
+</div>
+
 # UnmessIt.AI
 
-UnmessIt.AI turns your notes into an AI-searchable knowledge base.
+UnmessIt.AI is your Personal RAG AI. It turns your messy, scattered notes into a reliable knowledge engine. 
 
-Save messy thoughts, research, decisions, logs, plans, or project notes. The app indexes them, connects related ideas, and lets you ask questions with answers grounded in the sources you saved.
+Stop digging through folders to find what you wrote weeks ago. Just dump your notes, organize them how you like, and ask natural-language questions. UnmessIt uses Retrieval-Augmented Generation (RAG) to instantly synthesize exact answers directly from your notes, fully backed by citations you can trust.
 
-## What You Can Do
+## Major Features
 
-- Write and organize notes.
-- Put notes into directories and tags.
-- Configure your AI model from the app.
-- Ask AI questions about your saved knowledge.
-- See citations and source chunks behind each answer.
-- Check indexing status so you know when new notes are ready.
-- Inspect the memory the app built from your notes.
+- **Multi-Hop Reasoning**: Ask complex questions. The engine traverses your cross-linked notes to piece together facts scattered across multiple documents.
+- **Verifiable Truth**: No AI hallucinations. Every answer includes the exact source chunks and a full retrieval trace so you know exactly where the information came from.
+- **Always Up to Date**: Live, event-driven ingest means new notes are indexed as soon as you save them. No waiting for batch jobs to run.
+- **Flexible Organization**: Structure your knowledge your way. We don't force a new system—use unlimited nested directories and flexible tags to keep things organized.
 
-## Fast Start
+## Minor Features
 
-The easiest way to run UnmessIt.AI is Docker.
+- **AI Presets**: Configure distinct presets with custom LLMs, embedding models, and chunking strategies per workspace/project.
+- **Transparent Indexing**: Track the indexing progress of every note in real-time. See exactly when jobs are queued, running, or failed.
+- **Durable Execution**: Long-running indexing jobs are checkpointed in SQLite, so they can gracefully pause and resume if an API provider times out.
+- **Memory Inspection**: View exact source chunks and recall links generated from your notes to understand how the AI sees your data.
+
+## Next
+
+- **Query Filtering**: Granular control to filter your AI searches by specific directories, tags, or individual notes during querying.
+
+## Later Down the Line
+
+- **Cloud Platform**: A fully hosted cloud version of UnmessIt.AI for zero-setup, ubiquitous access to your knowledge base.
+
+---
+
+## Fast Start (Local Run)
+
+Docker is the easiest way to get started:
 
 ```bash
 docker compose up --build
 ```
 
-Open:
-
+Open your browser to:
 ```txt
 http://localhost:5173
 ```
 
-Then:
-
-1. Create an account.
-2. Open **Settings** and add your AI model preset.
+1. Sign up for a local account.
+2. Open **Settings** and add an OpenAI API key preset.
 3. Create a note.
-4. Wait for indexing to finish.
-5. Ask AI a question.
+4. Wait for it to index.
+5. Ask a question!
 
-That is the main flow.
+## Manual Development
 
-## Configure AI
-
-AI settings live inside the app.
-
-Go to **Settings** and create a preset with:
-
-- provider
-- text model
-- embedding model
-- provider URL
-- API key
-- chunk and retry settings
-
-Each user can have their own presets. Server environment files are only for server runtime settings like auth secret and CORS.
-
-## Using The App
-
-**Notes**
-Write the information you want the AI to remember. Add tags and directories when it helps.
-
-**Ask AI**
-Ask a question in natural language. The answer includes source-backed evidence so you can check where it came from.
-
-**Memory**
-Browse indexed source text, chunks, and recall keys.
-
-**Indexing**
-See whether notes are queued, running, finished, or failed.
-
-**Settings**
-Manage AI presets for your account.
-
-## Stop Or Reset
-
-Stop Docker:
-
-```bash
-docker compose down
-```
-
-Remove Docker data:
-
-```bash
-docker compose down -v
-```
-
-## Manual Setup
-
-Use this if you are developing the project without Docker.
-
-Backend:
-
+Backend (FastAPI):
 ```bash
 cd server
 cp .env.example .env
@@ -97,35 +61,11 @@ uv sync
 uv run uvicorn src.main:app --host 127.0.0.1 --port 8000
 ```
 
-Frontend:
-
+Frontend (React/Vite):
 ```bash
 cd web
 npm install
 npm run dev -- --host 127.0.0.1
 ```
 
-Open:
-
-```txt
-http://127.0.0.1:5173
-```
-
-## Developer Notes
-
-Main folders:
-
-```txt
-server/   backend API, auth, notes, indexing, retrieval
-web/      main React frontend
-web-dev/  old development UI kept for reference
-```
-
-Useful checks:
-
-```bash
-cd server && uv run pytest
-cd web && npm run build
-```
-
-More technical docs live in `server/docs/`.
+For detailed API documentation and runtime configuration, refer to the [Current State](./current-state.md) and technical docs in `server/docs/`.

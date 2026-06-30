@@ -1,6 +1,6 @@
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from src.routes.auth_utils import get_current_user_id
 from src.repositories import config_presets
@@ -10,19 +10,29 @@ router = APIRouter(prefix="/configs", tags=["Config"])
 
 class PresetCreate(BaseModel):
     name: str = "Default"
-    llm_provider: str = "ollama"
-    llm_model: str = "llama3.2:latest"
+    llm_provider: str = "openai"
+    llm_model: str = "gpt-4o"
     llm_base_url: str | None = None
     llm_api_key: str | None = None
     llm_temperature: float = 0.0
     llm_max_retries: int = 2
     llm_max_tokens: int = 2048
-    embedding_provider: str = "ollama"
-    embedding_model: str = "nomic-embed-text"
+    embedding_provider: str = "openai"
+    embedding_model: str = "text-embedding-3-small"
     embedding_base_url: str | None = None
     embedding_api_key: str | None = None
+    llm_rate_limit_per_minute: int = 0
+    embedding_rate_limit_per_minute: int = 0
     chunk_size: int = 1000
     chunk_overlap: int = 200
+
+    @field_validator("llm_provider", "embedding_provider")
+    @classmethod
+    def openai_only(cls, value: str) -> str:
+        normalized = value.lower()
+        if normalized != "openai":
+            raise ValueError("Only OpenAI provider is supported")
+        return normalized
 
 
 class PresetResponse(BaseModel):
@@ -38,6 +48,8 @@ class PresetResponse(BaseModel):
     embedding_provider: str
     embedding_model: str
     embedding_base_url: str | None
+    llm_rate_limit_per_minute: int
+    embedding_rate_limit_per_minute: int
     chunk_size: int
     chunk_overlap: int
 
@@ -58,6 +70,26 @@ def create_preset(payload: PresetCreate, user_id: str = Depends(get_current_user
     """Create a new preset."""
     preset_dict = payload.model_dump(exclude_unset=True)
     preset_id = config_presets.save(preset_dict, user_id)
+    return {"id": preset_id}
+
+
+@router.put("/presets/{preset_id}")
+def update_preset(preset_id: str, payload: PresetCreate, user_id: str = Depends(get_current_user_id)) -> dict[str, str]:
+    """Update an existing preset."""
+    existing = config_presets.get_by_id(preset_id, user_id)
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Preset not found")
+    
+    preset_dict = payload.model_dump(exclude_unset=True)
+    preset_dict["id"] = preset_id
+    preset_dict["is_active"] = existing.get("is_active", 0)
+    
+    if not preset_dict.get("llm_api_key"):
+        preset_dict["llm_api_key"] = existing.get("llm_api_key", "")
+    if not preset_dict.get("embedding_api_key"):
+        preset_dict["embedding_api_key"] = existing.get("embedding_api_key", "")
+        
+    config_presets.save(preset_dict, user_id)
     return {"id": preset_id}
 
 
@@ -92,6 +124,8 @@ def get_active_config(user_id: str = Depends(get_current_user_id)) -> dict[str, 
         "embedding_provider": settings.embedding_provider,
         "embedding_model": settings.embedding_model,
         "embedding_base_url": settings.embedding_base_url,
+        "llm_rate_limit_per_minute": settings.llm_rate_limit_per_minute,
+        "embedding_rate_limit_per_minute": settings.embedding_rate_limit_per_minute,
         "chunk_size": settings.chunk_size,
         "chunk_overlap": settings.chunk_overlap,
     }
