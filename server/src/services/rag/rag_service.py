@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Protocol
+from typing import Protocol, Any
 
 from src.infra.langchain_json import get_json_client
 from src.services.rag.models import IngestResult, QueryResult, ProgressReporter
@@ -20,7 +20,13 @@ class RagService(Protocol):
     async def resume_ingest_job(self, job_id: str) -> dict | None:
         ...
 
-    def list_ingest_jobs(self, user_id: str | None = None) -> list[dict]:
+    def list_ingest_jobs(self, user_id: str | None = None, page: int = 1, limit: int = 20) -> dict[str, Any]:
+        ...
+
+    def pause_ingest_job(self, job_id: str) -> dict | None:
+        ...
+
+    def stop_ingest_job(self, job_id: str) -> dict | None:
         ...
 
     def delete_ingest_job(self, job_id: str) -> bool:

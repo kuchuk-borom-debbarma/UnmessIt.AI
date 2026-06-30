@@ -1,7 +1,7 @@
 # User Configuration System
 
 ## Overview
-UnmessIt.AI uses a **per-user preset system** for AI configuration. Each user manages their own provider URLs, API keys, text models, embedding models, chunk sizes, and generation limits without colliding with other users on the same instance.
+UnmessIt.AI uses a **per-user preset system** for AI configuration. Each user manages their own OpenAI model names, API keys, optional OpenAI-compatible base URLs, chunk sizes, and generation limits without colliding with other users on the same instance.
 
 This design explicitly serves the application's multi-tenant capabilities by treating each user as an isolated domain of configuration and persistence.
 
@@ -12,10 +12,16 @@ Configuration for any given user request is resolved in the following sequence:
    The most recent configurations are cached in an `lru_cache` within the application memory to minimize database read overhead. This cache clears automatically when a preset is activated or modified.
 
 2. **Database (SQLite `user_config_presets` Table)**
-   If not cached, the application reads the currently active preset for the `user_id` from the SQLite database. Presets contain AI provider settings such as API keys, text model names, embedding model names, and base URLs.
+   If not cached, the application reads the currently active preset for the `user_id` from the SQLite database. Presets contain OpenAI text model names, embedding model names, API keys, optional base URLs, and chunk settings.
 
 3. **Application Defaults**
-   If a user has no active preset, the application uses conservative built-in defaults only. Provider secrets and custom model endpoints are never loaded from `.env`; users define those values in Settings.
+   If a user has no active preset, AI work raises `NoActivePresetError` and the API returns `428` with code `no_active_preset`. Provider secrets and model endpoints are never loaded from `.env`; users define those values in Settings.
+
+## Provider Rule
+
+Only the `openai` provider is supported. The `/configs` route validates both `llm_provider` and `embedding_provider` and rejects anything else.
+
+Optional base URLs remain available for endpoints that follow OpenAI-compatible request and response behavior. There is no Ollama/local-provider branch in active code.
 
 ## Late-Binding Architecture (LangChain & Embeddings)
 Because configuration is dynamic, we do not initialize global AI text or embedding clients on application startup. Instead, we use a **late-binding** approach.
@@ -24,15 +30,15 @@ Components like `JsonLLMClient` and `get_embedding_function` are instantiated pe
 
 ## RAG Isolation Strategy
 
-Because API keys and configuration define the context window and the embedding models, we must strictly isolate user data across the entire RAG pipeline:
+Because API keys and configuration define context windows and embedding models, we must strictly isolate user data across the entire RAG pipeline:
 
-* **ChromaDB Collections**: Chroma collections are now dynamically named using the convention `statements_{user_id}` instead of a single shared `statements` collection. This enforces rigid data separation at the persistence layer.
+* **ChromaDB Collections**: Chroma collections are dynamically named using the convention `statements_{user_id}` instead of a single shared `statements` collection. This enforces rigid data separation at the persistence layer.
 
 > [!WARNING]
 > **Cloud Infra Limitations**
 > Scoping Chroma collections by user ID (`statements_{user_id}`) is acceptable for the current beta storage layer. A larger cloud multi-tenant deployment should use either a dedicated multi-tenant vector database with namespaces/tenants or a single shared collection with rigid metadata filtering (`{"user_id": {"$eq": user_id}}`) enforced at the proxy layer.
 
-* **Vector Migrations**: Because each user manages their own configuration and potentially their own vector dimensions (based on their configured embedding model), **we migrate on our own**. The application does not handle global migrations of vectors if an embedding model changes; the user is responsible for rebuilding their knowledge base if they swap vector representations.
+* **Vector Migrations**: Because each user manages their own embedding model, vector dimensions may change. The application does not migrate existing vectors automatically; the user must rebuild their knowledge base if they swap embedding representations.
 
 ## Using the API
 

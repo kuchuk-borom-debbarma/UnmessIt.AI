@@ -39,8 +39,9 @@ Keep the server boring, small, and easy to read.
 - Chroma is a rebuildable index; SQLite source rows are the source of truth.
 
 ## 6. Routes
-- Keep these URLs stable: `POST /ingest/`, `POST /api/retrieval/query`, `GET /dev/seai`, `GET /dev/recall`, `GET /dev/raw_inputs/{input_id}`, `DELETE /dev/facts`.
-- Durable job dev routes may live under `/dev/ingest_jobs`.
+- Keep these URLs stable: `POST /ingest/`, `POST /api/retrieval/query`, `GET /notes/`, `POST /notes/`, `GET /directories/`, `GET /tags/`, `GET /configs/presets`.
+- Authenticated memory/job inspection lives under `/api/advanced/*`, including `/api/advanced/memory`, `/api/advanced/recall`, and `/api/advanced/ingest_jobs`.
+- Development-only inspection/reset routes live under `/dev/*` and must stay gated by `ENABLE_DEV_ROUTES`.
 - `POST /ingest/` returns after durable job submission; the private scheduler does the background work.
 - Retrieval returns `{ answer, citations, source_chunks, retrieval_trace }` from source chunks, with recall keys/links used only for expansion.
 - Timeline behavior must build on source chunks, recall links, `event_time`, `time_label`, and spans. Do not add a separate temporal model until the simple ordered-evidence path fails real examples.

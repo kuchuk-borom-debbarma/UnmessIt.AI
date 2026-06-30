@@ -17,6 +17,8 @@ def create(name: str, user_id: str, parent_id: str | None = None) -> str:
         if not parent:
             raise ValueError(f"Parent directory {parent_id} not found")
         path = f"{parent['path']}{dir_id}/"
+        if path.count('/') > 101:
+            raise ValueError("Max directory depth of 100 exceeded")
         
     conn.execute(
         """
@@ -63,9 +65,9 @@ def delete(dir_id: str, user_id: str) -> bool:
     return cursor.rowcount > 0
 
 
-def list_children(user_id: str, parent_id: str | None = None) -> list[dict[str, Any]]:
-    """List direct children of a directory."""
-    query = "SELECT id, name, parent_id, path, user_id, created_at, updated_at FROM directories WHERE user_id = ?"
+def list_children(user_id: str, parent_id: str | None = None, page: int = 1, limit: int = 50) -> dict[str, Any]:
+    """List direct children of a directory, paginated."""
+    query = "FROM directories WHERE user_id = ?"
     params = [user_id]
     
     if parent_id:
@@ -74,27 +76,90 @@ def list_children(user_id: str, parent_id: str | None = None) -> list[dict[str, 
     else:
         query += " AND parent_id IS NULL"
         
-    query += " ORDER BY name ASC"
+    conn = get_connection()
+    offset = max(0, (page - 1) * limit)
     
-    rows = get_connection().execute(query, params).fetchall()
-    return [dict(row) for row in rows]
+    count_row = conn.execute(f"SELECT COUNT(*) as c {query}", params).fetchone()
+    total = count_row["c"] if count_row else 0
+    
+    query += " ORDER BY name ASC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+    
+    rows = conn.execute(f"SELECT id, name, parent_id, path, user_id, created_at, updated_at {query}", params).fetchall()
+    return {
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "data": [dict(row) for row in rows]
+    }
 
 
-def list_subtree(dir_id: str, user_id: str) -> list[dict[str, Any]]:
-    """List all directories under a specific directory using materialized path."""
+def list_subtree(dir_id: str, user_id: str, page: int = 1, limit: int = 50) -> dict[str, Any]:
+    """List all directories under a specific directory using materialized path, paginated."""
     parent = get(dir_id, user_id)
     if not parent:
-        return []
+        return {"total": 0, "page": page, "limit": limit, "data": []}
         
-    # Example: if parent path is "/1/4/", match "/1/4/%" but exclude "/1/4/" itself
     like_path = f"{parent['path']}%"
-    rows = get_connection().execute(
+    conn = get_connection()
+    offset = max(0, (page - 1) * limit)
+    
+    count_row = conn.execute(
+        "SELECT COUNT(*) as c FROM directories WHERE user_id = ? AND path LIKE ? AND id != ?",
+        (user_id, like_path, dir_id)
+    ).fetchone()
+    total = count_row["c"] if count_row else 0
+    
+    rows = conn.execute(
         """
         SELECT id, name, parent_id, path, user_id, created_at, updated_at 
         FROM directories 
         WHERE user_id = ? AND path LIKE ? AND id != ?
-        ORDER BY path ASC
+        ORDER BY path ASC LIMIT ? OFFSET ?
         """,
-        (user_id, like_path, dir_id)
+        (user_id, like_path, dir_id, limit, offset)
+    ).fetchall()
+    return {
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "data": [dict(row) for row in rows]
+    }
+
+
+def list_all(user_id: str, page: int = 1, limit: int = 50) -> dict[str, Any]:
+    """List all directories for a user, paginated."""
+    conn = get_connection()
+    offset = max(0, (page - 1) * limit)
+    
+    count_row = conn.execute("SELECT COUNT(*) as c FROM directories WHERE user_id = ?", (user_id,)).fetchone()
+    total = count_row["c"] if count_row else 0
+    
+    rows = conn.execute(
+        "SELECT id, name, parent_id, path, user_id, created_at, updated_at FROM directories WHERE user_id = ? ORDER BY path ASC LIMIT ? OFFSET ?",
+        (user_id, limit, offset)
+    ).fetchall()
+    return {
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "data": [dict(row) for row in rows]
+    }
+
+def get_notes_in_subtree(dir_id: str, user_id: str) -> list[dict[str, Any]]:
+    """Return all notes (id only) in this directory and any subdirectories."""
+    parent = get(dir_id, user_id)
+    if not parent:
+        return []
+        
+    like_path = f"{parent['path']}%"
+    rows = get_connection().execute(
+        """
+        SELECT n.id 
+        FROM notes n
+        JOIN directories d ON d.id = n.directory_id
+        WHERE n.user_id = ? AND d.path LIKE ?
+        """,
+        (user_id, like_path)
     ).fetchall()
     return [dict(row) for row in rows]

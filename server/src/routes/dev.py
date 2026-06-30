@@ -86,16 +86,33 @@ def get_recall() -> dict:
 
 
 @router.get("/ingest_jobs")
-def get_ingest_jobs() -> dict:
-    """Return durable ingestion jobs for dev inspection."""
-    jobs = get_rag_service().list_ingest_jobs()
-    return {"status": "success", "total_jobs": len(jobs), "data": jobs}
+def get_ingest_jobs(page: int = 1, limit: int = 20) -> dict:
+    """Return paginated jobs across all users."""
+    return {"status": "success", **get_rag_service().list_ingest_jobs(None, page, limit)}
 
 
 @router.post("/ingest_jobs/{job_id}/resume")
 async def resume_ingest_job(job_id: str) -> dict:
-    """Manually resume one waiting or failed durable ingestion job."""
+    """Manually resume one waiting, failed or paused durable ingestion job."""
     job = await get_rag_service().resume_ingest_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Ingest job not found")
+    return {"status": "success", "data": job}
+
+
+@router.post("/ingest_jobs/{job_id}/pause")
+def pause_ingest_job(job_id: str) -> dict:
+    """Pause one durable ingestion job."""
+    job = get_rag_service().pause_ingest_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Ingest job not found")
+    return {"status": "success", "data": job}
+
+
+@router.post("/ingest_jobs/{job_id}/stop")
+def stop_ingest_job(job_id: str) -> dict:
+    """Stop one durable ingestion job."""
+    job = get_rag_service().stop_ingest_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Ingest job not found")
     return {"status": "success", "data": job}

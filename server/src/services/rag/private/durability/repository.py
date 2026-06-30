@@ -17,6 +17,7 @@ from .models import (
     STATUS_QUEUED,
     STATUS_RUNNING,
     STATUS_WAITING_RETRY,
+    STATUS_PAUSED,
     STAGE_ABORTED,
     STAGE_RAW_INPUT,
     IngestJob,
@@ -72,22 +73,54 @@ def get_by_hash(content_hash: str) -> IngestJob | None:
     return _job(row) if row else None
 
 
-def list_jobs(user_id: str | None = None) -> list[IngestJob]:
-    """Return jobs newest first for dev inspection."""
+def list_jobs(user_id: str | None = None, page: int = 1, limit: int = 20) -> dict[str, Any]:
+    """Return paginated jobs newest first for dev inspection."""
+    conn = get_connection()
+    offset = max(0, (page - 1) * limit)
+    
     if user_id:
-        rows = get_connection().execute(
+        count_row = conn.execute(
             """
-            SELECT j.*
+            SELECT COUNT(j.id) as c
             FROM ingest_jobs j
             JOIN raw_inputs r ON r.id = j.raw_input_id
             WHERE r.user_id = ?
-            ORDER BY j.created_at DESC
             """,
             (user_id,),
+        ).fetchone()
+        
+        rows = conn.execute(
+            """
+            SELECT j.*, n.text as note_text
+            FROM ingest_jobs j
+            JOIN raw_inputs r ON r.id = j.raw_input_id
+            LEFT JOIN notes n ON n.id = j.id
+            WHERE r.user_id = ?
+            ORDER BY j.created_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (user_id, limit, offset),
         ).fetchall()
     else:
-        rows = get_connection().execute("SELECT * FROM ingest_jobs ORDER BY created_at DESC").fetchall()
-    return [_job(row) for row in rows]
+        count_row = conn.execute("SELECT COUNT(*) as c FROM ingest_jobs").fetchone()
+        
+        rows = conn.execute(
+            """
+            SELECT j.*, n.text as note_text 
+            FROM ingest_jobs j
+            LEFT JOIN notes n ON n.id = j.id
+            ORDER BY j.created_at DESC 
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset)
+        ).fetchall()
+        
+    return {
+        "total": count_row["c"] if count_row else 0,
+        "page": page,
+        "limit": limit,
+        "data": [_job(row) for row in rows]
+    }
 
 
 def list_resumable_jobs() -> list[IngestJob]:
@@ -194,7 +227,7 @@ def schedule_retry(job_id: str, stage: str, unit_key: str, error: str) -> Ingest
 
 
 def resume(job_id: str) -> None:
-    """Reset a waiting/failed job without deleting completed checkpoints."""
+    """Reset a waiting/failed/paused job without deleting completed checkpoints."""
     get_connection().execute(
         """
         UPDATE ingest_jobs
@@ -202,6 +235,19 @@ def resume(job_id: str) -> None:
         WHERE id = ?
         """,
         (STATUS_QUEUED, job_id),
+    )
+    get_connection().commit()
+
+
+def pause(job_id: str) -> None:
+    """Manually pause an active job. It will remain paused until resumed."""
+    get_connection().execute(
+        """
+        UPDATE ingest_jobs
+        SET status = ?, next_run_at = NULL, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status IN (?, ?, ?)
+        """,
+        (STATUS_PAUSED, job_id, STATUS_QUEUED, STATUS_RUNNING, STATUS_WAITING_RETRY),
     )
     get_connection().commit()
 

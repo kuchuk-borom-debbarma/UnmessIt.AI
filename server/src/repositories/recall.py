@@ -421,3 +421,84 @@ def _json(value: Any, fallback: Any) -> Any:
         return json.loads(value) if value else fallback
     except (TypeError, json.JSONDecodeError):
         return fallback
+
+
+def get_paginated_keys_for_note(note_id: str, user_id: str, page: int = 1, limit: int = 10) -> dict[str, Any]:
+    """Load paginated recall keys extracted from a specific note."""
+    conn = get_connection()
+    offset = max(0, (page - 1) * limit)
+
+    count_row = conn.execute(
+        """
+        SELECT COUNT(DISTINCT k.id) as c
+        FROM recall_keys k
+        JOIN recall_links l ON l.recall_key_id = k.id
+        JOIN source_chunks sc ON sc.id = l.source_chunk_id
+        JOIN raw_inputs ri ON ri.id = sc.raw_input_id
+        WHERE ri.job_id = ? AND k.user_id = ? AND ri.deleted_at IS NULL
+        """,
+        (note_id, user_id)
+    ).fetchone()
+    total = count_row["c"] if count_row else 0
+
+    rows = conn.execute(
+        """
+        SELECT DISTINCT k.id, k.name, k.kind, k.kind_label, k.aliases, k.summary, k.metadata, k.created_at, k.updated_at, k.user_id,
+               MAX(COALESCE(l.event_time, l.created_at)) AS latest_link_time
+        FROM recall_keys k
+        JOIN recall_links l ON l.recall_key_id = k.id
+        JOIN source_chunks sc ON sc.id = l.source_chunk_id
+        JOIN raw_inputs ri ON ri.id = sc.raw_input_id
+        WHERE ri.job_id = ? AND k.user_id = ? AND ri.deleted_at IS NULL
+        GROUP BY k.id
+        ORDER BY latest_link_time DESC, k.updated_at DESC
+        LIMIT ? OFFSET ?
+        """,
+        (note_id, user_id, limit, offset)
+    ).fetchall()
+    keys = [_key_from_row(row) for row in rows]
+    return {"total": total, "page": page, "limit": limit, "keys": keys}
+
+
+def get_paginated_links_for_note(note_id: str, user_id: str, page: int = 1, limit: int = 10) -> dict[str, Any]:
+    """Load paginated recall links originating from a specific note."""
+    conn = get_connection()
+    offset = max(0, (page - 1) * limit)
+
+    count_row = conn.execute(
+        """
+        SELECT COUNT(DISTINCT l.id) as c
+        FROM recall_links l
+        JOIN source_chunks sc ON sc.id = l.source_chunk_id
+        JOIN raw_inputs ri ON ri.id = sc.raw_input_id
+        WHERE ri.job_id = ? AND l.user_id = ? AND ri.deleted_at IS NULL
+        """,
+        (note_id, user_id)
+    ).fetchone()
+    total = count_row["c"] if count_row else 0
+
+    rows = conn.execute(
+        """
+        SELECT l.id, l.recall_key_id, l.source_chunk_id, l.relation, l.relation_label,
+               l.confidence, l.reason, l.event_time, l.time_label, l.metadata, l.created_at,
+               k.name as key_name, k.kind as key_kind, k.kind_label as key_kind_label,
+               sc.text as chunk_text
+        FROM recall_links l
+        JOIN recall_keys k ON k.id = l.recall_key_id
+        JOIN source_chunks sc ON sc.id = l.source_chunk_id
+        JOIN raw_inputs ri ON ri.id = sc.raw_input_id
+        WHERE ri.job_id = ? AND l.user_id = ? AND ri.deleted_at IS NULL
+        ORDER BY COALESCE(l.event_time, l.created_at) DESC
+        LIMIT ? OFFSET ?
+        """,
+        (note_id, user_id, limit, offset)
+    ).fetchall()
+
+    links = []
+    for row in rows:
+        link = dict(row)
+        link["metadata"] = _json(link.get("metadata"), {})
+        links.append(link)
+
+    return {"total": total, "page": page, "limit": limit, "links": links}
+

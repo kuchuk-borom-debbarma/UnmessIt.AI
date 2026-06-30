@@ -30,9 +30,27 @@ def _with_tags(note: dict) -> dict:
 async def list_notes(
     directory_id: str | None = None,
     all: bool = False,
+    page: int = 1,
+    limit: int = 20,
     user_id: str = Depends(get_current_user_id),
 ) -> dict:
-    return {"status": "success", "data": [_with_tags(note) for note in notes.list_notes(user_id, directory_id, all)]}
+    page = max(1, page)
+    limit = max(1, min(limit, 50))
+    result = notes.list_notes(user_id, directory_id, all, page, limit)
+    result["data"] = [_with_tags(note) for note in result["data"]]
+    return {"status": "success", **result}
+
+@router.get("/trash")
+async def get_trash(
+    page: int = 1,
+    limit: int = 20,
+    user_id: str = Depends(get_current_user_id),
+) -> dict:
+    page = max(1, page)
+    limit = max(1, min(limit, 50))
+    result = notes.list_trash(user_id, page, limit)
+    result["data"] = [_with_tags(note) for note in result["data"]]
+    return {"status": "success", **result}
 
 
 @router.get("/{note_id}")
@@ -86,3 +104,15 @@ async def delete_note(note_id: str, user_id: str = Depends(get_current_user_id))
     if not notes.delete(note_id, user_id):
         raise HTTPException(status_code=404, detail="Note not found")
     return {"status": "deleted", "note_id": note_id}
+
+@router.delete("/{note_id}/hard")
+async def hard_delete_note(note_id: str, user_id: str = Depends(get_current_user_id)) -> dict:
+    if not await get_notes_service().hard_delete_note(note_id, user_id):
+        raise HTTPException(status_code=404, detail="Note not found")
+    return {"status": "hard_deleted", "note_id": note_id}
+
+@router.post("/{note_id}/restore")
+async def restore_note(note_id: str, user_id: str = Depends(get_current_user_id)) -> dict:
+    if not notes.restore(note_id, user_id):
+        raise HTTPException(status_code=404, detail="Note not found")
+    return {"status": "restored", "note_id": note_id}

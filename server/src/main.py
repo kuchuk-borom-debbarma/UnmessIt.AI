@@ -58,6 +58,18 @@ def create_app() -> FastAPI:
     app.include_router(advanced.router)
     if settings.enable_dev_routes:
         app.include_router(dev.router)
+        
+    from fastapi import Request
+    from fastapi.responses import JSONResponse
+    from src.infra.settings import NoActivePresetError
+    
+    @app.exception_handler(NoActivePresetError)
+    async def no_active_preset_handler(request: Request, exc: NoActivePresetError):
+        return JSONResponse(
+            status_code=428,
+            content={"status": "error", "code": "no_active_preset", "message": str(exc)},
+        )
+        
     return app
 
 

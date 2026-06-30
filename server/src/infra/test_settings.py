@@ -13,12 +13,12 @@ def test_ai_settings_ignore_legacy_environment_variables(monkeypatch):
 
     settings = Settings()
 
-    assert settings.llm_provider == "ollama"
-    assert settings.llm_model == "llama3.2:latest"
+    assert settings.llm_provider == "openai"
+    assert settings.llm_model == "gpt-4o"
     assert settings.llm_base_url is None
     assert settings.llm_api_key == ""
-    assert settings.embedding_provider == "ollama"
-    assert settings.embedding_model == "nomic-embed-text"
+    assert settings.embedding_provider == "openai"
+    assert settings.embedding_model == "text-embedding-3-small"
     assert settings.embedding_base_url is None
     assert settings.embedding_api_key == ""
 

@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS raw_inputs (
     deleted_at DATETIME,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+CREATE INDEX IF NOT EXISTS idx_raw_inputs_job_id ON raw_inputs(job_id);
 
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -156,6 +157,7 @@ CREATE TABLE IF NOT EXISTS directories (
 );
 CREATE INDEX IF NOT EXISTS idx_directories_user ON directories(user_id);
 CREATE INDEX IF NOT EXISTS idx_directories_path ON directories(path);
+CREATE INDEX IF NOT EXISTS idx_directories_parent ON directories(user_id, parent_id);
 
 CREATE TABLE IF NOT EXISTS notes (
     id TEXT PRIMARY KEY,
@@ -164,10 +166,12 @@ CREATE TABLE IF NOT EXISTS notes (
     user_id TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    deleted_at DATETIME,
     FOREIGN KEY(directory_id) REFERENCES directories(id) ON DELETE SET NULL,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_notes_user ON notes(user_id);
+CREATE INDEX IF NOT EXISTS idx_notes_directory ON notes(user_id, directory_id, deleted_at);
 
 CREATE TABLE IF NOT EXISTS tags (
     id TEXT PRIMARY KEY,
@@ -209,6 +213,9 @@ CREATE TABLE IF NOT EXISTS user_config_presets (
     embedding_model TEXT NOT NULL,
     embedding_base_url TEXT,
     embedding_api_key TEXT,
+    
+    llm_rate_limit_per_minute INTEGER NOT NULL DEFAULT 0,
+    embedding_rate_limit_per_minute INTEGER NOT NULL DEFAULT 0,
     
     chunk_size INTEGER NOT NULL DEFAULT 1000,
     chunk_overlap INTEGER NOT NULL DEFAULT 200,

@@ -8,6 +8,7 @@ STATUS_WAITING_RETRY = "waiting_retry"
 STATUS_COMPLETE = "complete"
 STATUS_FAILED = "failed"
 STATUS_ABORTED = "aborted"
+STATUS_PAUSED = "paused"
 
 CHECKPOINT_RUNNING = "running"
 CHECKPOINT_COMPLETE = "complete"

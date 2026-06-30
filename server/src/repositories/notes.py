@@ -24,7 +24,12 @@ def create(text: str, user_id: str, directory_id: str | None = None) -> str:
 
 def get(note_id: str, user_id: str) -> dict[str, Any] | None:
     row = get_connection().execute(
-        "SELECT id, text, directory_id, user_id, created_at, updated_at FROM notes WHERE id = ? AND user_id = ?",
+        """
+        SELECT n.id, n.text, n.directory_id, n.user_id, n.created_at, n.updated_at, n.deleted_at, j.status as job_status 
+        FROM notes n
+        LEFT JOIN ingest_jobs j ON j.id = n.id
+        WHERE n.id = ? AND n.user_id = ? AND n.deleted_at IS NULL
+        """,
         (note_id, user_id)
     ).fetchone()
     return dict(row) if row else None
@@ -46,6 +51,17 @@ def update(note_id: str, text: str, user_id: str, directory_id: str | None = Non
 
 
 def delete(note_id: str, user_id: str) -> bool:
+    """Soft delete a note."""
+    conn = get_connection()
+    cursor = conn.execute(
+        "UPDATE notes SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+        (note_id, user_id)
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+def hard_delete(note_id: str, user_id: str) -> bool:
+    """Permanently delete a note."""
     conn = get_connection()
     cursor = conn.execute(
         "DELETE FROM notes WHERE id = ? AND user_id = ?",
@@ -54,22 +70,64 @@ def delete(note_id: str, user_id: str) -> bool:
     conn.commit()
     return cursor.rowcount > 0
 
+def restore(note_id: str, user_id: str) -> bool:
+    """Restore a soft-deleted note."""
+    conn = get_connection()
+    cursor = conn.execute(
+        "UPDATE notes SET deleted_at = NULL WHERE id = ? AND user_id = ?",
+        (note_id, user_id)
+    )
+    conn.commit()
+    return cursor.rowcount > 0
 
-def list_notes(user_id: str, directory_id: str | None = None, include_all: bool = False) -> list[dict[str, Any]]:
-    query = "SELECT id, text, directory_id, user_id, created_at, updated_at FROM notes WHERE user_id = ?"
+def list_notes(user_id: str, directory_id: str | None = None, include_all: bool = False, page: int = 1, limit: int = 20) -> dict[str, Any]:
+    conn = get_connection()
+    offset = max(0, (page - 1) * limit)
+    
+    query = "FROM notes n LEFT JOIN ingest_jobs j ON j.id = n.id WHERE n.user_id = ? AND n.deleted_at IS NULL"
     params = [user_id]
     
     if not include_all:
         if directory_id:
-            query += " AND directory_id = ?"
+            query += " AND n.directory_id = ?"
             params.append(directory_id)
         else:
-            query += " AND directory_id IS NULL"
-        
-    query += " ORDER BY created_at DESC"
+            query += " AND n.directory_id IS NULL"
+            
+    count_row = conn.execute(f"SELECT COUNT(*) as c {query}", params).fetchone()
+    total = count_row["c"] if count_row else 0
     
-    rows = get_connection().execute(query, params).fetchall()
-    return [dict(row) for row in rows]
+    query += " ORDER BY n.created_at DESC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+    
+    rows = conn.execute(f"SELECT n.id, n.text, n.directory_id, n.user_id, n.created_at, n.updated_at, j.status as job_status {query}", params).fetchall()
+    return {
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "data": [dict(row) for row in rows]
+    }
+
+def list_trash(user_id: str, page: int = 1, limit: int = 20) -> dict[str, Any]:
+    conn = get_connection()
+    offset = max(0, (page - 1) * limit)
+    
+    query = "FROM notes WHERE user_id = ? AND deleted_at IS NOT NULL"
+    params = [user_id]
+    
+    count_row = conn.execute(f"SELECT COUNT(*) as c {query}", params).fetchone()
+    total = count_row["c"] if count_row else 0
+    
+    query += " ORDER BY deleted_at DESC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+    
+    rows = conn.execute(f"SELECT id, text, directory_id, user_id, created_at, updated_at, deleted_at {query}", params).fetchall()
+    return {
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "data": [dict(row) for row in rows]
+    }
 
 
 def _check_directory(directory_id: str | None, user_id: str) -> None:

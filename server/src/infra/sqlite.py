@@ -45,11 +45,15 @@ def init_db() -> None:
     _add_column_if_missing(conn, "recall_keys", "user_id", "TEXT REFERENCES users(id) ON DELETE CASCADE")
     _add_column_if_missing(conn, "source_chunks", "user_id", "TEXT REFERENCES users(id) ON DELETE CASCADE")
     _add_column_if_missing(conn, "recall_links", "user_id", "TEXT REFERENCES users(id) ON DELETE CASCADE")
+    _add_column_if_missing(conn, "notes", "deleted_at", "DATETIME")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_inputs_job_id ON raw_inputs(job_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_inputs_content_hash ON raw_inputs(content_hash)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_inputs_user_id ON raw_inputs(user_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_source_chunks_user_id ON source_chunks(user_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_recall_keys_user_id ON recall_keys(user_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_recall_links_user_id ON recall_links(user_id)")
+    _add_column_if_missing(conn, "user_config_presets", "llm_rate_limit_per_minute", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(conn, "user_config_presets", "embedding_rate_limit_per_minute", "INTEGER NOT NULL DEFAULT 0")
     conn.commit()
 
 

@@ -65,9 +65,9 @@ Prompts should be boring, standard, explicit, and portable across domains. A goo
 - Broad questions need coverage across relevant evidence, not a dump of everything.
 - Narrow questions should prefer direct evidence over broad background.
 
-## 7. Concision And Local Model Safety
+## 7. Concision And Context Budget Safety
 
-- Prompts must fit local model constraints by default.
+- Prompts must stay small enough for configured OpenAI context windows.
 - Do not pass full raw inputs when compact summaries, ids, or selected snippets are enough.
 - Trim candidate lists before prompting.
 - Cap generated objects before increasing model limits.

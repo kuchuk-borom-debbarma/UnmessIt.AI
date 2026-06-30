@@ -593,7 +593,7 @@ class NoopPreprocess:
 
 
 class FakeWindows:
-    def run(self, raw_text: str) -> list[dict]:
+    def run(self, raw_text: str, user_id: str | None = None) -> list[dict]:
         return [{"text": "one", "start": 0, "end": 3}, {"text": "two", "start": 4, "end": 7}]
 
 

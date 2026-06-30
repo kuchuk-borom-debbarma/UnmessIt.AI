@@ -60,8 +60,9 @@ def save(preset: dict[str, Any], user_id: str) -> str:
             id, user_id, name, is_active,
             llm_provider, llm_model, llm_base_url, llm_api_key, llm_temperature, llm_max_retries, llm_max_tokens,
             embedding_provider, embedding_model, embedding_base_url, embedding_api_key,
+            llm_rate_limit_per_minute, embedding_rate_limit_per_minute,
             chunk_size, chunk_overlap
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name=excluded.name,
             is_active=excluded.is_active,
@@ -76,6 +77,8 @@ def save(preset: dict[str, Any], user_id: str) -> str:
             embedding_model=excluded.embedding_model,
             embedding_base_url=excluded.embedding_base_url,
             embedding_api_key=excluded.embedding_api_key,
+            llm_rate_limit_per_minute=excluded.llm_rate_limit_per_minute,
+            embedding_rate_limit_per_minute=excluded.embedding_rate_limit_per_minute,
             chunk_size=excluded.chunk_size,
             chunk_overlap=excluded.chunk_overlap,
             updated_at=CURRENT_TIMESTAMP
@@ -85,17 +88,19 @@ def save(preset: dict[str, Any], user_id: str) -> str:
             user_id,
             preset.get("name", "Default"),
             is_active,
-            preset.get("llm_provider", "ollama").lower(),
-            preset.get("llm_model", "llama3.2:latest"),
+            preset.get("llm_provider", "openai").lower(),
+            preset.get("llm_model", "gpt-4o"),
             preset.get("llm_base_url"),
             preset.get("llm_api_key", ""),
             float(preset.get("llm_temperature", 0.0)),
             int(preset.get("llm_max_retries", 2)),
             int(preset.get("llm_max_tokens", 2048)),
-            preset.get("embedding_provider", "ollama").lower(),
-            preset.get("embedding_model", "nomic-embed-text"),
+            preset.get("embedding_provider", "openai").lower(),
+            preset.get("embedding_model", "text-embedding-3-small"),
             preset.get("embedding_base_url"),
             preset.get("embedding_api_key", ""),
+            int(preset.get("llm_rate_limit_per_minute", 0)),
+            int(preset.get("embedding_rate_limit_per_minute", 0)),
             int(preset.get("chunk_size", 1000)),
             int(preset.get("chunk_overlap", 200)),
         ),

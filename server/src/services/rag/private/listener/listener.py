@@ -40,10 +40,35 @@ def _on_note_created(payload: dict[str, Any]) -> None:
 
 
 def _on_note_updated(payload: dict[str, Any]) -> None:
-    asyncio.create_task(_handle_note_updated(payload))
+    # Right now, simple approach: just re-submit the ingest job
+    # Over time, we can make this more granular (e.g. diffing chunks)
+    # The pipeline is idempotent if content hash matches.
+    asyncio.create_task(submit_ingest_job(
+        content=payload["text"],
+        user_id=payload["user_id"],
+        job_id=payload["note_id"]
+    ))
+
+
+def _on_note_hard_deleted(payload: dict[str, Any]) -> None:
+    note_id = payload["note_id"]
+    user_id = payload["user_id"]
+    
+    def _cleanup():
+        from src.repositories import raw_inputs, source_chunks, source_chunk_vectors
+        inputs = raw_inputs.list_by_job(note_id, user_id)
+        for row in inputs:
+            input_id = row["id"]
+            chunks = source_chunks.get_by_raw_input_id(input_id)
+            if chunks:
+                source_chunk_vectors.delete([chunk["id"] for chunk in chunks], user_id)
+            raw_inputs.hard_delete(input_id)
+            
+    asyncio.create_task(asyncio.to_thread(_cleanup))
 
 
 def register_rag_listeners() -> None:
     bus = get_event_bus()
     bus.subscribe("note.created", _on_note_created)
     bus.subscribe("note.updated", _on_note_updated)
+    bus.subscribe("note.hard_deleted", _on_note_hard_deleted)
