@@ -435,10 +435,10 @@ export function SettingsView({ token }: { token: string }) {
             <Field label="Chunk size" helpText="Characters per text chunk. High: retains more context but might dilute specific facts. Low: more precise retrieval but risks losing context.">
               <input type="number" className="premium-input bg-transparent" value={processing.chunk_size} onChange={(e) => setProcessing({ ...processing, chunk_size: Number(e.target.value) || 1000 })} />
             </Field>
-            <Field label="Chunk overlap" helpText="Characters overlapping between chunks. Prevents cutting off sentences mid-thought.">
+            <Field label="Chunk overlap" helpText="Characters overlapping between chunks. High: prevents cutting off sentences but increases token usage. Low: saves tokens but risks missing context at boundaries.">
               <input type="number" className="premium-input bg-transparent" value={processing.chunk_overlap} onChange={(e) => setProcessing({ ...processing, chunk_overlap: Number(e.target.value) || 0 })} />
             </Field>
-            <Field label="Retry backoff" helpText="Comma-separated seconds to wait between retry attempts.">
+            <Field label="Retry backoff" helpText="Comma-separated seconds to wait between retries. High: better for strict rate limits. Low: faster recovery for transient errors.">
               <input className="premium-input bg-transparent" value={processing.ingest_retry_backoff_seconds} onChange={(e) => setProcessing({ ...processing, ingest_retry_backoff_seconds: e.target.value })} />
             </Field>
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200 lg:col-span-3">
@@ -590,10 +590,18 @@ function ConfigModal({
 
 function Field({ label, helpText, children }: { label: string; helpText?: string; children: ReactNode }) {
   return (
-    <label className="block">
+    <label className="block relative">
       <span className="mb-1.5 flex items-center text-xs font-bold uppercase tracking-wider text-foreground/80">
         {label}
-        {helpText && <Info className="ml-1.5 inline-block shrink-0 text-muted-foreground/70 hover:text-foreground" size={14} title={helpText} />}
+        {helpText && (
+          <div className="group relative ml-1.5 flex items-center">
+            <Info className="shrink-0 text-muted-foreground/70 hover:text-foreground" size={14} />
+            <div className="pointer-events-none absolute bottom-full left-1/2 mb-2 w-64 -translate-x-1/2 rounded-md bg-zinc-800 p-2.5 text-xs font-medium normal-case tracking-normal text-zinc-200 opacity-0 shadow-xl transition-opacity group-hover:opacity-100 z-50 leading-relaxed">
+              {helpText}
+              <div className="absolute left-1/2 top-full -mt-1.5 h-3 w-3 -translate-x-1/2 rotate-45 bg-zinc-800"></div>
+            </div>
+          </div>
+        )}
       </span>
       {children}
     </label>
