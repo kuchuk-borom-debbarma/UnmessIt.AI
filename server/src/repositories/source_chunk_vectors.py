@@ -72,7 +72,7 @@ def update_metadata(chunk_ids: list[str], metadata_updates: dict[str, Any], user
     if not chunk_ids:
         return
     vector_ids = [vector_id(cid) for cid in chunk_ids]
-    collection = chroma._collection(user_id)
+    collection = chroma.collection(user_id)
     results = collection.get(ids=vector_ids, include=["metadatas"])
     existing_metadatas = results.get("metadatas") or []
     existing_ids = results.get("ids") or []

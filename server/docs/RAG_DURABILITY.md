@@ -351,6 +351,10 @@ Before embedding, the runner checks:
 2. Does Chroma already have a vector for this recall key id?
 
 If either is true, it marks/reuses the checkpoint and skips embedding.
+All missing recall-key vectors are then embedded in one Chroma upsert batch.
+After that batch succeeds, the runner marks each recall-key vector checkpoint
+complete. If the batch fails, each missing unit is marked failed and the job
+retries this stage.
 
 Recall-key vectors are only an index. They can be rebuilt from SQLite recall
 keys if Chroma is wiped.
@@ -369,6 +373,10 @@ Before embedding, the runner checks:
 2. Does Chroma already have a vector for this source chunk id?
 
 If either is true, it marks/reuses the checkpoint and skips embedding.
+All missing source-chunk vectors are then embedded in one Chroma upsert batch.
+After that batch succeeds, the runner marks each source-vector checkpoint
+complete. If the batch fails, each missing unit is marked failed and the job
+retries this stage.
 
 Source chunk vectors are also rebuildable. The durable source of truth remains
 SQLite raw inputs and source chunks.

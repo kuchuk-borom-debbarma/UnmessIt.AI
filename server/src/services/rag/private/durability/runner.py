@@ -231,6 +231,7 @@ class DurableIngestRunner:
     async def _recall_vectors(self, job_id: str, keys: list[dict[str, Any]]) -> None:
         """Index only missing recall-key vectors."""
         await asyncio.to_thread(repository.start_stage, job_id, STAGE_RECALL_VECTORS)
+        missing = []
         for key in keys:
             unit_key = f"recall_key_vector:{key['id']}"
             is_done = await asyncio.to_thread(repository.checkpoint_complete, job_id, STAGE_RECALL_VECTORS, unit_key)
@@ -238,11 +239,19 @@ class DurableIngestRunner:
             if is_done or exists:
                 await asyncio.to_thread(repository.complete_checkpoint, job_id, STAGE_RECALL_VECTORS, unit_key, key["id"], {"reused": True})
                 continue
-            await self._run_unit(job_id, STAGE_RECALL_VECTORS, unit_key, lambda k=key: _index_recall_key(k))
+            missing.append((unit_key, key))
+        if missing:
+            await self._run_batch_units(
+                job_id,
+                STAGE_RECALL_VECTORS,
+                [(unit_key, key["id"], {}) for unit_key, key in missing],
+                lambda: asyncio.to_thread(recall_key_vectors.index, [key for _, key in missing]),
+            )
 
     async def _source_vectors(self, job_id: str, chunks: list[SourceChunk]) -> None:
         """Index only missing source chunk vectors."""
         await asyncio.to_thread(repository.start_stage, job_id, STAGE_SOURCE_VECTORS)
+        missing = []
         for chunk in chunks:
             unit_key = f"source_vector:{chunk['id']}"
             is_done = await asyncio.to_thread(repository.checkpoint_complete, job_id, STAGE_SOURCE_VECTORS, unit_key)
@@ -250,7 +259,14 @@ class DurableIngestRunner:
             if is_done or exists:
                 await asyncio.to_thread(repository.complete_checkpoint, job_id, STAGE_SOURCE_VECTORS, unit_key, chunk["id"], {"reused": True})
                 continue
-            await self._run_unit(job_id, STAGE_SOURCE_VECTORS, unit_key, lambda c=chunk: _index_source_chunk(c))
+            missing.append((unit_key, chunk))
+        if missing:
+            await self._run_batch_units(
+                job_id,
+                STAGE_SOURCE_VECTORS,
+                [(unit_key, chunk["id"], {}) for unit_key, chunk in missing],
+                lambda: asyncio.to_thread(source_chunk_vectors.index, [chunk for _, chunk in missing]),
+            )
 
     async def _run_unit(self, job_id: str, stage: str, unit_key: str, work) -> None:
         """Run one unit and convert failures into durable retry state."""
@@ -270,15 +286,27 @@ class DurableIngestRunner:
             )
             raise
 
-
-async def _index_recall_key(key: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    await asyncio.to_thread(recall_key_vectors.index, [key])
-    return key["id"], {}
-
-
-async def _index_source_chunk(chunk: SourceChunk) -> tuple[str, dict[str, Any]]:
-    await asyncio.to_thread(source_chunk_vectors.index, [chunk])
-    return chunk["id"], {}
+    async def _run_batch_units(self, job_id: str, stage: str, units: list[tuple[str, str, dict[str, Any]]], work) -> None:
+        """Run one batch while preserving per-unit checkpoints."""
+        for unit_key, _, _ in units:
+            await asyncio.to_thread(repository.start_checkpoint, job_id, stage, unit_key)
+        logger.info("ingest_batch_start job_id=%s stage=%s units=%s", job_id, stage, len(units))
+        try:
+            await work()
+            for unit_key, output_ref, metadata in units:
+                await asyncio.to_thread(repository.complete_checkpoint, job_id, stage, unit_key, output_ref, metadata)
+            await asyncio.to_thread(repository.reset_attempts, job_id)
+            logger.info("ingest_batch_complete job_id=%s stage=%s units=%s", job_id, stage, len(units))
+        except Exception as exc:
+            for unit_key, _, _ in units:
+                await asyncio.to_thread(repository.fail_checkpoint, job_id, stage, unit_key, str(exc))
+            retry_unit = units[0][0]
+            job = await asyncio.to_thread(repository.schedule_retry, job_id, stage, retry_unit, str(exc))
+            logger.info(
+                "ingest_batch_retry job_id=%s stage=%s units=%s status=%s attempt=%s error=%s",
+                job_id, stage, len(units), job["status"], job["attempt_count"], str(exc),
+            )
+            raise
 
 
 def _raw_input(raw_input_id: str) -> dict[str, Any] | None:

@@ -97,7 +97,7 @@ def test_source_chunk_vector_metadata_move_refreshes_directory_flags(monkeypatch
             updated["ids"] = ids
             updated["metadatas"] = metadatas
 
-    monkeypatch.setattr(source_chunk_vectors.chroma, "_collection", lambda user_id: FakeCollection())
+    monkeypatch.setattr(source_chunk_vectors.chroma, "collection", lambda user_id: FakeCollection())
 
     source_chunk_vectors.update_metadata(["chunk-1"], {"directory_path": "/dir-2/nested/"}, "user-1")
 
@@ -563,6 +563,25 @@ async def test_durable_source_chunks_resume_from_next_unfinished_piece(monkeypat
         "recall_keys": 2,
     }
     assert len(source_chunks.get_by_raw_input_id(raw_id)) == 2
+
+
+async def test_durable_runner_batches_vector_embeddings(monkeypatch):
+    conn = _patch_memory_db(monkeypatch)
+    calls = {"recall": [], "source": []}
+    monkeypatch.setattr(recall_key_vectors, "exists", lambda key_id, user_id: False)
+    monkeypatch.setattr(source_chunk_vectors, "exists", lambda chunk_id, user_id: False)
+    monkeypatch.setattr(recall_key_vectors, "index", lambda keys: calls["recall"].append(len(keys)))
+    monkeypatch.setattr(source_chunk_vectors, "index", lambda chunks: calls["source"].append(len(chunks)))
+
+    raw_id = raw_inputs.save_or_reuse("job-1", "one two", "user-1", "hash-1")
+    job = durability_repo.create_or_reuse_job("job-1", "hash-1", raw_id)
+    runner = DurableIngestRunner(FakeWindows(), FakeDrafts(), SourceChunkAssemblerChain(), FakeRecallIndex())
+
+    await runner.run_once(job["id"])
+
+    assert calls == {"recall": [2], "source": [2]}
+    assert conn.execute("SELECT COUNT(*) FROM ingest_checkpoints WHERE stage = 'recall_vectors' AND status = 'complete'").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM ingest_checkpoints WHERE stage = 'source_vectors' AND status = 'complete'").fetchone()[0] == 2
 
 
 async def test_durable_runner_pause_stops_after_current_unit(monkeypatch):

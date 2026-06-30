@@ -30,7 +30,7 @@ The current implementation is OpenAI-standard only. Users configure OpenAI text 
 - Lossless source chunks chosen by source position, not by LLM importance.
 - LLM summaries for chunks without replacing source text.
 - Recall keys and recall links for entities, topics, tasks, events, questions, and other reusable handles.
-- Chroma vector indexes for source chunks and recall keys (ChromaDB client acts as a global singleton to prevent SQLite locking).
+- Chroma vector indexes for source chunks and recall keys, with durable ingest batching missing vectors per stage (ChromaDB client acts as a global singleton to prevent SQLite locking).
 - Retrieval with query breakdown, vector search, lexical search, recall-key search, linked-chunk expansion, dedupe, rerank, and Context Engineering (context packing/distillation).
 - Source-backed answer generation with citations to specific `note_id`s, source chunks, and an expandable Retrieval Analysis Trace.
 - Settings UI for OpenAI presets, API keys, model names, base URLs, max tokens, retries, chunk size, chunk overlap, and rate limits.
@@ -144,7 +144,8 @@ Development-only routes:
 
 ## Likely Next Steps
 
-- **Durable Pub/Sub & Caching**: Implement durable pub/sub using a Transactional Outbox pattern in SQLite to guarantee event delivery between Notes and RAG domains. We plan to introduce a lightweight Redis instance to act simultaneously as a distributed cache and a durable message broker (via Redis Streams with consumer groups).
+- **Response Cache**: Add a small SQLite-backed LLM response cache first, keyed by model/settings/prompt shape, to avoid repeated query and indexing calls.
+- **Durable Pub/Sub**: After caching, implement durable pub/sub using a Transactional Outbox pattern in SQLite to guarantee event delivery between Notes and RAG domains. Add Redis Streams with consumer groups only when one-process SQLite outbox stops being enough.
 - **Custom Knowledge Connections**: Give users the ability to manually teach the AI connections by wiring explicit recall links between concepts or notes.
 - Add explicit timeline ordering for timeline-style questions if real examples need it.
 - Add a rebuild-vector-index command for embedding model changes.

@@ -46,6 +46,11 @@ def upsert(ids: list[str], texts: list[str], metadatas: list[dict[str, Any]], us
     _collection(user_id).upsert(ids=ids, documents=texts, metadatas=metadatas)
 
 
+def collection(user_id: str):
+    """Return the configured Chroma collection for repository-level maintenance."""
+    return _collection(user_id)
+
+
 def existing_ids(ids: list[str], user_id: str) -> set[str]:
     """Return vector IDs already present in the collection."""
     if not ids:
