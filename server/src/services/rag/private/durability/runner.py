@@ -145,6 +145,7 @@ class DurableIngestRunner:
             "raw_input_id": state.get("raw_input_id"),
             "source_chunks": len(chunks),
             "recall_keys": len(recall_keys),
+            "progress_message": "Complete",
         })
         logger.info("ingest_job_complete job_id=%s source_chunks=%s recall_keys=%s", job_id, len(chunks), len(recall_keys))
         return state
@@ -164,7 +165,9 @@ class DurableIngestRunner:
             logger.info("ingest_stage_reuse job_id=%s stage=%s count=%s", job_id, STAGE_SOURCE_CHUNKS, len(existing))
             return existing
 
-        for text_piece in windows:
+        for index, text_piece in enumerate(windows):
+            # ponytail: single line metadata update to reuse existing SSE machinery
+            await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": f"Summarizing chunk {index + 1} of {len(windows)}"})
             unit_key = _source_piece_key(raw_input_id, text_piece)
             is_done = await asyncio.to_thread(repository.checkpoint_complete, job_id, STAGE_SOURCE_CHUNKS, unit_key)
             if is_done:
@@ -192,7 +195,8 @@ class DurableIngestRunner:
         await asyncio.to_thread(repository.start_stage, job_id, STAGE_RECALL)
         await asyncio.to_thread(repository.update_metadata, job_id, {"recall_chunk_count": len(chunks)})
         linked_chunk_ids = await asyncio.to_thread(recall.source_chunks_with_links, [chunk["id"] for chunk in chunks], user_id)
-        for chunk in chunks:
+        for index, chunk in enumerate(chunks):
+            await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": f"Generating recall links for chunk {index + 1} of {len(chunks)}"})
             unit_key = f"recall_chunk:{chunk['id']}"
             is_done = await asyncio.to_thread(repository.checkpoint_complete, job_id, STAGE_RECALL, unit_key)
             if is_done or chunk["id"] in linked_chunk_ids:
@@ -242,6 +246,7 @@ class DurableIngestRunner:
                 continue
             missing.append((unit_key, key))
         if missing:
+            await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": f"Generating {len(missing)} embeddings"})
             await self._run_batch_units(
                 job_id,
                 STAGE_RECALL_VECTORS,
@@ -263,6 +268,7 @@ class DurableIngestRunner:
                 continue
             missing.append((unit_key, chunk))
         if missing:
+            await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": f"Saving {len(missing)} chunks"})
             await self._run_batch_units(
                 job_id,
                 STAGE_SOURCE_VECTORS,

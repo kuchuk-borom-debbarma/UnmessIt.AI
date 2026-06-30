@@ -20,6 +20,7 @@ type JobMetadata = {
   recall_vector_count?: number
   source_vector_count?: number
   directory_path?: string
+  progress_message?: string
 }
 
 type IngestJob = {
@@ -276,6 +277,12 @@ export function JobsView({ token }: { token: string }) {
                         {job.error && (
                           <div className="text-red-400 mt-1 bg-red-950/30 px-3 py-2 rounded-md border border-red-900/50">
                             {job.error}
+                          </div>
+                        )}
+                        {job.metadata?.progress_message && job.status === 'running' && (
+                          <div className="text-amber-400 mt-1 bg-amber-950/30 px-3 py-2 rounded-md border border-amber-900/50 flex items-center gap-2">
+                             <RefreshCw className="animate-spin" size={12} />
+                             {job.metadata.progress_message}
                           </div>
                         )}
                         <div className="flex flex-wrap items-center gap-3 mt-1.5 font-mono text-[10px] uppercase tracking-widest text-zinc-500">
