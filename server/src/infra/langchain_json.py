@@ -41,7 +41,9 @@ class JsonLLMClient:
             except Exception as exc:
                 last_error = exc
                 logger.warning("llm_json_parse_failed attempt=%s error=%s", attempt, exc)
-                messages = _repair_messages(content, str(exc)) if content.strip() else messages
+                if not content.strip():
+                    raise ValueError(f"LLM API error: {exc}") from exc
+                messages = _repair_messages(content, str(exc))
         raise ValueError(f"LLM returned invalid JSON: {last_error}")
 
     async def async_invoke_json(self, system: str, human: str, user_id: str) -> dict[str, Any]:
@@ -92,7 +94,10 @@ class JsonLLMClient:
             except Exception as exc:
                 last_error = exc
                 logger.warning("llm_json_parse_failed_async attempt=%s error=%s", attempt, exc)
-                messages = _repair_messages(content, str(exc)) if content.strip() else messages
+                if not content.strip():
+                    # Network or API error (e.g. rate limit), don't hammer the same API. Rotate immediately.
+                    raise ValueError(f"LLM API error (async): {exc}") from exc
+                messages = _repair_messages(content, str(exc))
         raise ValueError(f"LLM returned invalid JSON (async): {last_error}")
 
 @lru_cache(maxsize=1)
