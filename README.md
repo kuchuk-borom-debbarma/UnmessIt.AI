@@ -6,7 +6,7 @@
 
 UnmessIt.AI is your Personal RAG AI. It turns your messy, scattered notes into a reliable knowledge engine. 
 
-Stop digging through folders to find what you wrote weeks ago. Just dump your notes, organize them how you like, and ask natural-language questions. UnmessIt uses Retrieval-Augmented Generation (RAG) to instantly synthesize exact answers directly from your notes, fully backed by citations you can trust.
+Stop digging through folders to find what you wrote weeks ago. Just dump your notes, organize them how you like, and ask natural-language questions. UnmessIt uses Retrieval-Augmented Generation (RAG) to instantly synthesize exact answers directly from your notes. You can restrict the AI's search to specific directories, or ask across everything—fully backed by citations you can trust.
 
 ## Major Features
 
@@ -50,7 +50,8 @@ http://localhost:2831
 2. Open **Settings** and add an OpenAI API key preset.
 3. Create a note.
 4. Wait for it to index.
-5. Ask a question!
+5. Filter the AI search scope to specific directories (optional).
+6. Ask a question!
 
 ### Custom Configuration
 
