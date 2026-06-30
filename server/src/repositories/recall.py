@@ -150,6 +150,23 @@ def keys_for_source_chunks(source_chunk_ids: list[str], user_id: str) -> list[di
     return [_key_from_row(row) for row in rows]
 
 
+def count_links_for_source_chunks(source_chunk_ids: list[str], user_id: str) -> int:
+    """Count recall links connected to the given source chunks."""
+    clean_ids = [chunk_id for chunk_id in dict.fromkeys(source_chunk_ids) if chunk_id]
+    if not clean_ids:
+        return 0
+    placeholders = ", ".join("?" for _ in clean_ids)
+    row = get_connection().execute(
+        f"""
+        SELECT COUNT(*) AS c
+        FROM recall_links
+        WHERE source_chunk_id IN ({placeholders}) AND user_id = ?
+        """,
+        [*clean_ids, user_id],
+    ).fetchone()
+    return int(row["c"] if row else 0)
+
+
 def linked_source_chunk_ids(recall_key_ids: list[str], user_id: str, limit: int = 12, within_directories: list[str] | None = None, excluding_directories: list[str] | None = None, within_tags: list[str] | None = None, excluding_tags: list[str] | None = None, within_tags_condition: str = "any") -> list[str]:
     """Return chunks connected to recall keys for one-hop query expansion."""
     clean_ids = [key_id for key_id in dict.fromkeys(recall_key_ids) if key_id]
@@ -534,4 +551,3 @@ def get_paginated_links_for_note(note_id: str, user_id: str, page: int = 1, limi
         links.append(link)
 
     return {"total": total, "page": page, "limit": limit, "links": links}
-

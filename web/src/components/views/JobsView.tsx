@@ -7,6 +7,21 @@ import { Link } from 'react-router-dom'
 
 type JobStatus = 'queued' | 'running' | 'waiting_retry' | 'complete' | 'failed' | 'aborted' | 'paused'
 
+type JobMetadata = {
+  input_chars?: number
+  source_window_count?: number
+  source_chunk_count?: number
+  source_chunks?: number
+  source_chunks_reused?: number
+  recall_chunk_count?: number
+  recall_key_count?: number
+  recall_keys?: number
+  recall_link_count?: number
+  recall_vector_count?: number
+  source_vector_count?: number
+  directory_path?: string
+}
+
 type IngestJob = {
   id: string
   note_id: string
@@ -17,10 +32,30 @@ type IngestJob = {
   error: string | null
   created_at: string
   updated_at: string
+  metadata?: JobMetadata
 }
 
 type Toast = { tone: 'success' | 'danger'; message: string }
 type JobsResponse = { data: IngestJob[], total: number, page: number, limit: number }
+
+function numberMetric(value?: number) {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : null
+}
+
+function jobMetrics(job: IngestJob) {
+  const metadata = job.metadata ?? {}
+  const items = [
+    ['Input', numberMetric(metadata.input_chars)],
+    ['Windows', numberMetric(metadata.source_window_count)],
+    ['Chunks', numberMetric(metadata.source_chunk_count ?? metadata.source_chunks)],
+    ['Recall chunks', numberMetric(metadata.recall_chunk_count)],
+    ['Recall keys', numberMetric(metadata.recall_key_count ?? metadata.recall_keys)],
+    ['Recall links', numberMetric(metadata.recall_link_count)],
+    ['Key vectors', numberMetric(metadata.recall_vector_count)],
+    ['Chunk vectors', numberMetric(metadata.source_vector_count)],
+  ]
+  return items.filter((item): item is [string, string] => item[1] !== null)
+}
 
 function ToastMessage({ toast }: { toast: Toast }) {
   return (
@@ -156,109 +191,121 @@ export function JobsView({ token }: { token: string }) {
                 &gt; No active or historical jobs found.
               </motion.div>
             ) : (
-              jobs.map(job => (
-                <motion.div 
-                  key={job.id} 
-                  layout
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 rounded-xl bg-black border border-[#222] hover:border-primary-500/30 transition-colors font-mono text-sm"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-3 mb-2">
-                      {job.status === 'complete' && <CheckCircle2 className="text-primary-500" size={16} />}
-                      {job.status === 'failed' && <AlertCircle className="text-red-500" size={16} />}
-                      {job.status === 'aborted' && <AlertCircle className="text-red-500" size={16} />}
-                      {job.status === 'running' && <RefreshCw className="animate-spin text-amber-500" size={16} />}
-                      {job.status === 'queued' && <Clock3 className="text-muted-foreground" size={16} />}
-                      {job.status === 'waiting_retry' && <Clock3 className="text-amber-500" size={16} />}
-                      {job.status === 'paused' && <Pause className="text-muted-foreground" size={16} />}
+              jobs.map(job => {
+                const metrics = jobMetrics(job)
+                return (
+                  <motion.div
+                    key={job.id}
+                    layout
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 rounded-xl bg-black border border-[#222] hover:border-primary-500/30 transition-colors font-mono text-sm"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-3 mb-2">
+                        {job.status === 'complete' && <CheckCircle2 className="text-primary-500" size={16} />}
+                        {job.status === 'failed' && <AlertCircle className="text-red-500" size={16} />}
+                        {job.status === 'aborted' && <AlertCircle className="text-red-500" size={16} />}
+                        {job.status === 'running' && <RefreshCw className="animate-spin text-amber-500" size={16} />}
+                        {job.status === 'queued' && <Clock3 className="text-muted-foreground" size={16} />}
+                        {job.status === 'waiting_retry' && <Clock3 className="text-amber-500" size={16} />}
+                        {job.status === 'paused' && <Pause className="text-muted-foreground" size={16} />}
+
+                        <span className={cn(
+                          "font-bold uppercase tracking-wider",
+                          job.status === 'complete' && "text-primary-500",
+                          job.status === 'failed' && "text-red-500",
+                          job.status === 'aborted' && "text-red-500",
+                          job.status === 'running' && "text-amber-500",
+                          job.status === 'waiting_retry' && "text-amber-500",
+                          job.status === 'queued' && "text-zinc-500",
+                          job.status === 'paused' && "text-zinc-500",
+                        )}>
+                          [{job.status}]
+                        </span>
+                        <span className="text-zinc-500 truncate hidden md:inline-block">Job ID: {job.id}</span>
+                      </div>
                       
-                      <span className={cn(
-                        "font-bold uppercase tracking-wider",
-                        job.status === 'complete' && "text-primary-500",
-                        job.status === 'failed' && "text-red-500",
-                        job.status === 'aborted' && "text-red-500",
-                        job.status === 'running' && "text-amber-500",
-                        job.status === 'waiting_retry' && "text-amber-500",
-                        job.status === 'queued' && "text-zinc-500",
-                        job.status === 'paused' && "text-zinc-500",
-                      )}>
-                        [{job.status}]
-                      </span>
-                      <span className="text-zinc-500 truncate hidden md:inline-block">Job ID: {job.id}</span>
-                    </div>
-                    
-                    <div className="flex flex-col gap-1 text-xs text-zinc-500 pl-7">
-                      <div className="flex items-center gap-2">
-                        {job.note_text ? (
-                          <>
-                            <span className="text-zinc-300 line-clamp-1 italic max-w-md">"{job.note_text}"</span>
-                            <Link 
-                              to={`/notes/${job.id}`}
-                              className="inline-flex items-center gap-1 hover:text-primary-400 transition-colors bg-primary-500/10 text-primary-500 px-2 py-0.5 rounded-md"
-                              title="View Note"
-                            >
-                              View Note <ExternalLink size={12} />
-                            </Link>
-                          </>
-                        ) : (
-                          <span>Internal Task</span>
+                      <div className="flex flex-col gap-1 text-xs text-zinc-500 pl-7">
+                        <div className="flex items-center gap-2">
+                          {job.note_text ? (
+                            <>
+                              <span className="text-zinc-300 line-clamp-1 italic max-w-md">"{job.note_text}"</span>
+                              <Link
+                                to={`/notes/${job.id}`}
+                                className="inline-flex items-center gap-1 hover:text-primary-400 transition-colors bg-primary-500/10 text-primary-500 px-2 py-0.5 rounded-md"
+                                title="View Note"
+                              >
+                                View Note <ExternalLink size={12} />
+                              </Link>
+                            </>
+                          ) : (
+                            <span>Internal Task</span>
+                          )}
+                        </div>
+                        {job.error && (
+                          <div className="text-red-400 mt-1 bg-red-950/30 px-3 py-2 rounded-md border border-red-900/50">
+                            {job.error}
+                          </div>
+                        )}
+                        <div className="flex flex-wrap items-center gap-3 mt-1.5 font-mono text-[10px] uppercase tracking-widest text-zinc-500">
+                          <span className="flex items-center gap-1">
+                            Stage: <span className="text-zinc-300">{job.stage}</span>
+                          </span>
+                          <span>&bull;</span>
+                          <span className="flex items-center gap-1">
+                            Attempts: <span className="text-zinc-300">{job.attempt_count}</span>
+                          </span>
+                          <span>&bull;</span>
+                          <span className="flex items-center gap-1">
+                            Updated: <span className="text-zinc-300">{new Date(job.updated_at).toLocaleTimeString()}</span>
+                          </span>
+                        </div>
+                        {metrics.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-2 mt-1.5 font-mono text-[10px] uppercase tracking-widest text-zinc-500">
+                            {metrics.map(([label, value]) => (
+                              <span key={label} className="inline-flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-950 px-2 py-0.5">
+                                {label}: <span className="text-zinc-300">{value}</span>
+                              </span>
+                            ))}
+                          </div>
                         )}
                       </div>
-                      {job.error && (
-                        <div className="text-red-400 mt-1 bg-red-950/30 px-3 py-2 rounded-md border border-red-900/50">
-                          {job.error}
-                        </div>
-                      )}
-                      <div className="flex flex-wrap items-center gap-3 mt-1.5 font-mono text-[10px] uppercase tracking-widest text-zinc-500">
-                        <span className="flex items-center gap-1">
-                          Stage: <span className="text-zinc-300">{job.stage}</span>
-                        </span>
-                        <span>&bull;</span>
-                        <span className="flex items-center gap-1">
-                          Attempts: <span className="text-zinc-300">{job.attempt_count}</span>
-                        </span>
-                        <span>&bull;</span>
-                        <span className="flex items-center gap-1">
-                          Updated: <span className="text-zinc-300">{new Date(job.updated_at).toLocaleTimeString()}</span>
-                        </span>
-                      </div>
                     </div>
-                  </div>
 
-                  <div className="flex items-center gap-2 pl-7 md:pl-0">
-                    {(job.status === 'queued' || job.status === 'running' || job.status === 'waiting_retry') && (
+                    <div className="flex items-center gap-2 pl-7 md:pl-0">
+                      {(job.status === 'queued' || job.status === 'running' || job.status === 'waiting_retry') && (
+                        <button
+                          disabled={busyJobId === job.id}
+                          onClick={() => pauseJob(job.id)}
+                          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 transition-colors border border-amber-500/20 disabled:opacity-50 disabled:pointer-events-none"
+                          title="Pause Job"
+                        >
+                          <Pause size={14} /> Pause
+                        </button>
+                      )}
+                      {(job.status === 'failed' || job.status === 'paused') && (
+                        <button
+                          disabled={busyJobId === job.id}
+                          onClick={() => resumeJob(job.id)}
+                          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary-500/10 text-primary-500 hover:bg-primary-500/20 transition-colors border border-primary-500/20 disabled:opacity-50 disabled:pointer-events-none"
+                        >
+                          <Play size={14} /> Resume
+                        </button>
+                      )}
                       <button 
                         disabled={busyJobId === job.id}
-                        onClick={() => pauseJob(job.id)}
-                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 text-amber-500 hover:bg-amber-500/20 transition-colors border border-amber-500/20 disabled:opacity-50 disabled:pointer-events-none"
-                        title="Pause Job"
+                        onClick={() => deleteJob(job.id)}
+                        className="flex items-center justify-center w-8 h-8 rounded-lg bg-zinc-900 border border-[#222] text-zinc-500 hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-500 transition-colors ml-1 disabled:opacity-50 disabled:pointer-events-none"
+                        title="Stop and Delete Job"
                       >
-                        <Pause size={14} /> Pause
+                        <Square size={14} />
                       </button>
-                    )}
-                    {(job.status === 'failed' || job.status === 'paused') && (
-                      <button 
-                        disabled={busyJobId === job.id}
-                        onClick={() => resumeJob(job.id)}
-                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary-500/10 text-primary-500 hover:bg-primary-500/20 transition-colors border border-primary-500/20 disabled:opacity-50 disabled:pointer-events-none"
-                      >
-                        <Play size={14} /> Resume
-                      </button>
-                    )}
-                    <button 
-                      disabled={busyJobId === job.id}
-                      onClick={() => deleteJob(job.id)}
-                      className="flex items-center justify-center w-8 h-8 rounded-lg bg-zinc-900 border border-[#222] text-zinc-500 hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-500 transition-colors ml-1 disabled:opacity-50 disabled:pointer-events-none"
-                      title="Stop and Delete Job"
-                    >
-                      <Square size={14} />
-                    </button>
-                  </div>
-                </motion.div>
-              ))
+                    </div>
+                  </motion.div>
+                )
+              })
             )}
           </AnimatePresence>
         </div>

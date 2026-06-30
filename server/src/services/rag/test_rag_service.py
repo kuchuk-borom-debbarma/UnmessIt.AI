@@ -546,7 +546,22 @@ async def test_durable_source_chunks_resume_from_next_unfinished_piece(monkeypat
     await runner.run_once(job["id"])
 
     assert drafts.calls == ["one", "two", "two"]
-    assert durability_repo.get(job["id"])["status"] == "complete"
+    completed = durability_repo.get(job["id"])
+    assert completed["status"] == "complete"
+    assert completed["metadata"] == {
+        "raw_input_id": raw_id,
+        "input_chars": 7,
+        "directory_path": "",
+        "source_window_count": 2,
+        "source_chunk_count": 2,
+        "recall_chunk_count": 2,
+        "recall_key_count": 2,
+        "recall_link_count": 2,
+        "recall_vector_count": 2,
+        "source_vector_count": 2,
+        "source_chunks": 2,
+        "recall_keys": 2,
+    }
     assert len(source_chunks.get_by_raw_input_id(raw_id)) == 2
 
 

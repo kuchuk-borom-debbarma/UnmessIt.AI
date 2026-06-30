@@ -169,15 +169,41 @@ def set_raw_input(job_id: str, raw_input_id: str) -> None:
 
 def reset_attempts(job_id: str) -> None:
     """A successful unit resets retries for the next failing unit."""
+    job = get(job_id)
+    metadata = {**((job or {}).get("metadata") or {})}
+    metadata.pop("failed_unit_key", None)
     get_connection().execute(
-        "UPDATE ingest_jobs SET attempt_count = 0, error = NULL, next_run_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (job_id,),
+        """
+        UPDATE ingest_jobs
+        SET attempt_count = 0, error = NULL, next_run_at = NULL,
+            metadata = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (json.dumps(metadata, ensure_ascii=False), job_id),
+    )
+    get_connection().commit()
+
+
+def update_metadata(job_id: str, updates: dict[str, Any]) -> None:
+    """Merge inspectable progress metadata into a job row."""
+    if not updates:
+        return
+    job = get(job_id)
+    if not job:
+        return
+    metadata = {**(job.get("metadata") or {}), **updates}
+    get_connection().execute(
+        "UPDATE ingest_jobs SET metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (json.dumps(metadata, ensure_ascii=False), job_id),
     )
     get_connection().commit()
 
 
 def complete(job_id: str, metadata: dict[str, Any]) -> None:
     """Mark a job complete with final counts."""
+    job = get(job_id)
+    merged_metadata = {**((job or {}).get("metadata") or {}), **metadata}
+    merged_metadata.pop("failed_unit_key", None)
     get_connection().execute(
         """
         UPDATE ingest_jobs
@@ -185,7 +211,7 @@ def complete(job_id: str, metadata: dict[str, Any]) -> None:
             metadata = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
-        (STATUS_COMPLETE, STATUS_COMPLETE, json.dumps(metadata, ensure_ascii=False), job_id),
+        (STATUS_COMPLETE, STATUS_COMPLETE, json.dumps(merged_metadata, ensure_ascii=False), job_id),
     )
     get_connection().commit()
 

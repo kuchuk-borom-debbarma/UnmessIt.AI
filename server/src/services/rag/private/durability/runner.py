@@ -91,6 +91,11 @@ class DurableIngestRunner:
         raw_text = raw_input["content"]
         directory_path = await asyncio.to_thread(_directory_path, job_id)
         await asyncio.to_thread(repository.start_stage, job_id, STAGE_RAW_INPUT)
+        await asyncio.to_thread(repository.update_metadata, job_id, {
+            "raw_input_id": job["raw_input_id"],
+            "input_chars": len(raw_text),
+            "directory_path": directory_path or "",
+        })
         await asyncio.to_thread(repository.complete_checkpoint, job_id, STAGE_RAW_INPUT, f"raw_input:{job['raw_input_id']}", job["raw_input_id"])
         return {**state, "raw_input_id": job["raw_input_id"], "raw_text": raw_text, "user_id": raw_input["user_id"], "directory_path": directory_path}
 
@@ -121,11 +126,13 @@ class DurableIngestRunner:
         """Index recall keys connected to this job's source chunks."""
         recall_keys = await asyncio.to_thread(recall.keys_for_source_chunks, [chunk["id"] for chunk in state["chunks"]], state["user_id"])
         await self._recall_vectors(state["job_id"], recall_keys)
+        await asyncio.to_thread(repository.update_metadata, state["job_id"], {"recall_vector_count": len(recall_keys)})
         return {**state, "recall_keys": recall_keys}
 
     async def _source_vector_node(self, state: IngestGraphState) -> IngestGraphState:
         """Index saved source chunks after recall-key vectors."""
         await self._source_vectors(state["job_id"], state["chunks"])
+        await asyncio.to_thread(repository.update_metadata, state["job_id"], {"source_vector_count": len(state["chunks"])})
         return state
 
     async def _complete_node(self, state: IngestGraphState) -> IngestGraphState:
@@ -144,20 +151,30 @@ class DurableIngestRunner:
     async def _source_chunks(self, job_id: str, raw_input_id: str, raw_text: str, user_id: str, directory_path: str | None) -> list[SourceChunk]:
         """Create chunks for only unfinished text pieces."""
         await asyncio.to_thread(repository.start_stage, job_id, STAGE_SOURCE_CHUNKS)
+        windows = list(self.source_windows.run(raw_text, user_id))
+        await asyncio.to_thread(repository.update_metadata, job_id, {"source_window_count": len(windows)})
         existing = await asyncio.to_thread(source_chunks.get_by_raw_input_id, raw_input_id)
         has_checkpoints = await asyncio.to_thread(repository.has_stage_checkpoints, job_id, STAGE_SOURCE_CHUNKS)
         if existing and not has_checkpoints:
+            await asyncio.to_thread(repository.update_metadata, job_id, {
+                "source_chunk_count": len(existing),
+                "source_chunks_reused": len(existing),
+            })
             logger.info("ingest_stage_reuse job_id=%s stage=%s count=%s", job_id, STAGE_SOURCE_CHUNKS, len(existing))
             return existing
 
-        for text_piece in self.source_windows.run(raw_text, user_id):
+        for text_piece in windows:
             unit_key = _source_piece_key(raw_input_id, text_piece)
             is_done = await asyncio.to_thread(repository.checkpoint_complete, job_id, STAGE_SOURCE_CHUNKS, unit_key)
             if is_done:
                 logger.info("ingest_unit_reuse job_id=%s stage=%s unit=%s", job_id, STAGE_SOURCE_CHUNKS, unit_key)
                 continue
             await self._run_unit(job_id, STAGE_SOURCE_CHUNKS, unit_key, lambda tp=text_piece: self._build_source_piece(raw_input_id, raw_text, user_id, tp, unit_key, directory_path))
-        return await asyncio.to_thread(source_chunks.get_by_raw_input_id, raw_input_id)
+            current_chunks = await asyncio.to_thread(source_chunks.get_by_raw_input_id, raw_input_id)
+            await asyncio.to_thread(repository.update_metadata, job_id, {"source_chunk_count": len(current_chunks)})
+        chunks = await asyncio.to_thread(source_chunks.get_by_raw_input_id, raw_input_id)
+        await asyncio.to_thread(repository.update_metadata, job_id, {"source_chunk_count": len(chunks)})
+        return chunks
 
     async def _build_source_piece(self, raw_input_id: str, raw_text: str, user_id: str, text_piece: SourceWindow, unit_key: str, directory_path: str | None) -> tuple[str, dict[str, Any]]:
         """Summarize one text piece, then save the full piece as evidence."""
@@ -172,15 +189,28 @@ class DurableIngestRunner:
     async def _recall(self, job_id: str, raw_text: str, user_id: str, chunks: list[SourceChunk]) -> None:
         """Create recall links only for chunks without completed recall work."""
         await asyncio.to_thread(repository.start_stage, job_id, STAGE_RECALL)
+        await asyncio.to_thread(repository.update_metadata, job_id, {"recall_chunk_count": len(chunks)})
         linked_chunk_ids = await asyncio.to_thread(recall.source_chunks_with_links, [chunk["id"] for chunk in chunks], user_id)
         for chunk in chunks:
             unit_key = f"recall_chunk:{chunk['id']}"
             is_done = await asyncio.to_thread(repository.checkpoint_complete, job_id, STAGE_RECALL, unit_key)
             if is_done or chunk["id"] in linked_chunk_ids:
                 await asyncio.to_thread(repository.complete_checkpoint, job_id, STAGE_RECALL, unit_key, chunk["id"], {"reused": True})
+                await self._update_recall_counts(job_id, chunks, user_id)
                 logger.info("ingest_unit_reuse job_id=%s stage=%s unit=%s", job_id, STAGE_RECALL, unit_key)
                 continue
             await self._run_unit(job_id, STAGE_RECALL, unit_key, lambda c=chunk: self._build_recall(raw_text, user_id, c))
+            await self._update_recall_counts(job_id, chunks, user_id)
+
+    async def _update_recall_counts(self, job_id: str, chunks: list[SourceChunk], user_id: str) -> None:
+        """Refresh job-level recall counters from saved evidence."""
+        chunk_ids = [chunk["id"] for chunk in chunks]
+        recall_keys = await asyncio.to_thread(recall.keys_for_source_chunks, chunk_ids, user_id)
+        recall_link_count = await asyncio.to_thread(recall.count_links_for_source_chunks, chunk_ids, user_id)
+        await asyncio.to_thread(repository.update_metadata, job_id, {
+            "recall_key_count": len(recall_keys),
+            "recall_link_count": recall_link_count,
+        })
 
     async def _build_recall(self, raw_text: str, user_id: str, chunk: SourceChunk) -> tuple[str, dict[str, Any]]:
         """Run recall indexing for one source chunk."""

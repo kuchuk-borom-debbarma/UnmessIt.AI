@@ -375,16 +375,33 @@ SQLite raw inputs and source chunks.
 
 ## Completion
 
-When all stages finish, the runner marks the job complete and stores counts in
-`ingest_jobs.metadata`:
+As stages run, the runner merges inspectable counters into
+`ingest_jobs.metadata`. Existing rows keep whatever metadata they already have;
+new or resumed rows gain these fields as they pass each stage:
 
 ```json
 {
   "raw_input_id": "...",
+  "input_chars": 12345,
+  "directory_path": "/notes/",
+  "source_window_count": 4,
+  "source_chunk_count": 4,
+  "source_chunks_reused": 0,
+  "recall_chunk_count": 4,
+  "recall_key_count": 12,
+  "recall_link_count": 18,
+  "recall_vector_count": 12,
+  "source_vector_count": 4,
   "source_chunks": 3,
   "recall_keys": 8
 }
 ```
+
+`source_chunks` and `recall_keys` are legacy completion aliases. Prefer
+`source_chunk_count` and `recall_key_count` for new UI or diagnostics.
+
+When all stages finish, the runner marks the job complete and stores final
+counts while preserving earlier progress metadata.
 
 The job status becomes `complete`, the stage becomes `complete`, retry state is
 cleared, and the completion is logged.
