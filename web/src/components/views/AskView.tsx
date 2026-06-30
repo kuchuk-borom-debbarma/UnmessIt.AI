@@ -368,7 +368,7 @@ export function AskView({ token }: { token: string }) {
                   {result.citations.map((citation, i) => (
                     <Link 
                       key={i} 
-                      to={`/notes/${citation.source_input_id}`}
+                      to={`/notes/${citation.source_input_id}?start=${citation.start_char || ''}&end=${citation.end_char || ''}`}
                       className="group p-4 rounded-2xl bg-input/50 border border-border/50 hover:bg-input hover:border-primary-500/50 transition-colors block"
                     >
                       <div className="flex items-center justify-between mb-2">

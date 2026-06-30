@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Tag, RefreshCw, Trash2, FolderOpen, BrainCircuit } from 'lucide-react'
 import { api, type Note, type Directory } from '../../lib/api'
 import { motion } from 'framer-motion'
@@ -11,6 +11,10 @@ export function NoteDetailView({ token }: { token: string }) {
   const [note, setNote] = useState<Note | null>(null)
   const [directory, setDirectory] = useState<Directory | null>(null)
   const [loading, setLoading] = useState(true)
+  const [searchParams] = useSearchParams()
+
+  const highlightStart = parseInt(searchParams.get('start') || '-1', 10)
+  const highlightEnd = parseInt(searchParams.get('end') || '-1', 10)
 
   const load = useCallback(async () => {
     if (!id) return
@@ -33,6 +37,41 @@ export function NoteDetailView({ token }: { token: string }) {
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    if (note && highlightStart >= 0) {
+      setTimeout(() => {
+        const el = document.getElementById('citation-highlight')
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          el.classList.add('bg-primary-500/60')
+          setTimeout(() => el.classList.remove('bg-primary-500/60'), 2000)
+        }
+      }, 100)
+    }
+  }, [note, highlightStart])
+
+  const renderNoteText = () => {
+    if (!note) return null
+    if (highlightStart >= 0 && highlightEnd > highlightStart && highlightEnd <= note.text.length) {
+      const before = note.text.slice(0, highlightStart)
+      const highlight = note.text.slice(highlightStart, highlightEnd)
+      const after = note.text.slice(highlightEnd)
+      return (
+        <>
+          {before}
+          <mark 
+            id="citation-highlight" 
+            className="bg-primary-500/30 text-foreground rounded px-1 py-0.5 transition-colors duration-1000"
+          >
+            {highlight}
+          </mark>
+          {after}
+        </>
+      )
+    }
+    return note.text
+  }
 
   if (loading) {
     return (
@@ -100,9 +139,9 @@ export function NoteDetailView({ token }: { token: string }) {
         </div>
 
         <div className="prose prose-lg dark:prose-invert max-w-none">
-          <p className="text-lg leading-8 text-foreground/90 whitespace-pre-wrap">
-            {note.text}
-          </p>
+          <div className="text-lg leading-8 text-foreground/90 whitespace-pre-wrap">
+            {renderNoteText()}
+          </div>
         </div>
 
         <div className="mt-12 pt-6 border-t border-border/50 flex flex-wrap items-center justify-between gap-4 text-sm text-muted-foreground font-semibold">
