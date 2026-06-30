@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import Any
+from typing import Any, Callable, Awaitable
 
 from src.repositories import recall, recall_key_vectors
 from src.services.rag.models import SourceChunk
@@ -14,13 +14,20 @@ logger = logging.getLogger(__name__)
 class RecallCandidateChain:
     """Find already-known names/topics that the new chunks may mention."""
 
-    async def run(self, raw_text: str, user_id: str, source_chunks: list[SourceChunk]) -> list[dict[str, Any]]:
+    async def run(self, raw_text: str, user_id: str, source_chunks: list[SourceChunk], on_progress: Callable[[str], Awaitable[None]] | None = None) -> list[dict[str, Any]]:
         """Return top possible matches so the LLM can reuse them instead of inventing duplicates."""
+        if on_progress: await on_progress("extracting terms from chunk entities")
         terms = _important_terms(raw_text, source_chunks)
+        if on_progress: await on_progress("building semantic search string")
         text = _search_text(raw_text, source_chunks)
 
+        if on_progress: await on_progress(f"searching sqlite for {len(terms)} term(s)")
         candidates = await asyncio.to_thread(recall.find_candidate_keys, terms, user_id, limit=20)
+        
+        if on_progress: await on_progress(f"searching vectors for semantic matches")
         vector_candidates = await _vector_candidates(text, user_id, limit=20)
+        
+        if on_progress: await on_progress("merging exact, keyword, and vector results")
         merged = _merge_candidates([*candidates, *vector_candidates], limit=20)
         logger.info(
             "recall_candidates chunks=%s terms=%s sqlite=%s vector=%s merged=%s sources=%s",

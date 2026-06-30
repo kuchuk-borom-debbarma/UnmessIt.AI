@@ -217,6 +217,7 @@ CREATE TABLE IF NOT EXISTS user_config_presets (
     
     llm_rate_limit_per_minute INTEGER NOT NULL DEFAULT 0,
     embedding_rate_limit_per_minute INTEGER NOT NULL DEFAULT 0,
+    embedding_batch_size INTEGER NOT NULL DEFAULT 100,
     
     chunk_size INTEGER NOT NULL DEFAULT 1000,
     chunk_overlap INTEGER NOT NULL DEFAULT 200,

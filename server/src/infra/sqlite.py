@@ -55,6 +55,7 @@ def init_db() -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_recall_links_user_id ON recall_links(user_id)")
     _add_column_if_missing(conn, "user_config_presets", "llm_rate_limit_per_minute", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(conn, "user_config_presets", "embedding_rate_limit_per_minute", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(conn, "user_config_presets", "embedding_batch_size", "INTEGER NOT NULL DEFAULT 100")
     _add_column_if_missing(conn, "user_config_presets", "ingest_retry_backoff_seconds", "TEXT NOT NULL DEFAULT '5,15,30,60,120'")
     _add_column_if_missing(conn, "source_chunks", "directory_path", "TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_directories_user_name ON directories(user_id, name)")

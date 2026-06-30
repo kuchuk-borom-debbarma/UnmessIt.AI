@@ -60,9 +60,9 @@ def save(preset: dict[str, Any], user_id: str) -> str:
             id, user_id, name, is_active,
             llm_provider, llm_model, llm_base_url, llm_api_key, llm_temperature, llm_max_retries, llm_max_tokens,
             embedding_provider, embedding_model, embedding_base_url, embedding_api_key,
-            llm_rate_limit_per_minute, embedding_rate_limit_per_minute,
+            llm_rate_limit_per_minute, embedding_rate_limit_per_minute, embedding_batch_size,
             chunk_size, chunk_overlap, ingest_retry_backoff_seconds
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name=excluded.name,
             is_active=excluded.is_active,
@@ -79,6 +79,7 @@ def save(preset: dict[str, Any], user_id: str) -> str:
             embedding_api_key=excluded.embedding_api_key,
             llm_rate_limit_per_minute=excluded.llm_rate_limit_per_minute,
             embedding_rate_limit_per_minute=excluded.embedding_rate_limit_per_minute,
+            embedding_batch_size=excluded.embedding_batch_size,
             chunk_size=excluded.chunk_size,
             chunk_overlap=excluded.chunk_overlap,
             ingest_retry_backoff_seconds=excluded.ingest_retry_backoff_seconds,
@@ -102,6 +103,7 @@ def save(preset: dict[str, Any], user_id: str) -> str:
             preset.get("embedding_api_key", ""),
             int(preset.get("llm_rate_limit_per_minute", 0)),
             int(preset.get("embedding_rate_limit_per_minute", 0)),
+            int(preset.get("embedding_batch_size", 100)),
             int(preset.get("chunk_size", 1000)),
             int(preset.get("chunk_overlap", 200)),
             preset.get("ingest_retry_backoff_seconds", "5,15,30,60,120"),

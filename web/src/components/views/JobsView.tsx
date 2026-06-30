@@ -21,6 +21,7 @@ type JobMetadata = {
   source_vector_count?: number
   directory_path?: string
   progress_message?: string
+  progress_logs?: string[]
 }
 
 type IngestJob = {
@@ -279,7 +280,23 @@ export function JobsView({ token }: { token: string }) {
                             {job.error}
                           </div>
                         )}
-                        {job.metadata?.progress_message && job.status === 'running' && (
+                        {job.metadata?.progress_logs && job.metadata.progress_logs.length > 0 && job.status === 'running' && (
+                          <div className="text-amber-400/80 mt-1 bg-amber-950/20 px-3 py-2 rounded-md border border-amber-900/30 font-mono text-[10px] max-h-32 overflow-y-auto flex flex-col gap-1">
+                             {job.metadata.progress_logs.map((log, idx) => (
+                               <div key={idx} className="flex gap-2">
+                                 <span className="text-amber-500/50">&gt;</span>
+                                 <span>{log}</span>
+                               </div>
+                             ))}
+                             {job.metadata?.progress_message && (
+                               <div className="flex gap-2 text-amber-400 animate-pulse mt-1">
+                                 <RefreshCw className="animate-spin mt-0.5" size={10} />
+                                 <span>{job.metadata.progress_message}</span>
+                               </div>
+                             )}
+                          </div>
+                        )}
+                        {!job.metadata?.progress_logs?.length && job.metadata?.progress_message && job.status === 'running' && (
                           <div className="text-amber-400 mt-1 bg-amber-950/30 px-3 py-2 rounded-md border border-amber-900/50 flex items-center gap-2">
                              <RefreshCw className="animate-spin" size={12} />
                              {job.metadata.progress_message}

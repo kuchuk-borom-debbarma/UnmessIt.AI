@@ -21,6 +21,7 @@ type PresetDraft = {
   embedding_base_url: string
   embedding_api_key: string
   embedding_rate_limit_per_minute: number
+  embedding_batch_size: number
   chunk_size: number
   chunk_overlap: number
   ingest_retry_backoff_seconds: string
@@ -41,6 +42,7 @@ const defaultDraft: PresetDraft = {
   embedding_base_url: '',
   embedding_api_key: '',
   embedding_rate_limit_per_minute: 0,
+  embedding_batch_size: 100,
   chunk_size: 1000,
   chunk_overlap: 200,
   ingest_retry_backoff_seconds: '5,15,30,60,120',
@@ -136,6 +138,7 @@ export function SettingsView({ token }: { token: string }) {
       embedding_base_url: preset.embedding_base_url || '',
       embedding_api_key: '',
       embedding_rate_limit_per_minute: preset.embedding_rate_limit_per_minute,
+      embedding_batch_size: preset.embedding_batch_size || 100,
       chunk_size: preset.chunk_size,
       chunk_overlap: preset.chunk_overlap,
       ingest_retry_backoff_seconds: preset.ingest_retry_backoff_seconds || defaultDraft.ingest_retry_backoff_seconds,
@@ -271,6 +274,11 @@ export function SettingsView({ token }: { token: string }) {
                         <label className="block text-xs font-bold mb-1 text-foreground/90">Rate Limit (RPM)</label>
                         <p className="text-[11px] leading-relaxed text-muted-foreground mb-2.5">Max requests per minute. Set to 0 for unlimited.</p>
                         <input type="number" className="premium-input bg-transparent" value={draft.embedding_rate_limit_per_minute} onChange={e => setDraft({ ...draft, embedding_rate_limit_per_minute: parseInt(e.target.value) || 0 })} placeholder="0" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold mb-1 text-foreground/90">Batch Size</label>
+                        <p className="text-[11px] leading-relaxed text-muted-foreground mb-2.5">Number of vectors to embed per API call.</p>
+                        <input type="number" className="premium-input bg-transparent" value={draft.embedding_batch_size} onChange={e => setDraft({ ...draft, embedding_batch_size: parseInt(e.target.value) || 100 })} placeholder="100" />
                       </div>
                     </div>
                   </div>

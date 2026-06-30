@@ -38,6 +38,7 @@ class Settings:
         self.embedding_base_url = _docker_reachable_url(preset.get("embedding_base_url"))
         self.embedding_api_key = preset.get("embedding_api_key") or ""
         self.embedding_rate_limit_per_minute = int(preset.get("embedding_rate_limit_per_minute", 0))
+        self.embedding_batch_size = int(preset.get("embedding_batch_size", 100))
         
         self.chunk_size = int(preset.get("chunk_size", 1000))
         self.chunk_overlap = int(preset.get("chunk_overlap", 200))

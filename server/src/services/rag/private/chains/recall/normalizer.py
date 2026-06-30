@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable, Awaitable
 from uuid import uuid4
 
 from src.repositories import recall
@@ -26,8 +26,10 @@ class RecallNormalizerChain:
         source_chunks: list[SourceChunk],
         user_id: str,
         candidates: list[dict[str, Any]],
+        on_progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> tuple[RecallIndex, list[str]]:
         """Return normalized recall index data and validation errors."""
+        if on_progress: await on_progress("validating chunk IDs and candidates")
         valid_chunk_ids = {chunk["id"] for chunk in source_chunks}
         # Only candidates found by our lookup can be reused; arbitrary LLM IDs are ignored.
         candidates_by_id = {str(candidate["id"]): candidate for candidate in candidates}
@@ -53,6 +55,7 @@ class RecallNormalizerChain:
         if not draft_links:
             errors.append("missing recall_links")
 
+        if on_progress: await on_progress(f"normalizing {len(draft_keys)} drafted recall keys")
         for draft in draft_keys[:8]:
             ref = str(draft.get("ref") or "").strip()
             existing = candidates_by_id.get(str(draft.get("existing_recall_key_id") or "").strip())
@@ -88,6 +91,7 @@ class RecallNormalizerChain:
             keys_by_norm_name[norm_name] = key
             keys.append(key)
 
+        if on_progress: await on_progress(f"normalizing {len(draft_links)} drafted recall links")
         seen_links = set()
         for draft in draft_links[:24]:
             key = key_by_ref.get(str(draft.get("recall_key_ref") or "").strip())
@@ -116,6 +120,7 @@ class RecallNormalizerChain:
                 "metadata": metadata,
             })
 
+        if on_progress: await on_progress("checking for link duplicates and unknown keys")
         linked_key_ids = {link["recall_key_id"] for link in links}
         # Store only keys that have evidence links; loose names without a chunk are not useful yet.
         keys = [key for key in keys if key["id"] in linked_key_ids]

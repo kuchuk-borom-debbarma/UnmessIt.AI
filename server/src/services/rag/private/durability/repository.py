@@ -196,7 +196,17 @@ def update_metadata(job_id: str, updates: dict[str, Any]) -> None:
     job = get(job_id)
     if not job:
         return
-    metadata = {**(job.get("metadata") or {}), **updates}
+    metadata = {**(job.get("metadata") or {})}
+    
+    if "progress_message" in updates and updates["progress_message"]:
+        msg = updates["progress_message"]
+        logs = metadata.get("progress_logs", [])
+        # Only append if it's different from the last log to avoid spamming the same step
+        if not logs or logs[-1] != msg:
+            logs.append(msg)
+            metadata["progress_logs"] = logs[-100:]  # Keep last 100 for terminal view
+            
+    metadata.update(updates)
     get_connection().execute(
         "UPDATE ingest_jobs SET metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         (json.dumps(metadata, ensure_ascii=False), job_id),

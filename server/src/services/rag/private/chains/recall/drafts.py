@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Callable, Awaitable
 
 from src.services.rag.models import SourceChunk
 
@@ -22,10 +22,12 @@ class RecallDraftChain:
         candidates: list[dict[str, Any]],
         user_id: str,
         errors: list[str] | None = None,
+        on_progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> dict[str, Any]:
         """Return raw LLM output before code validates IDs and duplicate links."""
         repair = ""
         if errors:
+            if on_progress: await on_progress("building repair prompt for failed validation")
             repair = "The previous response failed validation. Fix these errors:\n" + "\n".join(f"- {error}" for error in errors[:8]) + "\n\n"
         logger.info(
             "recall_draft_request chunks=%s candidates=%s retry=%s",
@@ -33,6 +35,7 @@ class RecallDraftChain:
             len(candidates),
             bool(errors),
         )
+        if on_progress: await on_progress(f"invoking LLM for {len(source_chunks)} chunk(s) & {len(candidates)} candidate(s)")
         data = await self.json_client.async_invoke_json(
             (
                 "Create recall keys and recall links for source chunks. Return only valid JSON. No markdown.\n"
