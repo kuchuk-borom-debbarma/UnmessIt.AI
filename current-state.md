@@ -144,6 +144,7 @@ Development-only routes:
 
 ## Likely Next Steps
 
+- **Durable Pub/Sub**: Implement durable pub/sub using idempotency and a transactional outbox pattern to guarantee event delivery between the Notes and RAG domains.
 - **Tag Filtering**: Granular control to filter AI searches by specific tags during querying.
 - Add explicit timeline ordering for timeline-style questions if real examples need it.
 - Add a rebuild-vector-index command for embedding model changes.
