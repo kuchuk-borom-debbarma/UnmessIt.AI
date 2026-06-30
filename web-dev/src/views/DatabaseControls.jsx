@@ -12,7 +12,7 @@ export default function DatabaseControls() {
 
     setStatus('wiping')
     try {
-      await axios.delete('http://localhost:8000/dev/facts')
+      await axios.delete('http://localhost:2317/dev/facts')
       setStatus('success')
       setTimeout(() => setStatus('idle'), 3000)
     } catch (err) {

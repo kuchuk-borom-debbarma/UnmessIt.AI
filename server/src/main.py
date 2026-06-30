@@ -74,3 +74,9 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+if __name__ == "__main__":
+    import uvicorn
+    
+    # Run the server on the default port 2317
+    uvicorn.run("src.main:app", host="127.0.0.1", port=2317, reload=True)

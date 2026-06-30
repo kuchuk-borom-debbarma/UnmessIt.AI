@@ -42,7 +42,7 @@ docker compose up --build
 
 Open your browser to:
 ```txt
-http://localhost:5173
+http://localhost:2831
 ```
 
 1. Sign up for a local account.
@@ -51,6 +51,18 @@ http://localhost:5173
 4. Wait for it to index.
 5. Ask a question!
 
+### Custom Configuration
+
+*(Optional)* You can customize the server and web ports by setting the `SERVER_PORT` and `WEB_PORT` environment variables. They work out of the box and automatically configure CORS and API URLs:
+```bash
+SERVER_PORT=8080 WEB_PORT=3000 docker compose up --build
+```
+*(If you changed `WEB_PORT`, go to `http://localhost:<WEB_PORT>` instead)*
+
+If you are deploying to a specific domain or need advanced networking configuration, you can also manually override `VITE_API_BASE_URL` and `CORS_ORIGINS` directly:
+```bash
+CORS_ORIGINS="https://my-frontend.com" VITE_API_BASE_URL="https://api.my-backend.com" docker compose up --build
+```
 ## Manual Development
 
 Backend (FastAPI):
@@ -58,7 +70,7 @@ Backend (FastAPI):
 cd server
 cp .env.example .env
 uv sync
-uv run uvicorn src.main:app --host 127.0.0.1 --port 8000
+uv run python -m src.main
 ```
 
 Frontend (React/Vite):

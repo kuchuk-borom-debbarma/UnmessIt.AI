@@ -128,7 +128,7 @@ export default function RetrievalView() {
     setProgressEvents([])
     
     const clientId = crypto.randomUUID()
-    const eventSource = new EventSource(`http://localhost:8000/api/retrieval/events/${clientId}`)
+    const eventSource = new EventSource(`http://localhost:2317/api/retrieval/events/${clientId}`)
     
     eventSource.addEventListener('progress', (e) => {
         try {
@@ -140,7 +140,7 @@ export default function RetrievalView() {
     })
     
     try {
-      const response = await axios.post('http://localhost:8000/api/retrieval/query', { query, client_id: clientId })
+      const response = await axios.post('http://localhost:2317/api/retrieval/query', { query, client_id: clientId })
       if (typeof response.data === 'object' && response.data.answer) {
          setAnswer(response.data.answer)
          setCitations(response.data.citations || [])
@@ -166,7 +166,7 @@ export default function RetrievalView() {
     }
     setLoadingRaw(true)
     try {
-      const res = await axios.get(`http://localhost:8000/dev/raw_inputs/${citation.source_input_id}`)
+      const res = await axios.get(`http://localhost:2317/dev/raw_inputs/${citation.source_input_id}`)
       setRawInput(res.data.data.content)
     } catch (err) {
       console.error(err)

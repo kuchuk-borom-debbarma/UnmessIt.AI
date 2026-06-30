@@ -16,7 +16,7 @@ The current product frontend lives in `web/`. Use this directory only when you n
 This UI points at:
 
 ```txt
-http://localhost:8000
+http://localhost:2317
 ```
 
 It requires `ENABLE_DEV_ROUTES=1` for the `/dev/*` screens.
