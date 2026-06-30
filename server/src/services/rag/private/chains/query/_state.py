@@ -18,6 +18,8 @@ class QueryState(TypedDict):
     extracted_subjects: list[str]
     user_id: str
     reporter: ProgressReporter | None
+    within_directories: list[str]
+    excluding_directories: list[str]
     # operator.add merges chunk lists across parallel/sequential sub-query nodes.
     chunks: Annotated[list[dict[str, Any]], operator.add]
     trace_parts: Annotated[list[dict[str, Any]], operator.add]

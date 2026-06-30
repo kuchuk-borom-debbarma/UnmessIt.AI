@@ -150,12 +150,30 @@ def keys_for_source_chunks(source_chunk_ids: list[str], user_id: str) -> list[di
     return [_key_from_row(row) for row in rows]
 
 
-def linked_source_chunk_ids(recall_key_ids: list[str], user_id: str, limit: int = 12) -> list[str]:
+def linked_source_chunk_ids(recall_key_ids: list[str], user_id: str, limit: int = 12, within_directories: list[str] | None = None, excluding_directories: list[str] | None = None) -> list[str]:
     """Return chunks connected to recall keys for one-hop query expansion."""
     clean_ids = [key_id for key_id in dict.fromkeys(recall_key_ids) if key_id]
     if not clean_ids or limit <= 0:
         return []
     placeholders = ", ".join("?" for _ in clean_ids)
+    
+    where_clauses = [f"l.recall_key_id IN ({placeholders})", "sc.user_id = ?", "ri.deleted_at IS NULL"]
+    params = [*clean_ids, user_id]
+    
+    if within_directories:
+        dir_clauses = []
+        for path in within_directories:
+            dir_clauses.append("sc.directory_path LIKE ?")
+            params.append(f"{path}%")
+        where_clauses.append(f"({' OR '.join(dir_clauses)})")
+        
+    if excluding_directories:
+        for path in excluding_directories:
+            where_clauses.append("sc.directory_path NOT LIKE ? OR sc.directory_path IS NULL")
+            params.append(f"{path}%")
+            
+    where_sql = " AND ".join(where_clauses)
+    
     rows = get_connection().execute(
         f"""
         SELECT l.source_chunk_id AS id, 
@@ -164,12 +182,12 @@ def linked_source_chunk_ids(recall_key_ids: list[str], user_id: str, limit: int 
         FROM recall_links l
         JOIN source_chunks sc ON sc.id = l.source_chunk_id
         JOIN raw_inputs ri ON ri.id = sc.raw_input_id
-        WHERE l.recall_key_id IN ({placeholders}) AND sc.user_id = ? AND ri.deleted_at IS NULL
+        WHERE {where_sql}
         GROUP BY l.source_chunk_id
         ORDER BY match_count DESC, first_seen ASC
         LIMIT ?
         """,
-        [*clean_ids, user_id, limit],
+        [*params, limit],
     ).fetchall()
     return [row["id"] for row in rows]
 

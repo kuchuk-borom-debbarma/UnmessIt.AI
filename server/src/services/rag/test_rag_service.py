@@ -144,7 +144,7 @@ async def test_query_uses_source_search_and_recall_expansion(monkeypatch):
         def __init__(self, json_client) -> None:
             pass
 
-        async def run(self, query: str, user_id: str, reporter=None):
+        async def run(self, query: str, user_id: str, reporter=None, within_directories=None, excluding_directories=None):
             return [chunk_1, chunk_2], {"mode": "source_chunks_with_recall_expansion", "sub_query_traces": [{"recall_key_count": 1}], "context_chars_saved": 10}
 
     class FakeQueryAnswerChain:
@@ -173,11 +173,11 @@ async def test_query_context_packer_ranks_and_falls_back(monkeypatch):
     lexical = {**_source_chunk("lexical", "No direct overlap in text."), "summary": "fallback summary"}
     linked = {**_source_chunk("linked", "Attack Titan is also linked through recall."), "summary": "linked summary"}
 
-    monkeypatch.setattr(source_chunk_vectors, "search", lambda query, user_id, top_k=8: [{"object_id": "vector", "object_type": "source_chunk"}])
+    monkeypatch.setattr(source_chunk_vectors, "search", lambda query, user_id, top_k=8, within_directories=None, excluding_directories=None: [{"object_id": "vector", "object_type": "source_chunk"}])
     monkeypatch.setattr(source_chunks, "get_by_ids", lambda ids, user_id: [chunk for chunk in [vector, lexical, linked] if chunk["id"] in ids])
-    monkeypatch.setattr(source_chunks, "search", lambda query, user_id, limit=8: [lexical])
+    monkeypatch.setattr(source_chunks, "search", lambda query, user_id, limit=8, within_directories=None, excluding_directories=None: [lexical])
     monkeypatch.setattr(recall, "find_candidate_keys", lambda terms, user_id, limit=8: [_candidate("key-1", "Attack Titan", "keyword")])
-    monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda key_ids, user_id, limit=12: ["linked"])
+    monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda key_ids, user_id, limit=12, within_directories=None, excluding_directories=None: ["linked"])
 
     class PassthroughBreakdownJson:
         async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
@@ -450,7 +450,7 @@ async def test_durable_submit_reuses_same_text_job(monkeypatch):
 
     assert first["id"] == "job-1"
     assert second["id"] == "job-1"
-    assert len(durability_repo.list_jobs()) == 1
+    assert len(durability_repo.list_jobs()["data"]) == 1
 
 
 
@@ -627,3 +627,31 @@ class FakeRecallIndex:
             }],
             "analysis": {},
         }
+
+
+async def test_listener_note_moved_updates_directory_path(monkeypatch):
+    from src.services.rag.private.listener.listener import _handle_note_moved
+    from src.repositories import directories
+    
+    conn = _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(directories, "get_connection", lambda: conn)
+    
+    conn.execute("INSERT INTO raw_inputs (id, job_id, content, user_id) VALUES ('raw-1', 'note-1', 'text', 'user-1')")
+    conn.execute("INSERT INTO source_chunks (id, raw_input_id, text, summary, spans, metadata, user_id, directory_path) VALUES ('chunk-1', 'raw-1', 'text', 'summary', '[]', '{}', 'user-1', '/old/')")
+    conn.execute("INSERT INTO directories (id, name, parent_id, path, user_id) VALUES ('dir-2', 'NewDir', NULL, '/dir-2/', 'user-1')")
+    
+    calls = []
+    monkeypatch.setattr(source_chunk_vectors, "update_metadata", lambda chunk_ids, updates, user_id: calls.append((chunk_ids, updates)))
+
+    await _handle_note_moved({
+        "note_id": "note-1",
+        "new_directory_id": "dir-2",
+        "user_id": "user-1"
+    })
+
+    # Check SQLite
+    row = conn.execute("SELECT directory_path FROM source_chunks WHERE id = 'chunk-1'").fetchone()
+    assert row["directory_path"] == "/dir-2/"
+    
+    # Check Chroma calls
+    assert calls == [(["chunk-1"], {"directory_path": "/dir-2/"})]

@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
-import { Search, RefreshCw, ChevronRight, ChevronDown, ChevronUp, CheckCircle2, ExternalLink, Terminal } from 'lucide-react'
+import { Search, RefreshCw, ChevronRight, ChevronDown, ChevronUp, CheckCircle2, ExternalLink, Terminal, SlidersHorizontal } from 'lucide-react'
 import { api, API_BASE } from '../../lib/api'
 import { cn } from '../../lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Link } from 'react-router-dom'
+import { DirectorySearchSelect } from './DirectorySearchSelect'
 
 type SourceChunk = {
   id: string
@@ -44,6 +45,9 @@ export function AskView({ token }: { token: string }) {
   const [query, setQuery] = useState(() => sessionStorage.getItem('ask_query') || '')
   const [loading, setLoading] = useState(false)
   const [showTrace, setShowTrace] = useState(false)
+  const [showFilters, setShowFilters] = useState(false)
+  const [withinDirectories, setWithinDirectories] = useState(() => sessionStorage.getItem('ask_within_dirs') || '')
+  const [excludingDirectories, setExcludingDirectories] = useState(() => sessionStorage.getItem('ask_excluding_dirs') || '')
   const [result, setResult] = useState<QueryResult | null>(() => {
     try {
       const saved = sessionStorage.getItem('ask_result')
@@ -60,7 +64,9 @@ export function AskView({ token }: { token: string }) {
 
   useEffect(() => {
     sessionStorage.setItem('ask_query', query)
-  }, [query])
+    sessionStorage.setItem('ask_within_dirs', withinDirectories)
+    sessionStorage.setItem('ask_excluding_dirs', excludingDirectories)
+  }, [query, withinDirectories, excludingDirectories])
 
   useEffect(() => {
     if (result) {
@@ -109,10 +115,18 @@ export function AskView({ token }: { token: string }) {
     abortControllerRef.current = abortController
 
     try {
+      const within = withinDirectories.split(',').map(s => s.trim()).filter(Boolean)
+      const excluding = excludingDirectories.split(',').map(s => s.trim()).filter(Boolean)
+      
       const data = await api<QueryResult>('/api/retrieval/query', {
         method: 'POST',
         token,
-        body: JSON.stringify({ query, client_id: clientId }),
+        body: JSON.stringify({ 
+          query, 
+          client_id: clientId,
+          within_directories: within.length > 0 ? within : undefined,
+          excluding_directories: excluding.length > 0 ? excluding : undefined,
+        }),
         signal: abortController.signal
       })
       setResult(data)
@@ -215,6 +229,18 @@ export function AskView({ token }: { token: string }) {
             />
             <button
               className={cn(
+                "mr-1 rounded-[1.2rem] p-4 transition-all flex items-center justify-center shrink-0",
+                showFilters || withinDirectories || excludingDirectories
+                  ? "bg-primary-500/10 text-primary-500 hover:bg-primary-500/20"
+                  : "bg-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+              )}
+              onClick={() => setShowFilters(!showFilters)}
+              title="Filters"
+            >
+              <SlidersHorizontal size={20} />
+            </button>
+            <button
+              className={cn(
                 "m-2.5 rounded-[1.2rem] px-6 py-4 font-bold transition-all flex items-center gap-2 shrink-0",
                 query.trim() && !loading
                   ? "bg-foreground text-background hover:scale-105 active:scale-95 shadow-lg"
@@ -226,6 +252,30 @@ export function AskView({ token }: { token: string }) {
               {loading ? 'Searching...' : 'Ask'} <ChevronRight size={18} className={cn("transition-transform", query.trim() && !loading ? "translate-x-1" : "")} />
             </button>
           </div>
+          
+          <AnimatePresence>
+            {showFilters && (
+              <motion.div
+                initial={{ opacity: 0, y: -10, height: 0 }}
+                animate={{ opacity: 1, y: 0, height: 'auto' }}
+                exit={{ opacity: 0, y: -10, height: 0 }}
+                className="w-full mt-4 p-5 bg-background/80 backdrop-blur-xl border border-border/50 rounded-[1.8rem] shadow-xl flex flex-col gap-4 overflow-visible relative z-10"
+              >
+                <DirectorySearchSelect
+                  label="Include Directories (comma-separated IDs)"
+                  value={withinDirectories}
+                  onChange={setWithinDirectories}
+                  token={token}
+                />
+                <DirectorySearchSelect
+                  label="Exclude Directories (comma-separated IDs)"
+                  value={excludingDirectories}
+                  onChange={setExcludingDirectories}
+                  token={token}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </motion.div>
 

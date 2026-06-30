@@ -26,10 +26,10 @@ def test_notes_route_creates_note_and_triggers_event(monkeypatch):
 
 
 def test_notes_route_lists_notes_with_tags(monkeypatch):
-    monkeypatch.setattr(notes_route.notes, "list_notes", lambda user_id, directory_id=None, include_all=False: [{"id": "note-1", "text": "hello"}])
+    monkeypatch.setattr(notes_route.notes, "list_notes", lambda user_id, directory_id=None, include_all=False, page=1, limit=20: {"data": [{"id": "note-1", "text": "hello"}], "total": 1})
     monkeypatch.setattr(notes_route.tags, "get_for_note", lambda note_id: [{"id": "tag-1", "name": "test"}])
 
-    response = asyncio.run(notes_route.list_notes(None, False, "user-1"))
+    response = asyncio.run(notes_route.list_notes(None, False, 1, 20, "user-1"))
 
     assert response["data"][0]["tags"][0]["name"] == "test"
 
@@ -37,15 +37,24 @@ def test_notes_route_lists_notes_with_tags(monkeypatch):
 def test_directories_route_lists_all_directories(monkeypatch):
     monkeypatch.setattr(directories_route.directories, "list_children", lambda user_id, parent_id=None: [{"id": "root", "name": "Root"}])
     monkeypatch.setattr(directories_route.directories, "list_subtree", lambda directory_id, user_id: [{"id": "child", "name": "Child"}])
+    monkeypatch.setattr(directories_route.directories, "list_all", lambda user_id, page, limit: {"data": [{"id": "root", "name": "Root"}, {"id": "child", "name": "Child"}], "total": 2})
 
     response = asyncio.run(directories_route.list_directories(all=True, user_id="user-1"))
 
     assert [item["id"] for item in response["data"]] == ["root", "child"]
 
 
+def test_directories_route_search_directories(monkeypatch):
+    monkeypatch.setattr(directories_route.directories, "search_by_name", lambda query, user_id, limit: [{"id": "dir-1", "name": "FoundDir"}])
+
+    response = asyncio.run(directories_route.search_directories(q="Found", limit=10, user_id="user-1"))
+
+    assert response["data"][0]["name"] == "FoundDir"
+
+
 def test_retrieval_route_returns_current_query_shape(monkeypatch):
     class FakeRag:
-        async def query(self, data: str, user_id: str, reporter=None) -> dict:
+        async def query(self, data: str, user_id: str, reporter=None, within_directories=None, excluding_directories=None) -> dict:
             return {"answer": "Retrieval rewrite pending.", "citations": [], "source_chunks": [], "retrieval_trace": {"query": data}}
 
     monkeypatch.setattr(retrieval_route, "get_rag_service", lambda: FakeRag())
@@ -58,8 +67,8 @@ def test_retrieval_route_returns_current_query_shape(monkeypatch):
 
 def test_dev_routes_read_repositories(monkeypatch):
     class FakeRag:
-        def list_ingest_jobs(self) -> list:
-            return [{"id": "job-1"}]
+        def list_ingest_jobs(self, user_id: str | None = None, page: int = 1, limit: int = 20) -> dict:
+            return {"total_jobs": 1, "data": [{"id": "job-1"}]}
 
         async def resume_ingest_job(self, job_id: str) -> dict:
             return {"id": job_id, "status": "queued"}

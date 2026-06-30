@@ -56,3 +56,11 @@ To allow users to safely remove notes without immediate catastrophic loss, the N
 ## 5. Updates
 
 When a note is updated (`PUT /notes/{id}`), a `note.updated` event is emitted. The RAG listener catches this and submits the new text using the same `note_id` as the `job_id`. If the text changed, stale raw inputs, source chunks, vectors, checkpoints, and job rows for that note are removed before the new durable job is queued.
+
+## 6. Directory Movements
+
+When a note is moved to a new directory (i.e. `PUT /notes/{id}` where `directory_id` changes):
+1. A `note.moved` event is emitted carrying the new directory ID.
+2. The RAG listener asynchronously resolves the new directory's materialized path.
+3. It instantly updates the `directory_path` in the SQLite `source_chunks` table.
+4. It efficiently merges the new `directory_path` into the existing vector metadata via Chroma's `collection.update()`, without requiring heavy LLM re-ingestion.

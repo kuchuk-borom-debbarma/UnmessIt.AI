@@ -11,7 +11,7 @@ from src.services.rag.private.rag_service_impl import RagServiceImpl
 class RagService(Protocol):
     """Methods exposed to HTTP routes."""
 
-    async def query(self, data: str, user_id: str, reporter: ProgressReporter | None = None) -> QueryResult:
+    async def query(self, data: str, user_id: str, reporter: ProgressReporter | None = None, within_directories: list[str] | None = None, excluding_directories: list[str] | None = None) -> QueryResult:
         ...
 
     async def resume_pending_jobs(self) -> None:

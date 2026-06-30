@@ -50,6 +50,43 @@ def _on_note_updated(payload: dict[str, Any]) -> None:
     ))
 
 
+async def _handle_note_moved(payload: dict[str, Any]) -> None:
+    note_id = payload["note_id"]
+    new_directory_id = payload["new_directory_id"]
+    user_id = payload["user_id"]
+    
+    try:
+        from src.repositories import directories, raw_inputs, source_chunks, source_chunk_vectors
+        
+        # 1. Resolve new materialized path
+        new_path = None
+        if new_directory_id:
+            directory = await asyncio.to_thread(directories.get, new_directory_id, user_id)
+            if directory:
+                new_path = directory["path"]
+                
+        # 2. Get raw_input_id for the note
+        inputs = await asyncio.to_thread(raw_inputs.list_by_job, note_id, user_id)
+        for row in inputs:
+            raw_input_id = row["id"]
+            
+            # 3. Update SQLite directory_path
+            await asyncio.to_thread(source_chunks.update_directory_path, raw_input_id, new_path)
+            
+            # 4. Get chunks and update Chroma
+            chunks = await asyncio.to_thread(source_chunks.get_by_raw_input_id, raw_input_id)
+            if chunks:
+                chunk_ids = [chunk["id"] for chunk in chunks]
+                await asyncio.to_thread(source_chunk_vectors.update_metadata, chunk_ids, {"directory_path": new_path or ""}, user_id)
+                
+        logger.info(f"Updated directory path for moved note {note_id}")
+    except Exception as e:
+        logger.error(f"Failed to update directory path for moved note {note_id}: {e}")
+
+def _on_note_moved(payload: dict[str, Any]) -> None:
+    asyncio.create_task(_handle_note_moved(payload))
+
+
 def _on_note_hard_deleted(payload: dict[str, Any]) -> None:
     note_id = payload["note_id"]
     user_id = payload["user_id"]
@@ -71,4 +108,5 @@ def register_rag_listeners() -> None:
     bus = get_event_bus()
     bus.subscribe("note.created", _on_note_created)
     bus.subscribe("note.updated", _on_note_updated)
+    bus.subscribe("note.moved", _on_note_moved)
     bus.subscribe("note.hard_deleted", _on_note_hard_deleted)

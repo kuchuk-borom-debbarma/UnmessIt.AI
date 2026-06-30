@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS source_chunks (
     source_time TEXT,
     user_id TEXT,
     metadata JSON NOT NULL DEFAULT '{}',
+    directory_path TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(raw_input_id) REFERENCES raw_inputs(id) ON DELETE CASCADE,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
