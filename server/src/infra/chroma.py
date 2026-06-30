@@ -120,6 +120,8 @@ def _embedding_function(user_id: str):
 class RotatingEmbeddingFunction:
     """Chroma embedding callback that tries rotation lanes in order."""
 
+    name = "RotatingEmbeddingFunction"
+
     def __init__(self, user_id: str) -> None:
         self.user_id = user_id
 
