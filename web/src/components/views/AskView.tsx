@@ -358,14 +358,14 @@ export function AskView({ token }: { token: string }) {
               <div dangerouslySetInnerHTML={{ __html: result.answer }} />
             </div>
 
-            {result.source_chunks?.length > 0 && (
+            {result.citations?.length > 0 && (
               <div className="mt-12 pt-8 border-t border-border/50">
                 <h3 className="text-sm font-bold uppercase tracking-widest text-muted-foreground mb-6">Sources Used</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                  {result.source_chunks.map((chunk, i) => (
+                  {result.citations.map((citation, i) => (
                     <Link 
                       key={i} 
-                      to={`/notes/${chunk.note_id}`}
+                      to={`/notes/${citation.source_input_id}`}
                       className="group p-4 rounded-2xl bg-input/50 border border-border/50 hover:bg-input hover:border-primary-500/50 transition-colors block"
                     >
                       <div className="flex items-center justify-between mb-2">
@@ -374,8 +374,8 @@ export function AskView({ token }: { token: string }) {
                         </div>
                         <ExternalLink size={14} className="text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                       </div>
-                      <p className="text-sm text-foreground/80 line-clamp-3 italic mb-2">"{chunk.text}"</p>
-                      <p className="text-xs text-muted-foreground line-clamp-2">{chunk.summary}</p>
+                      <p className="text-sm text-foreground/80 line-clamp-3 italic mb-2">"{citation.raw_text}"</p>
+                      <p className="text-xs text-muted-foreground line-clamp-2">{citation.cleaned_text}</p>
                     </Link>
                   ))}
                 </div>

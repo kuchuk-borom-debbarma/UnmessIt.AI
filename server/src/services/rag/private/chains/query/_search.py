@@ -178,6 +178,7 @@ def _rank_chunks(
     merged: dict[str, dict[str, Any]] = {}
     scores: dict[str, float] = {}
     reasons: dict[str, list[str]] = {}
+    appearances: dict[str, int] = {}
 
     terms = set(_terms(query))
     for chunk in chunks:
@@ -185,15 +186,20 @@ def _rank_chunks(
         merged.setdefault(chunk_id, chunk)
         scores.setdefault(chunk_id, 0)
         reasons.setdefault(chunk_id, [])
+        appearances.setdefault(chunk_id, 0)
+        appearances[chunk_id] += 1
 
+    for chunk_id, chunk in merged.items():
         text = f"{chunk.get('summary', '')} {chunk.get('text', '')}".lower()
         overlap = sum(1 for term in terms if term.lower() in text)
         if overlap:
             scores[chunk_id] += overlap
             reasons[chunk_id].append(f"query_terms:{overlap}")
-        if len(reasons[chunk_id]) > 1:
-            scores[chunk_id] += 5
-            reasons[chunk_id].append("multiple_paths")
+            
+        apps = appearances[chunk_id]
+        if apps > 1:
+            scores[chunk_id] += (apps - 1) * 5
+            reasons[chunk_id].append(f"multiple_paths:{apps}")
 
     ranked_ids = sorted(merged, key=lambda cid: scores[cid], reverse=True)
     ranked = []
