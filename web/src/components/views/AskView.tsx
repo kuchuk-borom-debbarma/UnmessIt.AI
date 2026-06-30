@@ -157,40 +157,52 @@ export function AskView({ token }: { token: string }) {
           <AnimatePresence>
             {showFilters && (
               <motion.div
-                initial={{ opacity: 0, y: -10, height: 0 }}
+                initial={{ opacity: 0, y: -8, height: 0 }}
                 animate={{ opacity: 1, y: 0, height: 'auto' }}
-                exit={{ opacity: 0, y: -10, height: 0 }}
-                className="w-full mt-4 p-5 bg-background/80 backdrop-blur-xl border border-border/50 rounded-[1.8rem] shadow-xl flex flex-col gap-4 overflow-visible relative z-10"
+                exit={{ opacity: 0, y: -8, height: 0 }}
+                transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                className="w-full mt-3 overflow-visible relative z-10"
               >
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <DirectorySearchSelect
-                    label="Include Directories"
-                    value={withinDirectories}
-                    onChange={setWithinDirectories}
-                    token={token}
-                  />
-                  <DirectorySearchSelect
-                    label="Exclude Directories"
-                    value={excludingDirectories}
-                    onChange={setExcludingDirectories}
-                    token={token}
-                  />
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <TagSearchSelect
-                    label="Include Tags"
-                    value={withinTags}
-                    onChange={setWithinTags}
-                    condition={withinTagsCondition}
-                    onConditionChange={setWithinTagsCondition}
-                    token={token}
-                  />
-                  <TagSearchSelect
-                    label="Exclude Tags"
-                    value={excludingTags}
-                    onChange={setExcludingTags}
-                    token={token}
-                  />
+                <div className="bg-background/60 backdrop-blur-xl border border-border/40 rounded-2xl p-4 shadow-2xl flex flex-col gap-4">
+                  {/* Directories row */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <DirectorySearchSelect
+                      label="Include Directories"
+                      mode="include"
+                      value={withinDirectories}
+                      onChange={setWithinDirectories}
+                      token={token}
+                    />
+                    <DirectorySearchSelect
+                      label="Exclude Directories"
+                      mode="exclude"
+                      value={excludingDirectories}
+                      onChange={setExcludingDirectories}
+                      token={token}
+                    />
+                  </div>
+
+                  <div className="h-px bg-border/20" />
+
+                  {/* Tags row */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <TagSearchSelect
+                      label="Include Tags"
+                      mode="include"
+                      value={withinTags}
+                      onChange={setWithinTags}
+                      condition={withinTagsCondition}
+                      onConditionChange={setWithinTagsCondition}
+                      token={token}
+                    />
+                    <TagSearchSelect
+                      label="Exclude Tags"
+                      mode="exclude"
+                      value={excludingTags}
+                      onChange={setExcludingTags}
+                      token={token}
+                    />
+                  </div>
                 </div>
               </motion.div>
             )}
