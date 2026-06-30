@@ -101,17 +101,17 @@ export function DirectorySearchSelect({ label, value, onChange, token, placehold
 
   const handleSelect = (dir: Directory) => {
     const current = value.split(',').map(s => s.trim()).filter(Boolean)
-    if (!current.includes(dir.id)) {
-      onChange([...current, dir.id].join(', '))
+    if (!current.includes(dir.path)) {
+      onChange([...current, dir.path].join(', '))
     }
     setQuery('')
     setIsOpen(false)
   }
 
-  const handleCopy = (e: React.MouseEvent, id: string) => {
+  const handleCopy = (e: React.MouseEvent, path: string) => {
     e.stopPropagation()
-    navigator.clipboard.writeText(id)
-    setCopiedId(id)
+    navigator.clipboard.writeText(path)
+    setCopiedId(path)
     setTimeout(() => setCopiedId(null), 2000)
   }
 
@@ -170,16 +170,16 @@ export function DirectorySearchSelect({ label, value, onChange, token, placehold
                   <div>
                     <div className="font-medium text-sm text-foreground">{dir.name}</div>
                     <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5 font-mono">
-                      {dir.id.substring(0, 8)}...
+                      {dir.path}
                     </div>
                   </div>
                   
                   <button
-                    onClick={(e) => handleCopy(e, dir.id)}
+                    onClick={(e) => handleCopy(e, dir.path)}
                     className="p-1.5 rounded-md hover:bg-background/80 text-muted-foreground hover:text-foreground transition-colors z-20"
-                    title="Copy full ID"
+                    title="Copy path"
                   >
-                    {copiedId === dir.id ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+                    {copiedId === dir.path ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
                   </button>
                 </div>
               ))}
