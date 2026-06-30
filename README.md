@@ -63,7 +63,6 @@ If you are deploying to a specific domain or need advanced networking configurat
 ```bash
 CORS_ORIGINS="https://my-frontend.com" VITE_API_BASE_URL="https://api.my-backend.com" docker compose up --build
 ```
-
 ## Manual Development
 
 Backend (FastAPI):
