@@ -35,6 +35,7 @@ class SourceChunk(TypedDict):
     source_time: str | None
     user_id: str
     metadata: dict[str, object]
+    directory_path: str | None
 
 
 class SourceWindow(TypedDict):

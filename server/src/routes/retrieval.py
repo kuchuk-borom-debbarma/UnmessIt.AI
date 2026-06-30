@@ -19,6 +19,8 @@ class QueryRequest(BaseModel):
 
     query: str
     client_id: str | None = None
+    within_directories: list[str] | None = None
+    excluding_directories: list[str] | None = None
 
 
 class SseProgressReporter(ProgressReporter):
@@ -61,4 +63,10 @@ async def query_endpoint(
     reporter = None
     if request.client_id:
         reporter = SseProgressReporter(get_sse_service(), f"retrieval:{request.client_id}")
-    return await get_rag_service().query(request.query, user_id, reporter)
+    return await get_rag_service().query(
+        request.query, 
+        user_id, 
+        reporter, 
+        request.within_directories, 
+        request.excluding_directories
+    )

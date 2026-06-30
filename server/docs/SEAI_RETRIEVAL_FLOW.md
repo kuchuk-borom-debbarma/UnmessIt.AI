@@ -65,11 +65,16 @@ detect timeline-style query
 → pass timeline_order into the answer prompt
 ```
 
-## Future Improvements (Cross-Domain "Smart" Queries)
+## Cross-Domain Filtering
 
-Currently, structural note/directory APIs and semantic retrieval are isolated. The system cannot answer questions like *"In which folders are my love letters?"* because it requires intersecting semantic search with structural metadata.
+Semantic retrieval queries can be scoped to specific directories using the `within_directories` and `excluding_directories` parameters. 
 
-To support these "smart" cross-domain questions in the future:
-1. **Metadata-Aware Vectors:** Inject `directory_id` and tags into ChromaDB vectors during ingestion. This will allow the agent to issue metadata-filtered semantic searches (e.g., `where={"directory_id": "uuid"}`).
-2. **Contextual Chunks:** Return the parent `note_id` and `directory_id` alongside chunk text so the answer layer can trace text back to its location.
-3. **Optional SQL/Tool Layer:** Add a read-only SQL/tool layer only if real questions need cross-domain aggregation such as *"Count notes by directory where..."*.
+To achieve exact hierarchical filtering efficiently:
+1. The backend translates the requested root `directory_id`s into a flat list of all descendant paths using SQLite's `list_subtree` (which leverages the Materialized Path).
+2. The retrieval query passes these resolved paths into ChromaDB using the `$in` (or `$nin`) operator on the `directory_path` metadata field.
+3. This combines structural bounds with semantic similarity without requiring the vector database to understand hierarchical trees natively.
+
+## Future Improvements
+
+1. **Contextual Chunks:** Return the parent `note_id` and `directory_id` alongside chunk text so the answer layer can better trace text back to its location.
+2. **Optional SQL/Tool Layer:** Add a read-only SQL/tool layer only if real questions need cross-domain aggregation such as *"Count notes by directory where..."*.

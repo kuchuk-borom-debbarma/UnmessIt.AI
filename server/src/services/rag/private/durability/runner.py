@@ -32,6 +32,7 @@ class IngestGraphState(TypedDict, total=False):
     recall_keys: list[dict[str, Any]]
     corrupt: bool
     abort_reason: str
+    directory_path: str | None
 
 
 class DurableIngestRunner:
@@ -84,9 +85,10 @@ class DurableIngestRunner:
             return {**state, "raw_input_id": job["raw_input_id"], "corrupt": True, "abort_reason": "raw input row missing"}
 
         raw_text = raw_input["content"]
+        directory_path = await asyncio.to_thread(_directory_path, job_id)
         await asyncio.to_thread(repository.start_stage, job_id, STAGE_RAW_INPUT)
         await asyncio.to_thread(repository.complete_checkpoint, job_id, STAGE_RAW_INPUT, f"raw_input:{job['raw_input_id']}", job["raw_input_id"])
-        return {**state, "raw_input_id": job["raw_input_id"], "raw_text": raw_text, "user_id": raw_input["user_id"]}
+        return {**state, "raw_input_id": job["raw_input_id"], "raw_text": raw_text, "user_id": raw_input["user_id"], "directory_path": directory_path}
 
     def _after_load_raw_input(self, state: IngestGraphState) -> Literal["abort", "continue"]:
         """Branch corrupt jobs away from retryable ingest work."""
@@ -103,7 +105,7 @@ class DurableIngestRunner:
 
     async def _source_chunk_node(self, state: IngestGraphState) -> IngestGraphState:
         """Build or reuse source chunks before recall work."""
-        chunks = await self._source_chunks(state["job_id"], state["raw_input_id"], state["raw_text"], state["user_id"])
+        chunks = await self._source_chunks(state["job_id"], state["raw_input_id"], state["raw_text"], state["user_id"], state.get("directory_path"))
         return {**state, "chunks": chunks}
 
     async def _recall_node(self, state: IngestGraphState) -> IngestGraphState:
@@ -135,7 +137,7 @@ class DurableIngestRunner:
         logger.info("ingest_job_complete job_id=%s source_chunks=%s recall_keys=%s", job_id, len(chunks), len(recall_keys))
         return state
 
-    async def _source_chunks(self, job_id: str, raw_input_id: str, raw_text: str, user_id: str) -> list[SourceChunk]:
+    async def _source_chunks(self, job_id: str, raw_input_id: str, raw_text: str, user_id: str, directory_path: str | None) -> list[SourceChunk]:
         """Create chunks for only unfinished text pieces."""
         await asyncio.to_thread(repository.start_stage, job_id, STAGE_SOURCE_CHUNKS)
         existing = await asyncio.to_thread(source_chunks.get_by_raw_input_id, raw_input_id)
@@ -150,13 +152,13 @@ class DurableIngestRunner:
             if is_done:
                 logger.info("ingest_unit_reuse job_id=%s stage=%s unit=%s", job_id, STAGE_SOURCE_CHUNKS, unit_key)
                 continue
-            await self._run_unit(job_id, STAGE_SOURCE_CHUNKS, unit_key, lambda tp=text_piece: self._build_source_piece(raw_input_id, raw_text, user_id, tp, unit_key))
+            await self._run_unit(job_id, STAGE_SOURCE_CHUNKS, unit_key, lambda tp=text_piece: self._build_source_piece(raw_input_id, raw_text, user_id, tp, unit_key, directory_path))
         return await asyncio.to_thread(source_chunks.get_by_raw_input_id, raw_input_id)
 
-    async def _build_source_piece(self, raw_input_id: str, raw_text: str, user_id: str, text_piece: SourceWindow, unit_key: str) -> tuple[str, dict[str, Any]]:
+    async def _build_source_piece(self, raw_input_id: str, raw_text: str, user_id: str, text_piece: SourceWindow, unit_key: str, directory_path: str | None) -> tuple[str, dict[str, Any]]:
         """Summarize one text piece, then save the full piece as evidence."""
         drafts: list[SourceChunkDraft] = await self.source_chunk_drafts.run(text_piece, user_id)
-        chunks = await self.source_chunk_assembler.run(raw_input_id, raw_text, user_id, drafts)
+        chunks = await self.source_chunk_assembler.run(raw_input_id, raw_text, user_id, drafts, directory_path)
         for index, chunk in enumerate(chunks):
             chunk["id"] = _stable_id("source_chunk", unit_key, str(index), chunk["text"])
         await asyncio.to_thread(source_chunks.save_many, chunks)
@@ -260,3 +262,11 @@ def _stable_id(*parts: str) -> str:
     """Stable IDs make save-after-crash idempotent even before checkpoint completion."""
     digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
     return digest
+
+def _directory_path(job_id: str) -> str | None:
+    from src.infra.sqlite import get_connection
+    row = get_connection().execute(
+        "SELECT d.path FROM notes n JOIN directories d ON d.id = n.directory_id WHERE n.id = ?",
+        (job_id,)
+    ).fetchone()
+    return row["path"] if row else None

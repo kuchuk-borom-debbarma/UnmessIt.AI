@@ -50,6 +50,43 @@ def _on_note_updated(payload: dict[str, Any]) -> None:
     ))
 
 
+async def _handle_note_moved(payload: dict[str, Any]) -> None:
+    note_id = payload["note_id"]
+    new_directory_id = payload["new_directory_id"]
+    user_id = payload["user_id"]
+    
+    try:
+        from src.repositories import directories, raw_inputs, source_chunks, source_chunk_vectors
+        
+        # 1. Resolve new materialized path
+        new_path = None
+        if new_directory_id:
+            directory = await asyncio.to_thread(directories.get, new_directory_id, user_id)
+            if directory:
+                new_path = directory["path"]
+                
+        # 2. Get raw_input_id for the note
+        inputs = await asyncio.to_thread(raw_inputs.list_by_job, note_id, user_id)
+        for row in inputs:
+            raw_input_id = row["id"]
+            
+            # 3. Update SQLite directory_path
+            await asyncio.to_thread(source_chunks.update_directory_path, raw_input_id, new_path)
+            
+            # 4. Get chunks and update Chroma
+            chunks = await asyncio.to_thread(source_chunks.get_by_raw_input_id, raw_input_id)
+            if chunks:
+                chunk_ids = [chunk["id"] for chunk in chunks]
+                await asyncio.to_thread(source_chunk_vectors.update_metadata, chunk_ids, {"directory_path": new_path or ""}, user_id)
+                
+        logger.info(f"Updated directory path for moved note {note_id}")
+    except Exception as e:
+        logger.error(f"Failed to update directory path for moved note {note_id}: {e}")
+
+def _on_note_moved(payload: dict[str, Any]) -> None:
+    asyncio.create_task(_handle_note_moved(payload))
+
+
 def _on_note_hard_deleted(payload: dict[str, Any]) -> None:
     note_id = payload["note_id"]
     user_id = payload["user_id"]
@@ -67,8 +104,46 @@ def _on_note_hard_deleted(payload: dict[str, Any]) -> None:
     asyncio.create_task(asyncio.to_thread(_cleanup))
 
 
+def _on_note_soft_deleted(payload: dict[str, Any]) -> None:
+    note_id = payload["note_id"]
+    user_id = payload["user_id"]
+    
+    def _cleanup():
+        from src.repositories import raw_inputs, source_chunks, source_chunk_vectors
+        inputs = raw_inputs.list_by_job(note_id, user_id)
+        for row in inputs:
+            input_id = row["id"]
+            chunks = source_chunks.get_by_raw_input_id(input_id)
+            if chunks:
+                source_chunk_vectors.delete([chunk["id"] for chunk in chunks], user_id)
+            raw_inputs.soft_delete(input_id)
+            
+    asyncio.create_task(asyncio.to_thread(_cleanup))
+
+
+def _on_note_restored(payload: dict[str, Any]) -> None:
+    note_id = payload["note_id"]
+    user_id = payload["user_id"]
+    
+    def _restore():
+        from src.repositories import raw_inputs, source_chunks, source_chunk_vectors
+        inputs = raw_inputs.list_by_job(note_id, user_id)
+        for row in inputs:
+            input_id = row["id"]
+            raw_inputs.restore(input_id)
+            # Must fetch chunks after restoring raw_inputs so deleted_at IS NULL filter passes
+            chunks = source_chunks.get_by_raw_input_id(input_id)
+            if chunks:
+                source_chunk_vectors.index(chunks)
+                
+    asyncio.create_task(asyncio.to_thread(_restore))
+
+
 def register_rag_listeners() -> None:
     bus = get_event_bus()
     bus.subscribe("note.created", _on_note_created)
     bus.subscribe("note.updated", _on_note_updated)
+    bus.subscribe("note.moved", _on_note_moved)
     bus.subscribe("note.hard_deleted", _on_note_hard_deleted)
+    bus.subscribe("note.soft_deleted", _on_note_soft_deleted)
+    bus.subscribe("note.restored", _on_note_restored)

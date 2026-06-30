@@ -37,6 +37,17 @@ async def list_directories(
     return {"status": "success", **result}
 
 
+@router.get("/search")
+async def search_directories(
+    q: str,
+    limit: int = 10,
+    user_id: str = Depends(get_current_user_id),
+) -> dict:
+    limit = max(1, min(limit, 100))
+    result = directories.search_by_name(q, user_id, limit)
+    return {"status": "success", "data": result}
+
+
 @router.get("/{directory_id}")
 async def get_directory(directory_id: str, user_id: str = Depends(get_current_user_id)) -> dict:
     d = directories.get(directory_id, user_id)

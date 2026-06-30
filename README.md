@@ -6,12 +6,13 @@
 
 UnmessIt.AI is your Personal RAG AI. It turns your messy, scattered notes into a reliable knowledge engine. 
 
-Stop digging through folders to find what you wrote weeks ago. Just dump your notes, organize them how you like, and ask natural-language questions. UnmessIt uses Retrieval-Augmented Generation (RAG) to instantly synthesize exact answers directly from your notes, fully backed by citations you can trust.
+Stop digging through folders to find what you wrote weeks ago. Just dump your notes, organize them how you like, and ask natural-language questions. UnmessIt uses Retrieval-Augmented Generation (RAG) to instantly synthesize exact answers directly from your notes. You can restrict the AI's search to specific directories, or ask across everything—fully backed by citations you can trust.
 
 ## Major Features
 
 - **Multi-Hop Reasoning**: Ask complex questions. The engine traverses your cross-linked notes to piece together facts scattered across multiple documents.
 - **Verifiable Truth**: No AI hallucinations. Every answer includes the exact source chunks and a full retrieval trace so you know exactly where the information came from.
+- **Cross-Domain Filtering**: Granular control to filter your AI searches by specific directories. Query within or exclude entire subtrees, perfectly matching your organizational hierarchy.
 - **Always Up to Date**: Live, event-driven ingest means new notes are indexed as soon as you save them. No waiting for batch jobs to run.
 - **Flexible Organization**: Structure your knowledge your way. We don't force a new system—use unlimited nested directories and flexible tags to keep things organized.
 
@@ -22,11 +23,12 @@ Stop digging through folders to find what you wrote weeks ago. Just dump your no
 - **Durable Execution**: Long-running indexing jobs are checkpointed in SQLite, so they can gracefully pause and resume if an API provider times out.
 - **Memory Inspection**: View exact source chunks and recall links generated from your notes to understand how the AI sees your data.
 
-## Next
+## Next Up
 
-- **Query Filtering**: Granular control to filter your AI searches by specific directories, tags, or individual notes during querying.
+- **Tag Filtering**: Apply granular filtering to your AI searches using specific tags across your entire workspace.
+- **Custom Knowledge Connections**: Teach the AI by manually linking notes, entities, or concepts together, overriding or extending the automated knowledge graph.
 
-## Later Down the Line
+## Far Far in the Future
 
 - **Cloud Platform**: A fully hosted cloud version of UnmessIt.AI for zero-setup, ubiquitous access to your knowledge base.
 
@@ -49,7 +51,8 @@ http://localhost:2831
 2. Open **Settings** and add an OpenAI API key preset.
 3. Create a note.
 4. Wait for it to index.
-5. Ask a question!
+5. Filter the AI search scope to specific directories (optional).
+6. Ask a question!
 
 ### Custom Configuration
 

@@ -15,8 +15,8 @@ def save_many(chunks: list[SourceChunk]) -> None:
     conn = get_connection()
     conn.executemany(
         """
-        INSERT INTO source_chunks (id, raw_input_id, text, summary, spans, source_time, user_id, metadata)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO source_chunks (id, raw_input_id, text, summary, spans, source_time, user_id, metadata, directory_path)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO NOTHING
         """,
         [
@@ -29,6 +29,7 @@ def save_many(chunks: list[SourceChunk]) -> None:
                 chunk.get("source_time"),
                 chunk["user_id"],
                 json.dumps(chunk.get("metadata", {}), ensure_ascii=False),
+                chunk.get("directory_path"),
             )
             for chunk in chunks
         ],
@@ -47,7 +48,7 @@ def get_by_ids(chunk_ids: list[str], user_id: str) -> list[dict[str, Any]]:
     placeholders = ",".join(["?"] * len(ids))
     rows = get_connection().execute(
         f"""
-        SELECT sc.id, sc.raw_input_id, ri.job_id as note_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at
+        SELECT sc.id, sc.raw_input_id, ri.job_id as note_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at, sc.directory_path
         FROM source_chunks sc
         JOIN raw_inputs ri ON ri.id = sc.raw_input_id
         WHERE sc.id IN ({placeholders}) AND sc.user_id = ? AND ri.deleted_at IS NULL
@@ -58,11 +59,22 @@ def get_by_ids(chunk_ids: list[str], user_id: str) -> list[dict[str, Any]]:
     return [by_id[chunk_id] for chunk_id in ids if chunk_id in by_id]
 
 
+def update_directory_path(raw_input_id: str, new_path: str | None) -> bool:
+    """Update directory_path for all chunks of a raw input."""
+    conn = get_connection()
+    cursor = conn.execute(
+        "UPDATE source_chunks SET directory_path = ? WHERE raw_input_id = ?",
+        (new_path, raw_input_id)
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
 def get_by_raw_input_id(raw_input_id: str) -> list[dict[str, Any]]:
     """Load all chunks already saved for one raw input."""
     rows = get_connection().execute(
         """
-        SELECT sc.id, sc.raw_input_id, ri.job_id as note_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at
+        SELECT sc.id, sc.raw_input_id, ri.job_id as note_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at, sc.directory_path
         FROM source_chunks sc
         JOIN raw_inputs ri ON ri.id = sc.raw_input_id
         WHERE sc.raw_input_id = ? AND ri.deleted_at IS NULL
@@ -80,25 +92,44 @@ def delete_by_raw_input_id(raw_input_id: str) -> None:
     conn.commit()
 
 
-def search(query: str, user_id: str, limit: int = 8) -> list[dict[str, Any]]:
+def search(query: str, user_id: str, limit: int = 8, within_directories: list[str] | None = None, excluding_directories: list[str] | None = None) -> list[dict[str, Any]]:
     """Small lexical fallback over source text and summaries."""
     terms = _terms(query)
     if not terms:
         return []
-    where = " OR ".join(["(sc.text LIKE ? OR sc.summary LIKE ?)"] * len(terms))
+        
+    terms_clause = "(" + " OR ".join(["(sc.text LIKE ? OR sc.summary LIKE ?)"] * len(terms)) + ")"
+    where_clauses = [terms_clause, "sc.user_id = ?", "ri.deleted_at IS NULL"]
+    
     params = []
     for term in terms:
         params.extend([f"%{term}%", f"%{term}%"])
+    params.append(user_id)
+    
+    if within_directories:
+        dir_clauses = []
+        for path in within_directories:
+            dir_clauses.append("sc.directory_path LIKE ?")
+            params.append(f"{path}%")
+        where_clauses.append(f"({' OR '.join(dir_clauses)})")
+        
+    if excluding_directories:
+        for path in excluding_directories:
+            where_clauses.append("(sc.directory_path NOT LIKE ? OR sc.directory_path IS NULL)")
+            params.append(f"{path}%")
+            
+    where_sql = " AND ".join(where_clauses)
+    
     rows = get_connection().execute(
         f"""
-        SELECT sc.id, sc.raw_input_id, ri.job_id as note_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at
+        SELECT sc.id, sc.raw_input_id, ri.job_id as note_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at, sc.directory_path
         FROM source_chunks sc
         JOIN raw_inputs ri ON ri.id = sc.raw_input_id
-        WHERE ({where}) AND sc.user_id = ? AND ri.deleted_at IS NULL
+        WHERE {where_sql}
         ORDER BY sc.created_at DESC
         LIMIT ?
         """,
-        [*params, user_id, limit],
+        [*params, limit],
     ).fetchall()
     return [_from_row(row) for row in rows]
 
@@ -127,7 +158,7 @@ def list_with_raw_inputs(user_id: str | None = None) -> dict[str, Any]:
         _from_row(row)
         for row in conn.execute(
             f"""
-            SELECT id, raw_input_id, text, summary, spans, source_time, user_id, metadata, created_at
+            SELECT id, raw_input_id, text, summary, spans, source_time, user_id, metadata, created_at, directory_path
             FROM source_chunks
             {chunk_where}
             ORDER BY created_at ASC
@@ -161,7 +192,7 @@ def get_paginated_for_note(note_id: str, user_id: str, page: int = 1, limit: int
 
     chunk_rows = conn.execute(
         """
-        SELECT sc.id, sc.raw_input_id, ri.job_id as note_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at
+        SELECT sc.id, sc.raw_input_id, ri.job_id as note_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at, sc.directory_path
         FROM source_chunks sc
         JOIN raw_inputs ri ON ri.id = sc.raw_input_id
         WHERE ri.job_id = ? AND sc.user_id = ? AND ri.deleted_at IS NULL

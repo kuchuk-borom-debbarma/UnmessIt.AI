@@ -49,10 +49,18 @@ This is heavily optimized by the `idx_directories_path` index.
 To allow users to safely remove notes without immediate catastrophic loss, the Notes Service implements a Trash system:
 
 1. **Soft Delete (`DELETE /notes/{id}`)**: Marks the note with a `deleted_at` timestamp. 
-2. **Event Cascade**: Emits a `note.deleted` event. The RAG listener catches this and synchronously removes the associated source chunks and recall key vectors from ChromaDB to ensure isolated search contexts, while leaving the durable records in SQLite alone.
-3. **Restore (`POST /notes/{id}/restore`)**: Clears the `deleted_at` flag. Emits a `note.restored` event which prompts the RAG layer to re-index vectors.
+2. **Event Cascade**: Emits a `note.soft_deleted` event. The RAG listener catches this and synchronously masks the associated `raw_input` in SQLite and drops the vectors from ChromaDB to ensure isolated search contexts.
+3. **Restore (`POST /notes/{id}/restore`)**: Clears the `deleted_at` flag. Emits a `note.restored` event which prompts the RAG layer to instantly push the pre-computed `source_chunks` back into ChromaDB without hitting the LLM again.
 4. **Hard Delete (`DELETE /notes/{id}/hard`)**: Permanently destroys the note from the SQLite database. Emits a `note.hard_deleted` event to cascade the permanent deletion of raw inputs, source chunks, and vectors.
 
 ## 5. Updates
 
 When a note is updated (`PUT /notes/{id}`), a `note.updated` event is emitted. The RAG listener catches this and submits the new text using the same `note_id` as the `job_id`. If the text changed, stale raw inputs, source chunks, vectors, checkpoints, and job rows for that note are removed before the new durable job is queued.
+
+## 6. Directory Movements
+
+When a note is moved to a new directory (i.e. `PUT /notes/{id}` where `directory_id` changes):
+1. A `note.moved` event is emitted carrying the new directory ID.
+2. The RAG listener asynchronously resolves the new directory's materialized path.
+3. It instantly updates the `directory_path` in the SQLite `source_chunks` table.
+4. It efficiently merges the new `directory_path` into the existing vector metadata via Chroma's `collection.update()`, without requiring heavy LLM re-ingestion.

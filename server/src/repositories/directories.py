@@ -146,6 +146,23 @@ def list_all(user_id: str, page: int = 1, limit: int = 50) -> dict[str, Any]:
         "data": [dict(row) for row in rows]
     }
 
+def search_by_name(query: str, user_id: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Search directories by name using LIKE match."""
+    conn = get_connection()
+    # Simple prefix or contained match. User asked for LIKE match.
+    like_query = f"%{query}%"
+    rows = conn.execute(
+        """
+        SELECT id, name, parent_id, path, user_id, created_at, updated_at 
+        FROM directories 
+        WHERE user_id = ? AND name LIKE ? 
+        ORDER BY name ASC 
+        LIMIT ?
+        """,
+        (user_id, like_query, limit)
+    ).fetchall()
+    return [dict(row) for row in rows]
+
 def get_notes_in_subtree(dir_id: str, user_id: str) -> list[dict[str, Any]]:
     """Return all notes (id only) in this directory and any subdirectories."""
     parent = get(dir_id, user_id)

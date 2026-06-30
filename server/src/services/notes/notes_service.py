@@ -40,6 +40,12 @@ class NotesService:
         tag_names: list[str] | None = None,
     ) -> bool:
         """Update a note and publish event for ingestion."""
+        old_note = notes.get(note_id, user_id)
+        if not old_note:
+            return False
+            
+        old_dir = old_note["directory_id"]
+        
         success = notes.update(note_id, text, user_id, directory_id)
         if success:
             if tag_names is not None:
@@ -52,6 +58,34 @@ class NotesService:
             self.event_bus.publish("note.updated", {
                 "note_id": note_id,
                 "text": text,
+                "user_id": user_id
+            })
+            
+            if old_dir != directory_id:
+                self.event_bus.publish("note.moved", {
+                    "note_id": note_id,
+                    "old_directory_id": old_dir,
+                    "new_directory_id": directory_id,
+                    "user_id": user_id
+                })
+        return success
+
+    async def soft_delete_note(self, note_id: str, user_id: str) -> bool:
+        """Soft delete a note and trigger background cleanup."""
+        success = notes.delete(note_id, user_id)
+        if success:
+            self.event_bus.publish("note.soft_deleted", {
+                "note_id": note_id,
+                "user_id": user_id
+            })
+        return success
+
+    async def restore_note(self, note_id: str, user_id: str) -> bool:
+        """Restore a soft-deleted note and trigger background re-indexing."""
+        success = notes.restore(note_id, user_id)
+        if success:
+            self.event_bus.publish("note.restored", {
+                "note_id": note_id,
                 "user_id": user_id
             })
         return success

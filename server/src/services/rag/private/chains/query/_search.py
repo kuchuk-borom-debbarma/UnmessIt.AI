@@ -33,9 +33,12 @@ async def search_node(state: QueryState) -> dict[str, Any]:
     
     if reporter:
         await reporter.report(f"Starting concurrent search across {len(state['sub_queries'])} sub-queries...")
+        
+    within_directories = state.get("within_directories") or []
+    excluding_directories = state.get("excluding_directories") or []
 
     async def _search_and_report(sq: str):
-        res = await _evidence_for(sq, user_id, extracted_subjects)
+        res = await _evidence_for(sq, user_id, extracted_subjects, within_directories, excluding_directories)
         if reporter:
             await reporter.report(f"Gathered evidence for: '{sq}'")
         return res
@@ -72,15 +75,15 @@ def finalize_chunks(raw_chunks: list[dict[str, Any]], query: str) -> tuple[list[
 # ── internal helpers ─────────────────────────────────────────────────────────
 
 
-async def _evidence_for(sub_query: str, user_id: str, extracted_subjects: list[str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+async def _evidence_for(sub_query: str, user_id: str, extracted_subjects: list[str], within_directories: list[str], excluding_directories: list[str]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Run all three search paths for one sub-query concurrently where possible."""
     # Vector search and lexical search can run in parallel; recall key lookup is cheap.
     (vector_chunks, vector_ids), lexical_chunks, recall_keys = await asyncio.gather(
-        _vector_source_chunks(sub_query, user_id),
-        asyncio.to_thread(source_chunks.search, sub_query, user_id, 8),
+        _vector_source_chunks(sub_query, user_id, within_directories, excluding_directories),
+        asyncio.to_thread(source_chunks.search, sub_query, user_id, 8, within_directories, excluding_directories),
         _recall_keys(sub_query, user_id, extracted_subjects),
     )
-    linked_ids = await asyncio.to_thread(recall.linked_source_chunk_ids, [key["id"] for key in recall_keys], user_id, 12)
+    linked_ids = await asyncio.to_thread(recall.linked_source_chunk_ids, [key["id"] for key in recall_keys], user_id, 12, within_directories, excluding_directories)
     linked_chunks = await asyncio.to_thread(source_chunks.get_by_ids, linked_ids, user_id)
 
     chunks, _ = _rank_chunks(sub_query, [*vector_chunks, *lexical_chunks, *linked_chunks])
@@ -99,10 +102,10 @@ async def _evidence_for(sub_query: str, user_id: str, extracted_subjects: list[s
     return chunks, trace_part
 
 
-async def _vector_source_chunks(query: str, user_id: str) -> tuple[list[dict[str, Any]], list[str]]:
+async def _vector_source_chunks(query: str, user_id: str, within_directories: list[str], excluding_directories: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
     """Use Chroma when available; lexical search still works if embeddings are down."""
     try:
-        hits = await asyncio.to_thread(source_chunk_vectors.search, query, user_id, 8)
+        hits = await asyncio.to_thread(source_chunk_vectors.search, query, user_id, 8, within_directories, excluding_directories)
     except Exception as exc:
         logger.warning("query_source_vector_search_failed error=%s", exc)
         return [], []

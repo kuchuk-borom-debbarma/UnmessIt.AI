@@ -101,7 +101,7 @@ async def update_note(
 
 @router.delete("/{note_id}")
 async def delete_note(note_id: str, user_id: str = Depends(get_current_user_id)) -> dict:
-    if not notes.delete(note_id, user_id):
+    if not await get_notes_service().soft_delete_note(note_id, user_id):
         raise HTTPException(status_code=404, detail="Note not found")
     return {"status": "deleted", "note_id": note_id}
 
@@ -113,6 +113,6 @@ async def hard_delete_note(note_id: str, user_id: str = Depends(get_current_user
 
 @router.post("/{note_id}/restore")
 async def restore_note(note_id: str, user_id: str = Depends(get_current_user_id)) -> dict:
-    if not notes.restore(note_id, user_id):
+    if not await get_notes_service().restore_note(note_id, user_id):
         raise HTTPException(status_code=404, detail="Note not found")
     return {"status": "restored", "note_id": note_id}

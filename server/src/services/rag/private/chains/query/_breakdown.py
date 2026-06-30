@@ -51,7 +51,7 @@ async def _decompose(json_client, query: str, user_id: str) -> list[str]:
                 f"QUERY:\n{query}\n\n"
                 f'Return JSON: {{"sub_queries":["original query","sub-query 1","sub-query 2"]}}'
             ),
-            user_id,
+            user_id=user_id,
         )
         sub_queries = data.get("sub_queries") if isinstance(data, dict) else None
         if not isinstance(sub_queries, list) or not sub_queries:
