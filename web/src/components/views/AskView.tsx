@@ -259,6 +259,16 @@ export function AskView({ token }: { token: string }) {
                 className="w-full mt-3 overflow-visible relative z-10"
               >
                 <div className="bg-background/60 backdrop-blur-xl border border-border/40 rounded-2xl p-4 shadow-2xl flex flex-col gap-4">
+                  {/* Filter hints */}
+                  <div className="text-[11px] text-muted-foreground/80 leading-relaxed bg-muted/20 border border-border/20 rounded-xl p-2.5 flex flex-col gap-1">
+                    <p>
+                      <strong className="text-foreground/90">Directories:</strong> If included, search is scoped <span className="underline decoration-primary-500/40">only</span> to those folders and their sub-folders. If only excluded, the whole knowledge base is searched except those folders.
+                    </p>
+                    <p>
+                      <strong className="text-foreground/90">Tags:</strong> Scopes search to documents matching the specified tags (Any/All logical matching). Excluded tags will filter out matching documents entirely.
+                    </p>
+                  </div>
+
                   {/* Directories row */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <DirectorySearchSelect

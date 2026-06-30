@@ -186,7 +186,7 @@ def linked_source_chunk_ids(recall_key_ids: list[str], user_id: str, limit: int 
         
     if excluding_directories:
         for path in excluding_directories:
-            where_clauses.append("sc.directory_path NOT LIKE ? OR sc.directory_path IS NULL")
+            where_clauses.append("(sc.directory_path NOT LIKE ? OR sc.directory_path IS NULL)")
             params.append(f"{path}%")
             
     if within_tags:
