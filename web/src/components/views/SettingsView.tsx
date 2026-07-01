@@ -21,6 +21,7 @@ import { api } from '../../lib/api'
 import type { Preset, ProcessingSettings, RotationConfig } from '../../lib/api'
 import { useConfig } from '../../lib/context/useConfig'
 import { cn } from '../../lib/utils'
+import { useVersionCheck } from '../../lib/useVersionCheck'
 
 type ConfigDraft = {
   name: string
@@ -96,6 +97,7 @@ export function SettingsView({ token }: { token: string }) {
   const [loading, setLoading] = useState(true)
   const [showLoading, setShowLoading] = useState(false)
   const [toast, setToast] = useState<Toast | null>(null)
+  const { currentVersion } = useVersionCheck()
 
   useEffect(() => {
     const timer = setTimeout(() => setShowLoading(true), 150)
@@ -467,6 +469,10 @@ export function SettingsView({ token }: { token: string }) {
           />
         )}
       </AnimatePresence>
+      
+      <div className="mt-8 text-center text-sm font-medium text-muted-foreground/60 flex items-center justify-center gap-2">
+        <Info size={14} /> UnmessIt.AI Version {currentVersion}
+      </div>
     </div>
   )
 }

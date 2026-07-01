@@ -1,5 +1,8 @@
 import { Outlet } from 'react-router-dom'
 import { FloatingDock } from './FloatingDock'
+import { useVersionCheck } from '../../lib/useVersionCheck'
+import { ReleaseHistoryModal } from '../ui/ReleaseHistoryModal'
+import { RefreshCw } from 'lucide-react'
 // import { motion } from 'framer-motion'
 import { ConfigProvider } from '../../lib/context/ConfigContext'
 import { useConfig } from '../../lib/context/useConfig'
@@ -66,7 +69,32 @@ function GlobalWarningBanner() {
   )
 }
 
+function GlobalUpdateBanner({ onShowChangelog }: { onShowChangelog: () => void }) {
+  const { updateAvailable, versionInfo } = useVersionCheck()
+
+  if (!updateAvailable || !versionInfo) return null
+
+  return (
+    <div className="bg-primary-500/10 border-b border-primary-500/20 px-4 py-2 flex items-center justify-between backdrop-blur-xl">
+      <div className="flex items-center gap-4">
+        <div className="w-8 h-8 rounded-lg bg-primary-500/10 flex items-center justify-center text-primary-500 border border-primary-500/20">
+          <RefreshCw size={18} />
+        </div>
+        <div>
+          <h3 className="text-sm font-bold text-primary-500 tracking-tight">Update Available (v{versionInfo.version})</h3>
+          <p className="text-xs font-medium text-primary-500/80 hidden sm:block">A new version of UnmessIt.AI is available.</p>
+        </div>
+      </div>
+      <button onClick={onShowChangelog} className="premium-btn premium-btn-primary h-9 px-4">
+        View Details <ChevronRight size={16} className="ml-2" />
+      </button>
+    </div>
+  )
+}
+
 export function AppShell({ token, onLogout }: { token: string | null; onLogout: () => void }) {
+  const [showChangelog, setShowChangelog] = useState(false)
+  const { versionInfo, currentVersion } = useVersionCheck()
   // const location = useLocation()
 
   return (
@@ -79,6 +107,7 @@ export function AppShell({ token, onLogout }: { token: string | null; onLogout: 
         <div className="fixed top-0 inset-x-0 z-[60]">
           <GlobalConnectionBanner />
           <GlobalWarningBanner />
+          <GlobalUpdateBanner onShowChangelog={() => setShowChangelog(true)} />
         </div>
       )}
 
@@ -89,6 +118,13 @@ export function AppShell({ token, onLogout }: { token: string | null; onLogout: 
       </main>
 
       <FloatingDock isAuthenticated={Boolean(token)} onLogout={onLogout} />
+      
+      <ReleaseHistoryModal 
+        isOpen={showChangelog} 
+        onClose={() => setShowChangelog(false)} 
+        versionInfo={versionInfo} 
+        currentVersion={currentVersion} 
+      />
     </ConfigProvider>
   )
 }
