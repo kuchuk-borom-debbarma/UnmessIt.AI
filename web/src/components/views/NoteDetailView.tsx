@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Tag, RefreshCw, Trash2, FolderOpen, BrainCircuit } from 'lucide-react'
+import { ArrowLeft, Tag, RefreshCw, Trash2, FolderOpen, BrainCircuit, Edit2, Save, X } from 'lucide-react'
 import { api, type Note, type Directory } from '../../lib/api'
 import { motion } from 'framer-motion'
 
@@ -13,6 +13,9 @@ export function NoteDetailView({ token }: { token: string }) {
   const [loading, setLoading] = useState(true)
   const [searchParams] = useSearchParams()
 
+  const [isEditing, setIsEditing] = useState(false)
+  const [editText, setEditText] = useState('')
+
   const highlightStart = parseInt(searchParams.get('start') || '-1', 10)
   const highlightEnd = parseInt(searchParams.get('end') || '-1', 10)
 
@@ -21,6 +24,7 @@ export function NoteDetailView({ token }: { token: string }) {
     try {
       const { data } = await api<{ data: Note }>(`/notes/${id}`, { token })
       setNote(data)
+      setEditText(data.text)
       
       if (data.directory_id) {
         const { data: dirs } = await api<{ data: Directory[] }>('/directories/', { token })
@@ -73,6 +77,25 @@ export function NoteDetailView({ token }: { token: string }) {
     return note.text
   }
 
+  const handleSave = async () => {
+    if (!note || !editText.trim()) return
+    try {
+      await api(`/notes/${note.id}`, {
+        method: 'PUT',
+        token,
+        body: JSON.stringify({
+          text: editText,
+          tags: note.tags.map(t => t.name),
+          directory_id: note.directory_id
+        })
+      })
+      setIsEditing(false)
+      load()
+    } catch (err: any) {
+      alert(err.message || 'Failed to update note')
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -118,30 +141,67 @@ export function NoteDetailView({ token }: { token: string }) {
             {directory?.name || 'Root'}
           </div>
           <div className="flex items-center gap-3">
-            <button 
-              className="flex items-center gap-2 h-10 px-4 rounded-lg bg-accent-500/10 text-accent-500 hover:bg-accent-500 hover:text-white transition-colors text-sm font-bold"
-              onClick={() => navigate(`/notes/${note.id}/insights`)}
-            >
-              <BrainCircuit size={16} /> Insights
-            </button>
-            <button 
-              className="flex items-center gap-2 h-10 px-4 rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-colors text-sm font-bold"
-              onClick={async () => {
-                if (confirm('Delete this note?')) {
-                  await api(`/notes/${note.id}`, { method: 'DELETE', token })
-                  navigate('/notes')
-                }
-              }}
-            >
-              <Trash2 size={16} /> Delete Note
-            </button>
+            {isEditing ? (
+              <>
+                <button 
+                  className="flex items-center gap-2 h-10 px-4 rounded-lg bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/20 transition-colors text-sm font-bold"
+                  onClick={() => {
+                    setEditText(note.text)
+                    setIsEditing(false)
+                  }}
+                >
+                  <X size={16} /> Cancel
+                </button>
+                <button 
+                  className="flex items-center gap-2 h-10 px-4 rounded-lg bg-primary-500 text-white hover:bg-primary-600 transition-colors text-sm font-bold"
+                  onClick={handleSave}
+                >
+                  <Save size={16} /> Save Changes
+                </button>
+              </>
+            ) : (
+              <>
+                <button 
+                  className="flex items-center gap-2 h-10 px-4 rounded-lg bg-primary-500/10 text-primary-500 hover:bg-primary-500 hover:text-white transition-colors text-sm font-bold"
+                  onClick={() => setIsEditing(true)}
+                >
+                  <Edit2 size={16} /> Edit Note
+                </button>
+                <button 
+                  className="flex items-center gap-2 h-10 px-4 rounded-lg bg-accent-500/10 text-accent-500 hover:bg-accent-500 hover:text-white transition-colors text-sm font-bold"
+                  onClick={() => navigate(`/notes/${note.id}/insights`)}
+                >
+                  <BrainCircuit size={16} /> Insights
+                </button>
+                <button 
+                  className="flex items-center gap-2 h-10 px-4 rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-colors text-sm font-bold"
+                  onClick={async () => {
+                    if (confirm('Delete this note?')) {
+                      await api(`/notes/${note.id}`, { method: 'DELETE', token })
+                      navigate('/notes')
+                    }
+                  }}
+                >
+                  <Trash2 size={16} /> Delete Note
+                </button>
+              </>
+            )}
           </div>
         </div>
 
         <div className="prose prose-lg dark:prose-invert max-w-none">
-          <div className="text-lg leading-8 text-foreground/90 whitespace-pre-wrap">
-            {renderNoteText()}
-          </div>
+          {isEditing ? (
+            <textarea
+              autoFocus
+              className="w-full min-h-[300px] bg-transparent border border-border/50 rounded-xl p-4 text-lg leading-8 text-foreground/90 focus:ring-2 focus:ring-primary-500/50 outline-none resize-y"
+              value={editText}
+              onChange={e => setEditText(e.target.value)}
+            />
+          ) : (
+            <div className="text-lg leading-8 text-foreground/90 whitespace-pre-wrap">
+              {renderNoteText()}
+            </div>
+          )}
         </div>
 
         <div className="mt-12 pt-6 border-t border-border/50 flex flex-wrap items-center justify-between gap-4 text-sm text-muted-foreground font-semibold">
