@@ -22,17 +22,21 @@ export function NoteDetailView({ token }: { token: string }) {
   const [expandLevel, setExpandLevel] = useState(0)
   const contentRef = useRef<HTMLDivElement>(null)
   const [contentHeight, setContentHeight] = useState(0)
+  const [isOverflowing, setIsOverflowing] = useState(false)
   
   useEffect(() => {
     if (!contentRef.current) return
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
+        // Measure the container's scrollHeight
         setContentHeight(entry.target.scrollHeight)
+        // Also check if it's overflowing right now
+        setIsOverflowing(entry.target.scrollHeight > entry.target.clientHeight)
       }
     })
     observer.observe(contentRef.current)
-    // Initial measurement
     setContentHeight(contentRef.current.scrollHeight)
+    setIsOverflowing(contentRef.current.scrollHeight > contentRef.current.clientHeight)
     
     return () => observer.disconnect()
   }, [note, isEditing])
@@ -270,20 +274,19 @@ export function NoteDetailView({ token }: { token: string }) {
           ) : (
             <div className="bg-card/40 backdrop-blur-sm border border-border/50 rounded-xl shadow-sm overflow-hidden flex flex-col">
               <div 
+                ref={contentRef}
                 className="relative transition-all duration-500 ease-in-out w-full overflow-hidden"
                 style={{ maxHeight: currentMaxHeight }}
               >
                 <div className="p-6 overflow-x-auto">
-                  <div ref={contentRef}>
-                    {renderNoteText()}
-                  </div>
+                  {renderNoteText()}
                 </div>
-                {contentHeight > currentMaxHeight && (
+                {isOverflowing && (
                   <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-card to-transparent pointer-events-none" />
                 )}
               </div>
               
-              {(contentHeight > currentMaxHeight || expandLevel > 0) && (
+              {(isOverflowing || expandLevel > 0) && (
                 <div className="flex items-center justify-center gap-4 py-3 bg-card/80 backdrop-blur-md border-t border-border/50">
                   {expandLevel > 0 && (
                     <button 
@@ -294,7 +297,7 @@ export function NoteDetailView({ token }: { token: string }) {
                       <ChevronUp size={20} />
                     </button>
                   )}
-                  {contentHeight > currentMaxHeight && (
+                  {isOverflowing && (
                     <button 
                       className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-500/10 text-primary-500 hover:bg-primary-500 hover:text-white transition-all shadow-[0_0_15px_rgba(var(--primary-500),0.1)]"
                       onClick={() => setExpandLevel(prev => prev + 1)}
