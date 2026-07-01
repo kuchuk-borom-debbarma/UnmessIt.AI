@@ -62,15 +62,9 @@ http://localhost:2831
 5. Filter the AI search scope to specific directories (optional).
 6. Ask a question!
 
-### Updating to Latest (Remote Images)
+### Updating to Latest
 
-To get the latest updates via our pre-built remote images, simply re-run the same installation command for your operating system from the **Fast Start** section above. It will automatically pull the newest images and restart the containers.
-
-Alternatively, you can manually navigate to your installation folder (usually `unmessit-ai`) and run:
-```bash
-docker compose -f docker-compose.prod.yml pull
-docker compose -f docker-compose.prod.yml up -d
-```
+To get the latest updates, simply re-run the installation command for your operating system from the **Fast Start** section above. The script automatically handles pulling the newest images and cleanly restarting your containers to ensure you are always on the latest version.
 
 > [!WARNING]
 > **Still seeing the old version after updating?**
