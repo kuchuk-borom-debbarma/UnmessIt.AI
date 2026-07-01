@@ -1,15 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { Plus, Tag, RefreshCw, Trash2, FolderOpen, FileText, Maximize2, FolderPlus, FolderMinus, ChevronRight, X, CheckCircle2, Clock3, AlertCircle, Pause, Edit2, FolderInput } from 'lucide-react'
-import { API_BASE, api, type Note, type Directory } from '../../lib/api'
+import { api, type Note, type Directory } from '../../lib/api'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '../../lib/utils'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { TagSearchSelect } from './TagSearchSelect'
+import { type JobEvent, type JobProgressEvent, type JobStatus, useIngestJobEvents } from '../../lib/ingestJobEvents'
 
 type ApiPaginatedData<T> = { data: T, total: number, page: number, limit: number }
-type JobStatus = NonNullable<Note['job_status']>
-type JobEvent = { job: { id: string; status: JobStatus } }
-type JobProgressEvent = { job_id: string; status: JobStatus }
 
 function MoveItemModal({ isOpen, onClose, currentDirId, allDirectories, onMove, itemName }: { isOpen: boolean, onClose: () => void, currentDirId: string | null, allDirectories: Directory[], onMove: (dirId: string | null) => void, itemName?: string }) {
   const [query, setQuery] = useState('')
@@ -569,55 +567,15 @@ export function NotesView({ token }: { token: string }) {
     load()
   }, [load])
 
-  useEffect(() => {
-    const controller = new AbortController()
-    let retryTimer: number | undefined
-    const setNoteStatus = (noteId: string, status: JobStatus) => {
-      setNotes(current => current.map(note => note.id === noteId ? { ...note, job_status: status } : note))
-    }
-    const connect = async () => {
-      try {
-        const response = await fetch(`${API_BASE}/api/v1/advanced/ingest_jobs/events`, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: controller.signal,
-        })
-        if (!response.body) return
-        const reader = response.body.getReader()
-        const decoder = new TextDecoder()
-        let buffer = ''
-        while (!controller.signal.aborted) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buffer += decoder.decode(value, { stream: true })
-          const events = buffer.split('\n\n')
-          buffer = events.pop() || ''
-          for (const block of events) {
-            const event = block.split('\n').find(line => line.startsWith('event: '))?.slice(7)
-            const rawData = block.split('\n').find(line => line.startsWith('data: '))?.slice(6)
-            if (!rawData) continue
-            if (event === 'job') {
-              const data = JSON.parse(rawData) as JobEvent
-              setNoteStatus(data.job.id, data.job.status)
-            }
-            if (event === 'job_progress') {
-              const data = JSON.parse(rawData) as JobProgressEvent
-              setNoteStatus(data.job_id, data.status)
-            }
-          }
-        }
-      } catch (err) {
-        if (!controller.signal.aborted) {
-          console.error('Ingest job event stream failed:', err)
-          retryTimer = window.setTimeout(connect, 5000)
-        }
-      }
-    }
-    void connect()
-    return () => {
-      controller.abort()
-      if (retryTimer) clearTimeout(retryTimer)
-    }
-  }, [token])
+  const setNoteStatus = useCallback((noteId: string, status: JobStatus) => {
+    setNotes(current => current.map(note => note.id === noteId ? { ...note, job_status: status } : note))
+  }, [])
+
+  useIngestJobEvents(token, {
+    onJob: (data: JobEvent) => setNoteStatus(data.job.id, data.job.status),
+    onProgress: (data: JobProgressEvent) => setNoteStatus(data.job_id, data.status),
+    onError: err => console.error('Ingest job event stream failed:', err),
+  })
 
   // Resolve breadcrumbs
   const breadcrumbs = []

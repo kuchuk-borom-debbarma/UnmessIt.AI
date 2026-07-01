@@ -198,7 +198,7 @@ def update_metadata(job_id: str, updates: dict[str, Any]) -> None:
         return
     progress_message = updates.pop("progress_message", None)
     if progress_message:
-        _publish_progress(job_id, str(progress_message))
+        _publish_progress(job_id, progress_message)
     if not updates:
         return
     job = get(job_id)
@@ -218,7 +218,7 @@ def complete(job_id: str, metadata: dict[str, Any]) -> None:
     """Mark a job complete with final counts."""
     progress_message = metadata.pop("progress_message", None)
     if progress_message:
-        _publish_progress(job_id, str(progress_message))
+        _publish_progress(job_id, progress_message)
     job = get(job_id)
     merged_metadata = {**((job or {}).get("metadata") or {}), **metadata}
     merged_metadata.pop("progress_message", None)
@@ -444,9 +444,9 @@ def _publish_changed(job_id: str) -> None:
         logger.warning("ingest_job_changed_publish_failed job_id=%s error=%s", job_id, exc)
 
 
-def _publish_progress(job_id: str, message: str) -> None:
+def _publish_progress(job_id: str, progress: Any) -> None:
     try:
         from .events import publish_job_progress
-        publish_job_progress(job_id, message)
+        publish_job_progress(job_id, progress)
     except Exception as exc:
         logger.warning("ingest_job_progress_publish_failed job_id=%s error=%s", job_id, exc)

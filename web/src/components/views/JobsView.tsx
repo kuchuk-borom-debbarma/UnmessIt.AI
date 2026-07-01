@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useState } from 'react'
 import { Play, RefreshCw, AlertCircle, CheckCircle2, Clock3, Pause, Square, ExternalLink } from 'lucide-react'
-import { API_BASE, api } from '../../lib/api'
+import { api } from '../../lib/api'
 import { cn } from '../../lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Link } from 'react-router-dom'
-
-type JobStatus = 'queued' | 'running' | 'waiting_retry' | 'complete' | 'failed' | 'aborted' | 'paused'
+import { applyProgressEvent, type JobProgressEvent, type JobStatus, type ProgressByJob, type ProgressLine, useIngestJobEvents } from '../../lib/ingestJobEvents'
 
 type JobMetadata = {
   input_chars?: number
@@ -39,7 +38,6 @@ type IngestJob = {
 
 type Toast = { tone: 'success' | 'danger'; message: string }
 type JobsResponse = { data: IngestJob[], total: number, page: number, limit: number }
-type JobProgressEvent = { job_id: string; status: JobStatus; stage: string; message: string }
 
 function numberMetric(value?: number) {
   return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : null
@@ -78,9 +76,19 @@ function ToastMessage({ toast }: { toast: Toast }) {
   )
 }
 
+const ProgressLogLine = memo(function ProgressLogLine({ line }: { line: ProgressLine }) {
+  const depth = Math.min(line.depth, 6)
+  return (
+    <div className="flex gap-2" style={{ paddingLeft: depth * 12 }}>
+      <span className="text-amber-500/50 shrink-0">&gt;</span>
+      <span className="break-words">{line.message}</span>
+    </div>
+  )
+})
+
 export function JobsView({ token }: { token: string }) {
   const [jobs, setJobs] = useState<IngestJob[]>([])
-  const [liveProgress, setLiveProgress] = useState<Record<string, string[]>>({})
+  const [liveProgress, setLiveProgress] = useState<ProgressByJob>({})
   const [loading, setLoading] = useState(true)
   const [, setShowLoading] = useState(false)
 
@@ -109,50 +117,19 @@ export function JobsView({ token }: { token: string }) {
 
   useEffect(() => {
     load()
-    const controller = new AbortController()
-    let retryTimer: number | undefined
-    const connect = async () => {
-      try {
-        const response = await fetch(`${API_BASE}/api/v1/advanced/ingest_jobs/events`, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: controller.signal,
-        })
-        if (!response.body) return
-        const reader = response.body.getReader()
-        const decoder = new TextDecoder()
-        let buffer = ''
-        while (!controller.signal.aborted) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buffer += decoder.decode(value, { stream: true })
-          const events = buffer.split('\n\n')
-          buffer = events.pop() || ''
-          for (const block of events) {
-            const event = block.split('\n').find(line => line.startsWith('event: '))?.slice(7)
-            const rawData = block.split('\n').find(line => line.startsWith('data: '))?.slice(6)
-            if (event === 'job') void load()
-            if (event === 'job_progress' && rawData) {
-              const data = JSON.parse(rawData) as JobProgressEvent
-              setLiveProgress(current => ({
-                ...current,
-                [data.job_id]: [...(current[data.job_id] ?? []), data.message].slice(-3),
-              }))
-              setJobs(current => current.map(job => job.id === data.job_id ? { ...job, status: data.status, stage: data.stage } : job))
-            }
-          }
-        }
-      } catch {
-        if (!controller.signal.aborted) retryTimer = window.setTimeout(connect, 5000)
-      }
-    }
-    void connect()
     const fallback = setInterval(load, 30000)
-    return () => {
-      controller.abort()
-      if (retryTimer) clearTimeout(retryTimer)
-      clearInterval(fallback)
-    }
-  }, [load, token])
+    return () => clearInterval(fallback)
+  }, [load])
+
+  const handleProgress = useCallback((data: JobProgressEvent) => {
+    setLiveProgress(current => applyProgressEvent(current, data))
+    setJobs(current => current.map(job => job.id === data.job_id ? { ...job, status: data.status, stage: data.stage } : job))
+  }, [])
+
+  useIngestJobEvents(token, {
+    onJob: () => { void load() },
+    onProgress: handleProgress,
+  })
 
   const runJobAction = async (jobId: string, action: () => Promise<void>, success: string, failure: string) => {
     if (busyJobId) return
@@ -297,11 +274,8 @@ export function JobsView({ token }: { token: string }) {
                         )}
                         {progress.length > 0 && job.status === 'running' && (
                           <div className="text-amber-400/80 mt-1 bg-amber-950/20 px-3 py-2 rounded-md border border-amber-900/30 font-mono text-[10px] max-h-32 overflow-y-auto flex flex-col gap-1">
-                             {progress.map((log, idx) => (
-                               <div key={idx} className="flex gap-2">
-                                 <span className="text-amber-500/50">&gt;</span>
-                                 <span>{log}</span>
-                               </div>
+                             {progress.map(line => (
+                               <ProgressLogLine key={line.ref} line={line} />
                              ))}
                           </div>
                         )}

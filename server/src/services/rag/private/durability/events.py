@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from typing import Any
 
@@ -22,9 +23,9 @@ def publish_job_changed(job_id: str) -> None:
     get_event_bus().publish(JOB_CHANGED_TOPIC, {"job_id": job_id})
 
 
-def publish_job_progress(job_id: str, message: str) -> None:
+def publish_job_progress(job_id: str, progress: str | dict[str, Any]) -> None:
     """Emit volatile job progress; not persisted."""
-    get_event_bus().publish(JOB_PROGRESS_TOPIC, {"job_id": job_id, "message": message})
+    get_event_bus().publish(JOB_PROGRESS_TOPIC, {"job_id": job_id, "progress": progress})
 
 
 def register_ingest_job_sse_bridge() -> None:
@@ -62,7 +63,8 @@ async def _publish_job(payload: dict[str, Any]) -> None:
 
 async def _publish_progress(payload: dict[str, Any]) -> None:
     job_id = str(payload.get("job_id") or "")
-    message = str(payload.get("message") or "")
+    progress = _progress_payload(payload.get("progress", payload.get("message")))
+    message = progress["message"]
     if not job_id or not message:
         return
     job = await asyncio.to_thread(repository.get, job_id)
@@ -75,7 +77,7 @@ async def _publish_progress(payload: dict[str, Any]) -> None:
     await get_sse_service().publish(
         f"ingest_jobs:{user_id}",
         "job_progress",
-        {"job_id": job_id, "status": job["status"], "stage": job["stage"], "message": message},
+        {"job_id": job_id, "status": job["status"], "stage": job["stage"], **progress},
     )
 
 
@@ -89,3 +91,25 @@ def _create_logged_task(coro, label: str) -> None:
             logger.warning("ingest_sse_bridge_task_failed label=%s error=%s", label, exc)
 
     task.add_done_callback(_log_failure)
+
+
+def _progress_payload(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        message = str(value.get("message") or "")
+        ref = str(value.get("ref") or _message_ref(message))
+        payload = {
+            "message": message,
+            "depth": max(0, int(value.get("depth") or 0)),
+            "ref": ref,
+        }
+        parent_ref = value.get("parent_ref")
+        if parent_ref:
+            payload["parent_ref"] = str(parent_ref)
+        return payload
+    message = str(value or "")
+    return {"message": message, "depth": 0, "ref": _message_ref(message)}
+
+
+def _message_ref(message: str) -> str:
+    digest = hashlib.sha1(message.encode("utf-8")).hexdigest()[:12]
+    return f"message:{digest}"
