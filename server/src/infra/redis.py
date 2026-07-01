@@ -23,7 +23,7 @@ def redis_enabled() -> bool:
 def get_redis() -> Redis | None:
     if not redis_enabled():
         return None
-    return Redis.from_url(redis_url(), decode_responses=True)
+    return Redis.from_url(redis_url(), decode_responses=True, socket_timeout=15)
 
 
 async def set_json(key: str, value: dict[str, Any], ttl_seconds: int) -> None:

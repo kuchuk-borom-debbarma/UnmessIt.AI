@@ -36,6 +36,11 @@ cd web
 npm run dev > /dev/null 2>&1 &
 WEB_PID=$!
 cd ..
+sleep 1
+if ! kill -0 "$WEB_PID" 2>/dev/null; then
+    echo "Web client failed to start. Port 2831 may already be in use."
+    exit 1
+fi
 
 # Start backend server in the foreground so its logs are fully visible
 echo "Starting backend server on http://localhost:2317"
@@ -46,6 +51,11 @@ source .venv/bin/activate 2>/dev/null || true
 uvicorn src.main:create_app --reload --port 2317 &
 SERVER_PID=$!
 cd ..
+sleep 1
+if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    echo "Backend server failed to start. Port 2317 may already be in use."
+    exit 1
+fi
 
 # Wait for both to finish (which won't happen unless they crash or user presses Ctrl+C)
 wait $SERVER_PID $WEB_PID

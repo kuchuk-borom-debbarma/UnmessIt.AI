@@ -30,14 +30,14 @@ def test_get_redis_builds_decode_responses_client(monkeypatch):
 
     class FakeRedis:
         @staticmethod
-        def from_url(url, decode_responses):
-            calls.append((url, decode_responses))
+        def from_url(url, decode_responses, socket_timeout):
+            calls.append((url, decode_responses, socket_timeout))
             return "client"
 
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setattr(redis_infra, "Redis", FakeRedis)
     assert redis_infra.get_redis() == "client"
-    assert calls == [("redis://localhost:6379/0", True)]
+    assert calls == [("redis://localhost:6379/0", True, 15)]
 
 
 @pytest.mark.asyncio
@@ -53,7 +53,7 @@ async def test_json_helpers_round_trip_and_ignore_bad_json(monkeypatch):
 
     class FakeRedis:
         @staticmethod
-        def from_url(_url, decode_responses):
+        def from_url(_url, decode_responses, socket_timeout):
             return FakeRedis()
 
         async def set(self, key, value, ex):
