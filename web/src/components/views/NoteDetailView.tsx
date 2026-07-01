@@ -5,6 +5,7 @@ import { api, type Note, type Directory } from '../../lib/api'
 import { motion } from 'framer-motion'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { TagSearchSelect } from './TagSearchSelect'
 import rehypeRaw from 'rehype-raw'
 export function NoteDetailView({ token }: { token: string }) {
   const { id } = useParams<{ id: string }>()
@@ -17,6 +18,7 @@ export function NoteDetailView({ token }: { token: string }) {
 
   const [isEditing, setIsEditing] = useState(false)
   const [editText, setEditText] = useState('')
+  const [editTagsVal, setEditTagsVal] = useState('')
 
   const highlightStart = parseInt(searchParams.get('start') || '-1', 10)
   const highlightEnd = parseInt(searchParams.get('end') || '-1', 10)
@@ -101,16 +103,24 @@ export function NoteDetailView({ token }: { token: string }) {
 
   const handleSave = async () => {
     if (!note || !editText.trim()) return
+    
+    const tagNames = editTagsVal.split(',').filter(Boolean).map(v => {
+      const parts = v.trim().split('|')
+      const name = parts[1] ? decodeURIComponent(parts[1]) : parts[0]
+      return name
+    })
+
     try {
       await api(`/api/v1/notes/${note.id}`, {
         method: 'PUT',
         token,
         body: JSON.stringify({
           text: editText,
-          tags: note.tags.map(t => t.name),
+          tags: tagNames,
           directory_id: note.directory_id
         })
       })
+
       setIsEditing(false)
       load()
     } catch (err: any) {
@@ -185,7 +195,11 @@ export function NoteDetailView({ token }: { token: string }) {
               <>
                 <button 
                   className="flex items-center gap-2 h-10 px-4 rounded-lg bg-primary-500/10 text-primary-500 hover:bg-primary-500 hover:text-white transition-colors text-sm font-bold"
-                  onClick={() => setIsEditing(true)}
+                  onClick={() => {
+                    setEditText(note.text)
+                    setEditTagsVal(note.tags.map(t => `${t.id}|${encodeURIComponent(t.name)}`).join(', '))
+                    setIsEditing(true)
+                  }}
                 >
                   <Edit2 size={16} /> Edit Note
                 </button>
@@ -213,12 +227,23 @@ export function NoteDetailView({ token }: { token: string }) {
 
         <div className="prose prose-lg dark:prose-invert max-w-none">
           {isEditing ? (
-            <textarea
-              autoFocus
-              className="w-full min-h-[300px] bg-transparent border border-border/50 rounded-xl p-4 text-lg leading-8 text-foreground/90 focus:ring-2 focus:ring-primary-500/50 outline-none resize-y"
-              value={editText}
-              onChange={e => setEditText(e.target.value)}
-            />
+            <>
+              <div className="mb-4">
+                <TagSearchSelect 
+                  label="Tags" 
+                  mode="include" 
+                  value={editTagsVal} 
+                  onChange={setEditTagsVal} 
+                  token={token} 
+                />
+              </div>
+              <textarea
+                autoFocus
+                className="w-full min-h-[300px] bg-transparent border border-border/50 rounded-xl p-4 text-lg leading-8 text-foreground/90 focus:ring-2 focus:ring-primary-500/50 outline-none resize-y"
+                value={editText}
+                onChange={e => setEditText(e.target.value)}
+              />
+            </>
           ) : (
             <div className="bg-card/40 backdrop-blur-sm border border-border/50 rounded-xl p-6 shadow-sm overflow-x-auto">
               {renderNoteText()}
