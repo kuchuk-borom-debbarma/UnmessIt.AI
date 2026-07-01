@@ -18,8 +18,12 @@ If you have already installed the dependencies for the web client (Node.js) and 
 These scripts will:
 - Start the Vite web client in the background.
 - Start the Uvicorn Python backend in the foreground.
+- Start a local Redis container for Redis Streams/SSE when Docker is available.
 - Display all backend logs directly in your terminal.
 - Stop both services cleanly when you press `Ctrl+C`.
+
+If `REDIS_URL` is already set, the scripts use it. If Docker is unavailable,
+the backend falls back to in-memory events/SSE.
 
 ---
 
