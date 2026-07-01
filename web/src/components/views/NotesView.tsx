@@ -562,7 +562,7 @@ export function NotesView({ token }: { token: string }) {
     }
     const connect = async () => {
       try {
-        const response = await fetch(`${API_BASE}/api/advanced/ingest_jobs/events`, {
+        const response = await fetch(`${API_BASE}/api/v1/advanced/ingest_jobs/events`, {
           headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,
         })
