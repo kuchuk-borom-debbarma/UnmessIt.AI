@@ -86,7 +86,7 @@ UNMESSIT_DATA_DIR=./data
 EOL
 
 echo -e "${BLUE}Starting UnmessIt.AI in the background...${NC}"
-docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml up -d --pull always
 
 echo ""
 echo -e "${GREEN}==============================================${NC}"

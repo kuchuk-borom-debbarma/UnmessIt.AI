@@ -69,7 +69,7 @@ UNMESSIT_DATA_DIR=./data
 "@ | Out-File -Encoding UTF8 -FilePath ".env"
 
 Write-Host "`nStarting UnmessIt.AI in the background..." -ForegroundColor Blue
-docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml up -d --pull always
 
 Write-Host "`n==============================================" -ForegroundColor Green
 Write-Host "    UnmessIt.AI is now running successfully!   " -ForegroundColor Green

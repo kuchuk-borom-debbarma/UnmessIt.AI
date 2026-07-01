@@ -62,6 +62,16 @@ http://localhost:2831
 5. Filter the AI search scope to specific directories (optional).
 6. Ask a question!
 
+### Updating to Latest
+
+To get the latest updates, simply re-run the same installation command for your operating system from the **Fast Start** section above. It will automatically pull the newest images and restart the containers without losing any of your data.
+
+Alternatively, you can manually navigate to your installation folder (usually `unmessit-ai`) and run:
+```bash
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+```
+
 ### Custom Configuration
 
 Docker stores your SQLite database and Chroma vectors in a normal folder beside the compose file:
