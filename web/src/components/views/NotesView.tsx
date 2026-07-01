@@ -10,6 +10,64 @@ type JobStatus = NonNullable<Note['job_status']>
 type JobEvent = { job: { id: string; status: JobStatus } }
 type JobProgressEvent = { job_id: string; status: JobStatus }
 
+function MoveItemModal({ isOpen, onClose, currentDirId, allDirectories, onMove, itemName }: { isOpen: boolean, onClose: () => void, currentDirId: string | null, allDirectories: Directory[], onMove: (dirId: string | null) => void, itemName?: string }) {
+  const [query, setQuery] = useState('')
+  const filteredDirs = allDirectories.filter(d => d.path.toLowerCase().includes(query.toLowerCase()))
+
+  if (!isOpen) return null
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm" onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="w-full max-w-md bg-card border border-border/50 shadow-2xl rounded-2xl p-4 flex flex-col gap-4 max-h-[80vh]"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex justify-between items-center">
+          <h3 className="text-lg font-bold">Move {itemName ? `"${itemName}"` : "Item"}</h3>
+          <button onClick={onClose} className="p-2 text-muted-foreground hover:bg-muted rounded-full">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="relative">
+          <FolderInput size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/50" />
+          <input
+            autoFocus
+            className="w-full bg-input/50 border border-border/50 rounded-xl pl-10 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/50"
+            placeholder="Search folders..."
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+          />
+        </div>
+        <div className="flex-1 overflow-y-auto min-h-[100px] max-h-[300px] flex flex-col gap-1 -mx-2 px-2">
+          <button
+            className={cn("text-left px-3 py-2 rounded-lg text-sm transition-colors hover:bg-primary-500/10 flex items-center gap-2", currentDirId === null ? "bg-primary-500/20 text-primary-500 font-bold" : "text-muted-foreground")}
+            onClick={() => onMove(null)}
+          >
+            <FolderOpen size={14}/> Root Directory
+          </button>
+          {filteredDirs.map(d => (
+            <button
+              key={d.id}
+              className={cn("text-left px-3 py-2 rounded-lg text-sm transition-colors hover:bg-primary-500/10 flex items-center gap-2", currentDirId === d.id ? "bg-primary-500/20 text-primary-500 font-bold" : "text-muted-foreground")}
+              onClick={() => onMove(d.id)}
+            >
+              <FolderOpen size={14}/> 
+              <span className="truncate flex-1">{d.name}</span>
+              <span className="text-muted-foreground/30 text-xs ml-auto truncate max-w-[150px]">{d.path}</span>
+            </button>
+          ))}
+          {filteredDirs.length === 0 && (
+            <div className="text-center py-8 text-sm text-muted-foreground">No matching folders found.</div>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
 const FolderCard = React.memo(function FolderCard({ dir, onSelect, onDelete, onRename }: { dir: Directory, onSelect: () => void, onDelete: () => void, onRename: (newName: string) => void }) {
   const [isEditing, setIsEditing] = useState(false)
   const [editName, setEditName] = useState(dir.name)
@@ -89,7 +147,7 @@ const NoteCard = React.memo(function NoteCard({ note, allDirectories, token, loa
         token,
         body: JSON.stringify({
           text: note.text,
-          tags: note.tags,
+          tags: note.tags.map(t => t.name),
           directory_id: newDirId
         })
       })
@@ -112,21 +170,7 @@ const NoteCard = React.memo(function NoteCard({ note, allDirectories, token, loa
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground/70 flex-1 min-w-0 pr-2">
           <FolderOpen size={14} className="shrink-0" /> 
-          {isMoving ? (
-            <select
-              autoFocus
-              className="premium-input h-7 py-0 text-xs w-32 bg-background border-border/50"
-              value={note.directory_id || ''}
-              onChange={e => handleMove(e.target.value || null)}
-              onBlur={() => setIsMoving(false)}
-              onClick={e => e.stopPropagation()}
-            >
-              <option value="">Root</option>
-              {allDirectories.map(d => <option key={d.id} value={d.id}>{d.path}</option>)}
-            </select>
-          ) : (
-            <span className="truncate">{allDirectories.find(d => d.id === note.directory_id)?.name || 'Root'}</span>
-          )}
+          <span className="truncate">{allDirectories.find(d => d.id === note.directory_id)?.name || 'Root'}</span>
           
           {note.job_status && (
             <div className="flex items-center gap-1 ml-2 border-l border-border/50 pl-2">
@@ -196,9 +240,88 @@ const NoteCard = React.memo(function NoteCard({ note, allDirectories, token, loa
           {new Date(note.created_at).toLocaleDateString()}
         </div>
       </div>
+      <MoveItemModal
+        isOpen={isMoving}
+        onClose={() => setIsMoving(false)}
+        currentDirId={note.directory_id}
+        allDirectories={allDirectories}
+        onMove={handleMove}
+        itemName="Note"
+      />
     </motion.div>
   )
 })
+
+function NoteTypeModal({ isOpen, onClose, onSelectUpload, onSelectManual }: { isOpen: boolean, onClose: () => void, onSelectUpload: (file: File) => void, onSelectManual: () => void }) {
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      onSelectUpload(file);
+      // Reset the input so the same file can be selected again if needed
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            className="w-full max-w-md bg-card border border-border/50 shadow-2xl rounded-3xl p-6"
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold">New Note</h3>
+              <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/5 transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="bento-card p-6 flex flex-col items-center justify-center gap-4 hover:border-primary-500/50 transition-colors group"
+              >
+                <div className="w-12 h-12 rounded-full bg-primary-500/10 flex items-center justify-center text-primary-500 group-hover:scale-110 transition-transform">
+                  <FileText size={24} />
+                </div>
+                <div className="text-center">
+                  <div className="font-bold mb-1">Upload File</div>
+                  <div className="text-xs text-muted-foreground">.txt or .md</div>
+                </div>
+              </button>
+              
+              <button
+                onClick={onSelectManual}
+                className="bento-card p-6 flex flex-col items-center justify-center gap-4 hover:border-primary-500/50 transition-colors group"
+              >
+                <div className="w-12 h-12 rounded-full bg-primary-500/10 flex items-center justify-center text-primary-500 group-hover:scale-110 transition-transform">
+                  <Edit2 size={24} />
+                </div>
+                <div className="text-center">
+                  <div className="font-bold mb-1">Create Manually</div>
+                  <div className="text-xs text-muted-foreground">Text Editor</div>
+                </div>
+              </button>
+            </div>
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept=".txt,.md"
+              className="hidden"
+              onChange={handleFileChange}
+            />
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+}
 
 function NoteCreationModal({ isOpen, onClose, token, allDirectories, selectedDir, onSuccess }: { isOpen: boolean, onClose: () => void, token: string, allDirectories: Directory[], selectedDir: string | null, onSuccess: () => void }) {
   const [draft, setDraft] = useState('')
@@ -353,17 +476,52 @@ export function NotesView({ token }: { token: string }) {
   // Pagination State
   const [notePage, setNotePage] = useState(1)
   const [noteTotal, setNoteTotal] = useState(0)
-  const noteLimit = 20
-  
   const [dirPage, setDirPage] = useState(1)
   const [dirTotal, setDirTotal] = useState(0)
-  const dirLimit = 20
-  
+  const noteLimit = 50
+  const dirLimit = 50
+
   // UI State
-  const [isComposing, setIsComposing] = useState(false)
-  
   const [isCreatingFolder, setIsCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
+  const [isSelectingType, setIsSelectingType] = useState(false)
+  const [isComposing, setIsComposing] = useState(false)
+  
+  // Upload Handler
+  const handleUploadFile = async (file: File) => {
+    setIsSelectingType(false)
+    const reader = new FileReader()
+    reader.onload = async (e) => {
+      const text = e.target?.result as string
+      if (!text.trim()) {
+        alert("File is empty!")
+        return
+      }
+      const extension = file.name.split('.').pop()
+      try {
+        await api('/notes/', {
+          method: 'POST',
+          token,
+          body: JSON.stringify({
+            text: text,
+            directory_id: selectedDir || null,
+            tags: [],
+            metadata: {
+              filename: file.name,
+              extension: extension,
+            }
+          })
+        })
+        load()
+      } catch (err: any) {
+        alert(err.message || 'Failed to upload note')
+      }
+    }
+    reader.onerror = () => {
+      alert("Failed to read file")
+    }
+    reader.readAsText(file)
+  }
 
   const load = useCallback(async () => {
     try {
@@ -532,7 +690,7 @@ export function NotesView({ token }: { token: string }) {
           <button 
             className="premium-btn premium-btn-primary h-12 px-6 gap-2"
             onClick={() => {
-              setIsComposing(true)
+              setIsSelectingType(true)
             }}
           >
             <Plus size={18} /> New Note
@@ -658,8 +816,17 @@ export function NotesView({ token }: { token: string }) {
       )}
 
       {/* Note Creation Modal */}
-      <NoteCreationModal
-        isOpen={isComposing}
+      <NoteTypeModal
+        isOpen={isSelectingType}
+        onClose={() => setIsSelectingType(false)}
+        onSelectUpload={handleUploadFile}
+        onSelectManual={() => {
+          setIsSelectingType(false)
+          setIsComposing(true)
+        }}
+      />
+      <NoteCreationModal 
+        isOpen={isComposing} 
         onClose={() => setIsComposing(false)}
         token={token}
         allDirectories={allDirectories}

@@ -14,12 +14,14 @@ class NoteCreateRequest(BaseModel):
     text: str = Field(..., min_length=1)
     directory_id: str | None = None
     tags: list[str] = Field(default_factory=list)
+    metadata: dict | None = None
 
 
 class NoteUpdateRequest(BaseModel):
     text: str = Field(..., min_length=1)
     directory_id: str | None = None
     tags: list[str] | None = None
+    metadata: dict | None = None
 
 
 def _with_tags(note: dict) -> dict:
@@ -72,6 +74,7 @@ async def create_note(
             user_id=user_id,
             directory_id=request.directory_id,
             tag_names=request.tags,
+            metadata=request.metadata,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -91,6 +94,7 @@ async def update_note(
             user_id=user_id,
             directory_id=request.directory_id,
             tag_names=request.tags,
+            metadata=request.metadata,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

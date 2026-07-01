@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import uuid4
 
@@ -7,16 +8,16 @@ from src.repositories import directories
 from src.infra.sqlite import get_connection
 
 
-def create(text: str, user_id: str, directory_id: str | None = None) -> str:
+def create(text: str, user_id: str, directory_id: str | None = None, metadata: dict[str, Any] | None = None) -> str:
     _check_directory(directory_id, user_id)
     note_id = str(uuid4())
     conn = get_connection()
     conn.execute(
         """
-        INSERT INTO notes (id, text, directory_id, user_id)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO notes (id, text, directory_id, user_id, metadata)
+        VALUES (?, ?, ?, ?, ?)
         """,
-        (note_id, text, directory_id, user_id)
+        (note_id, text, directory_id, user_id, json.dumps(metadata or {}, ensure_ascii=False))
     )
     conn.commit()
     return note_id
@@ -25,27 +26,37 @@ def create(text: str, user_id: str, directory_id: str | None = None) -> str:
 def get(note_id: str, user_id: str) -> dict[str, Any] | None:
     row = get_connection().execute(
         """
-        SELECT n.id, n.text, n.directory_id, n.user_id, n.created_at, n.updated_at, n.deleted_at, j.status as job_status 
+        SELECT n.id, n.text, n.directory_id, n.user_id, n.created_at, n.updated_at, n.deleted_at, n.metadata, j.status as job_status 
         FROM notes n
         LEFT JOIN ingest_jobs j ON j.id = n.id
         WHERE n.id = ? AND n.user_id = ? AND n.deleted_at IS NULL
         """,
         (note_id, user_id)
     ).fetchone()
-    return dict(row) if row else None
+    return _note(row) if row else None
 
 
-def update(note_id: str, text: str, user_id: str, directory_id: str | None = None) -> bool:
+def update(note_id: str, text: str, user_id: str, directory_id: str | None = None, metadata: dict[str, Any] | None = None) -> bool:
     _check_directory(directory_id, user_id)
     conn = get_connection()
-    cursor = conn.execute(
-        """
-        UPDATE notes 
-        SET text = ?, directory_id = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ? AND user_id = ?
-        """,
-        (text, directory_id, note_id, user_id)
-    )
+    if metadata is not None:
+        cursor = conn.execute(
+            """
+            UPDATE notes 
+            SET text = ?, directory_id = ?, metadata = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND user_id = ?
+            """,
+            (text, directory_id, json.dumps(metadata, ensure_ascii=False), note_id, user_id)
+        )
+    else:
+        cursor = conn.execute(
+            """
+            UPDATE notes 
+            SET text = ?, directory_id = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND user_id = ?
+            """,
+            (text, directory_id, note_id, user_id)
+        )
     conn.commit()
     return cursor.rowcount > 0
 
@@ -100,12 +111,12 @@ def list_notes(user_id: str, directory_id: str | None = None, include_all: bool 
     query += " ORDER BY n.created_at DESC LIMIT ? OFFSET ?"
     params.extend([limit, offset])
     
-    rows = conn.execute(f"SELECT n.id, n.text, n.directory_id, n.user_id, n.created_at, n.updated_at, j.status as job_status {query}", params).fetchall()
+    rows = conn.execute(f"SELECT n.id, n.text, n.directory_id, n.user_id, n.created_at, n.updated_at, n.metadata, j.status as job_status {query}", params).fetchall()
     return {
         "total": total,
         "page": page,
         "limit": limit,
-        "data": [dict(row) for row in rows]
+        "data": [_note(row) for row in rows]
     }
 
 def list_trash(user_id: str, page: int = 1, limit: int = 20) -> dict[str, Any]:
@@ -121,15 +132,23 @@ def list_trash(user_id: str, page: int = 1, limit: int = 20) -> dict[str, Any]:
     query += " ORDER BY deleted_at DESC LIMIT ? OFFSET ?"
     params.extend([limit, offset])
     
-    rows = conn.execute(f"SELECT id, text, directory_id, user_id, created_at, updated_at, deleted_at {query}", params).fetchall()
+    rows = conn.execute(f"SELECT id, text, directory_id, user_id, created_at, updated_at, deleted_at, metadata {query}", params).fetchall()
     return {
         "total": total,
         "page": page,
         "limit": limit,
-        "data": [dict(row) for row in rows]
+        "data": [_note(row) for row in rows]
     }
 
 
 def _check_directory(directory_id: str | None, user_id: str) -> None:
     if directory_id and not directories.get(directory_id, user_id):
         raise ValueError("Directory not found")
+
+def _note(row) -> dict[str, Any]:
+    data = dict(row)
+    try:
+        data["metadata"] = json.loads(data.get("metadata") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        data["metadata"] = {}
+    return data

@@ -10,9 +10,9 @@ class NotesService:
     def __init__(self) -> None:
         self.event_bus = get_event_bus()
         
-    async def create_note(self, text: str, user_id: str, directory_id: str | None = None, tag_names: list[str] | None = None) -> str:
+    async def create_note(self, text: str, user_id: str, directory_id: str | None = None, tag_names: list[str] | None = None, metadata: dict[str, Any] | None = None) -> str:
         """Create a note and publish event for ingestion."""
-        note_id = notes.create(text, user_id, directory_id)
+        note_id = notes.create(text, user_id, directory_id, metadata)
         
         if tag_names:
             for name in tag_names:
@@ -38,6 +38,7 @@ class NotesService:
         user_id: str,
         directory_id: str | None = None,
         tag_names: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> bool:
         """Update a note and publish event for ingestion."""
         old_note = notes.get(note_id, user_id)
@@ -46,7 +47,7 @@ class NotesService:
             
         old_dir = old_note["directory_id"]
         
-        success = notes.update(note_id, text, user_id, directory_id)
+        success = notes.update(note_id, text, user_id, directory_id, metadata)
         if success:
             old_tag_names = {t["name"] for t in tags.get_for_note(note_id)}
             new_tag_names = set(tag_names) if tag_names is not None else old_tag_names

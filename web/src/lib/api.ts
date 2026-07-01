@@ -11,6 +11,7 @@ export type Note = {
   tags: Tag[]
   created_at: string
   updated_at: string
+  metadata?: { filename?: string; extension?: string; [key: string]: any }
   job_status?: 'queued' | 'running' | 'waiting_retry' | 'complete' | 'failed' | 'aborted' | 'paused'
 }
 export type Preset = {

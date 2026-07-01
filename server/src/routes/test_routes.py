@@ -15,7 +15,7 @@ from src.routes import retrieval as retrieval_route
 
 def test_notes_route_creates_note_and_triggers_event(monkeypatch):
     class FakeNotesService:
-        async def create_note(self, text: str, user_id: str, directory_id: str | None = None, tag_names: list[str] | None = None) -> str:
+        async def create_note(self, text: str, user_id: str, directory_id: str | None = None, tag_names: list[str] | None = None, metadata: dict | None = None) -> str:
             return "note-1"
 
     monkeypatch.setattr(notes_route, "get_notes_service", lambda: FakeNotesService())
