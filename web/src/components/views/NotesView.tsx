@@ -252,13 +252,13 @@ const NoteCard = React.memo(function NoteCard({ note, allDirectories, token, loa
   )
 })
 
-function NoteTypeModal({ isOpen, onClose, onSelectUpload, onSelectManual }: { isOpen: boolean, onClose: () => void, onSelectUpload: (file: File) => void, onSelectManual: () => void }) {
+function NoteTypeModal({ isOpen, onClose, onSelectUpload, onSelectManual }: { isOpen: boolean, onClose: () => void, onSelectUpload: (files: File[]) => void, onSelectManual: () => void }) {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      onSelectUpload(file);
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0) {
+      onSelectUpload(files);
       // Reset the input so the same file can be selected again if needed
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
@@ -309,13 +309,14 @@ function NoteTypeModal({ isOpen, onClose, onSelectUpload, onSelectManual }: { is
                 </div>
               </button>
             </div>
-            <input
-              type="file"
-              ref={fileInputRef}
-              accept=".txt,.md"
-              className="hidden"
-              onChange={handleFileChange}
-            />
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                onChange={handleFileChange} 
+                className="hidden" 
+                accept=".txt,.md,.markdown"
+                multiple
+              />
           </motion.div>
         </div>
       )}
@@ -488,39 +489,43 @@ export function NotesView({ token }: { token: string }) {
   const [isComposing, setIsComposing] = useState(false)
   
   // Upload Handler
-  const handleUploadFile = async (file: File) => {
+  const handleUploadFile = async (files: File[]) => {
     setIsSelectingType(false)
-    const reader = new FileReader()
-    reader.onload = async (e) => {
-      const text = e.target?.result as string
-      if (!text.trim()) {
-        alert("File is empty!")
-        return
-      }
-      const extension = file.name.split('.').pop()
-      try {
-        await api('/notes/', {
-          method: 'POST',
-          token,
-          body: JSON.stringify({
-            text: text,
-            directory_id: selectedDir || null,
-            tags: [],
-            metadata: {
-              filename: file.name,
-              extension: extension,
-            }
-          })
-        })
-        load()
-      } catch (err: any) {
-        alert(err.message || 'Failed to upload note')
-      }
+    for (const file of files) {
+      const reader = new FileReader()
+      await new Promise<void>((resolve) => {
+        reader.onload = async (e) => {
+          const text = e.target?.result as string
+          if (!text.trim()) {
+            console.warn(`File ${file.name} is empty!`)
+            resolve()
+            return
+          }
+          const extension = file.name.split('.').pop()
+          try {
+            await api('/notes/', {
+              method: 'POST',
+              token,
+              body: JSON.stringify({
+                text: text,
+                directory_id: selectedDir || null,
+                tags: [],
+                metadata: {
+                  filename: file.name,
+                  extension: extension,
+                }
+              })
+            })
+          } catch (err: any) {
+            console.error(`Failed to upload note ${file.name}:`, err)
+          }
+          resolve()
+        }
+        reader.onerror = () => resolve()
+        reader.readAsText(file)
+      })
     }
-    reader.onerror = () => {
-      alert("Failed to read file")
-    }
-    reader.readAsText(file)
+    load()
   }
 
   const load = useCallback(async () => {

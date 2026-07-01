@@ -1,6 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
-
+@plugin "@tailwindcss/typography";
 @theme {
   --color-primary-50: #ecfdf5;
   --color-primary-100: #d1fae5;

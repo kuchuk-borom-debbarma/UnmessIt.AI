@@ -3,7 +3,9 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Tag, RefreshCw, Trash2, FolderOpen, BrainCircuit, Edit2, Save, X } from 'lucide-react'
 import { api, type Note, type Directory } from '../../lib/api'
 import { motion } from 'framer-motion'
-
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
 export function NoteDetailView({ token }: { token: string }) {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -57,12 +59,32 @@ export function NoteDetailView({ token }: { token: string }) {
 
   const renderNoteText = () => {
     if (!note) return null
+    
+    const isMarkdown = note.metadata?.extension === 'md' || note.metadata?.extension === 'markdown'
+    
+    if (isMarkdown) {
+      let content = note.text
+      if (highlightStart >= 0 && highlightEnd > highlightStart && highlightEnd <= note.text.length) {
+        const before = note.text.slice(0, highlightStart)
+        const highlight = note.text.slice(highlightStart, highlightEnd)
+        const after = note.text.slice(highlightEnd)
+        content = `${before}<mark id="citation-highlight" class="bg-primary-500/30 text-foreground rounded px-1 py-0.5 transition-colors duration-1000">${highlight}</mark>${after}`
+      }
+      return (
+        <div className="prose dark:prose-invert max-w-none prose-pre:bg-input/50 prose-pre:border prose-pre:border-border/50">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+            {content}
+          </ReactMarkdown>
+        </div>
+      )
+    }
+
     if (highlightStart >= 0 && highlightEnd > highlightStart && highlightEnd <= note.text.length) {
       const before = note.text.slice(0, highlightStart)
       const highlight = note.text.slice(highlightStart, highlightEnd)
       const after = note.text.slice(highlightEnd)
       return (
-        <>
+        <div className="whitespace-pre-wrap">
           {before}
           <mark 
             id="citation-highlight" 
@@ -71,10 +93,10 @@ export function NoteDetailView({ token }: { token: string }) {
             {highlight}
           </mark>
           {after}
-        </>
+        </div>
       )
     }
-    return note.text
+    return <div className="whitespace-pre-wrap">{note.text}</div>
   }
 
   const handleSave = async () => {
@@ -198,7 +220,7 @@ export function NoteDetailView({ token }: { token: string }) {
               onChange={e => setEditText(e.target.value)}
             />
           ) : (
-            <div className="text-lg leading-8 text-foreground/90 whitespace-pre-wrap">
+            <div className="bg-card/40 backdrop-blur-sm border border-border/50 rounded-xl p-6 shadow-sm overflow-x-auto">
               {renderNoteText()}
             </div>
           )}
