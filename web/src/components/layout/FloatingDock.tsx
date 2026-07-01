@@ -1,5 +1,4 @@
 import { NavLink } from 'react-router-dom'
-import { motion } from 'framer-motion'
 import { FileText, Bot, Activity, Settings, LogOut, Moon, Sun, LogIn, UserPlus } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useTheme } from '../../lib/context/useTheme'
@@ -38,13 +37,6 @@ export function FloatingDock({ isAuthenticated, onLogout }: { isAuthenticated: b
             >
               {({ isActive }) => (
                 <>
-                  {isActive && (
-                    <motion.div
-                      layoutId="dock-indicator"
-                      className="absolute inset-0 rounded-lg bg-primary-500/10 border border-primary-500/20"
-                      transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-                    />
-                  )}
                   <div className="relative z-10 flex h-11 w-11 flex-col items-center justify-center gap-0.5">
                     <item.icon size={20} className={cn("transition-colors", isActive ? "text-primary-400" : "")} />
                     <span className={cn("text-[8px] font-bold uppercase tracking-wider hidden md:block leading-none", isActive ? "text-primary-400" : "opacity-0 group-hover:opacity-100 transition-opacity")}>

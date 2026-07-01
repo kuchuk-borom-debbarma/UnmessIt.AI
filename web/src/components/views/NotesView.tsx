@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Tag, RefreshCw, Trash2, FolderOpen, FileText, Maximize2, FolderPlus, FolderMinus, ChevronRight, X, CheckCircle2, Clock3, AlertCircle, Pause, Edit2, FolderInput } from 'lucide-react'
 import { api, type Note, type Directory } from '../../lib/api'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -11,7 +11,11 @@ type ApiPaginatedData<T> = { data: T, total: number, page: number, limit: number
 
 function MoveItemModal({ isOpen, onClose, currentDirId, allDirectories, onMove, itemName }: { isOpen: boolean, onClose: () => void, currentDirId: string | null, allDirectories: Directory[], onMove: (dirId: string | null) => void, itemName?: string }) {
   const [query, setQuery] = useState('')
-  const filteredDirs = allDirectories.filter(d => d.path.toLowerCase().includes(query.toLowerCase()))
+  const filteredDirs = useMemo(() => {
+    const normalized = query.trim().toLowerCase()
+    if (!normalized) return allDirectories
+    return allDirectories.filter(d => d.path.toLowerCase().includes(normalized))
+  }, [allDirectories, query])
 
   if (!isOpen) return null
 
@@ -134,7 +138,7 @@ const FolderCard = React.memo(function FolderCard({ dir, onSelect, onDelete, onR
   )
 })
 
-const NoteCard = React.memo(function NoteCard({ note, allDirectories, token, load }: { note: Note, allDirectories: Directory[], token: string, load: () => void }) {
+const NoteCard = React.memo(function NoteCard({ note, directoryName, allDirectories, token, load }: { note: Note, directoryName: string, allDirectories: Directory[], token: string, load: () => void }) {
   const navigate = useNavigate()
   const isLong = note.text.length > 400 || note.text.split('\n').length > 8
   const [isMoving, setIsMoving] = useState(false)
@@ -158,18 +162,17 @@ const NoteCard = React.memo(function NoteCard({ note, allDirectories, token, loa
   }
 
   return (
-    <motion.div 
-      layout
+    <motion.div
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.9 }}
-      className="bento-card break-inside-avoid p-6 flex flex-col group relative cursor-pointer hover:border-primary-500/50 transition-colors"
+      className="bento-card min-h-[260px] p-5 flex flex-col group relative cursor-pointer hover:border-primary-500/50 transition-colors"
       onClick={() => navigate(`/notes/${note.id}`)}
     >
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground/70 flex-1 min-w-0 pr-2">
           <FolderOpen size={14} className="shrink-0" /> 
-          <span className="truncate">{allDirectories.find(d => d.id === note.directory_id)?.name || 'Root'}</span>
+          <span className="truncate">{directoryName}</span>
           
           {note.job_status && (
             <div className="flex items-center gap-1 ml-2 border-l border-border/50 pl-2">
@@ -218,9 +221,9 @@ const NoteCard = React.memo(function NoteCard({ note, allDirectories, token, loa
         </div>
       </div>
 
-      <div className="relative flex-1">
+      <div className="relative min-h-0 flex-1">
         <p className={cn(
-          "text-base text-foreground/90 whitespace-pre-wrap transition-all duration-300",
+          "text-sm leading-6 text-foreground/90 whitespace-pre-wrap transition-all duration-300",
           isLong ? "line-clamp-[10]" : ""
         )}>
           {note.text}
@@ -449,17 +452,19 @@ function NoteCreationModal({ isOpen, onClose, token, allDirectories, selectedDir
 export function NotesView({ token }: { token: string }) {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  const loadSeq = useRef(0)
   
   // Navigation State
   
   const filterTagVal = searchParams.get('tag_val') || ''
   const handleSelectTag = (val: string) => {
+    const next = new URLSearchParams(searchParams)
     if (val) {
-      searchParams.set('tag_val', val)
+      next.set('tag_val', val)
     } else {
-      searchParams.delete('tag_val')
+      next.delete('tag_val')
     }
-    setSearchParams(searchParams)
+    setSearchParams(next)
     setNotePage(1)
   }
   const filterTagId = filterTagVal ? filterTagVal.split('|')[0] : null
@@ -467,10 +472,6 @@ export function NotesView({ token }: { token: string }) {
   const selectedDir = searchParams.get('dir')
 
   const handleSelectDir = (dirId: string | null) => {
-    // Clear lists to prevent seeing old data
-    setNotes([])
-    setDirectories([])
-    
     if (dirId) {
       setSearchParams({ dir: dirId })
     } else {
@@ -540,32 +541,46 @@ export function NotesView({ token }: { token: string }) {
     load()
   }
 
+  const loadAllDirectories = useCallback(async () => {
+    try {
+      const allD = await api<ApiPaginatedData<Directory[]>>(`/api/v1/directories/?all=true&limit=1000`, { token })
+      setAllDirectories(allD.data)
+    } catch (err) {
+      console.error(err)
+    }
+  }, [token])
+
   const load = useCallback(async () => {
+    const seq = loadSeq.current + 1
+    loadSeq.current = seq
     try {
       const parentQuery = selectedDir ? `&directory_id=${selectedDir}` : ''
       const tagQuery = filterTagId ? `&tag_id=${filterTagId}` : ''
       const dirParentQuery = selectedDir ? `&parent_id=${selectedDir}` : ''
 
-      const [n, d, allD] = await Promise.all([
+      const [n, d] = await Promise.all([
         api<ApiPaginatedData<Note[]>>(`/api/v1/notes/?page=${notePage}&limit=${noteLimit}${parentQuery}${tagQuery}`, { token }),
         api<ApiPaginatedData<Directory[]>>(`/api/v1/directories/?page=${dirPage}&limit=${dirLimit}${dirParentQuery}`, { token }),
-        api<ApiPaginatedData<Directory[]>>(`/api/v1/directories/?all=true&limit=1000`, { token })
       ])
+      if (seq !== loadSeq.current) return
       setNotes(n.data)
       setNoteTotal(n.total)
       setDirectories(d.data)
       setDirTotal(d.total)
-      setAllDirectories(allD.data)
     } catch (err) {
       console.error(err)
     } finally {
-      setLoading(false)
+      if (seq === loadSeq.current) setLoading(false)
     }
   }, [token, selectedDir, filterTagId, notePage, noteLimit, dirPage, dirLimit])
 
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    void loadAllDirectories()
+  }, [loadAllDirectories])
 
   const setNoteStatus = useCallback((noteId: string, status: JobStatus) => {
     setNotes(current => current.map(note => note.id === noteId ? { ...note, job_status: status } : note))
@@ -578,14 +593,18 @@ export function NotesView({ token }: { token: string }) {
   })
 
   // Resolve breadcrumbs
-  const breadcrumbs = []
-  if (selectedDir) {
-    let curr = allDirectories.find(d => d.id === selectedDir)
+  const allDirectoriesById = useMemo(() => new Map(allDirectories.map(dir => [dir.id, dir])), [allDirectories])
+
+  const breadcrumbs = useMemo(() => {
+    const next: Directory[] = []
+    if (!selectedDir) return next
+    let curr = allDirectoriesById.get(selectedDir)
     while (curr) {
-      breadcrumbs.unshift(curr)
-      curr = allDirectories.find(d => d.id === curr!.parent_id)
+      next.unshift(curr)
+      curr = curr.parent_id ? allDirectoriesById.get(curr.parent_id) : undefined
     }
-  }
+    return next
+  }, [allDirectoriesById, selectedDir])
 
   // Modal handles this now
 
@@ -602,6 +621,7 @@ export function NotesView({ token }: { token: string }) {
       })
       setNewFolderName('')
       setIsCreatingFolder(false)
+      await loadAllDirectories()
       await load()
     } catch (err: any) {
       alert(err.message || 'Failed to create folder')
@@ -613,8 +633,9 @@ export function NotesView({ token }: { token: string }) {
       await api(`/api/v1/directories/${dirId}`, {
         method: 'PUT',
         token,
-        body: JSON.stringify({ name: newName })
+      body: JSON.stringify({ name: newName })
       })
+      await loadAllDirectories()
       await load()
     } catch (err: any) {
       alert(err.message || 'Failed to rename folder')
@@ -626,8 +647,10 @@ export function NotesView({ token }: { token: string }) {
       try {
         await api(`/api/v1/directories/${dirId}`, { method: 'DELETE', token })
         if (selectedDir === dirId) {
+          await loadAllDirectories()
           handleSelectDir(null)
         } else {
+          await loadAllDirectories()
           await load()
         }
       } catch (err: any) {
@@ -778,10 +801,17 @@ export function NotesView({ token }: { token: string }) {
       )}
 
       {/* Notes Grid */}
-      <div className="columns-1 md:columns-2 xl:columns-3 gap-6 space-y-6">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         <AnimatePresence>
           {notes.map((note) => (
-            <NoteCard key={note.id} note={note} allDirectories={allDirectories} token={token} load={load} />
+            <NoteCard
+              key={note.id}
+              note={note}
+              directoryName={note.directory_id ? allDirectoriesById.get(note.directory_id)?.name || 'Folder' : 'Root'}
+              allDirectories={allDirectories}
+              token={token}
+              load={load}
+            />
           ))}
         </AnimatePresence>
         

@@ -8,12 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.0.4] - 2026-07-02
 
 ### Added
+- Redis-backed runtime support for Docker installs, with manual backend runs still able to use in-memory events/SSE when `REDIS_URL` is unset.
+- Transactional SQLite event outbox rows for note lifecycle and ingest job events, with Redis Streams delivery through the `unmessit:server` consumer group.
+- Persistent handler idempotency rows so redelivered stream events skip completed handler work.
+- Redis Pub/Sub SSE fanout and Redis-backed SSE connection presence records for future horizontal scaling.
+- Docker Compose, installer, runtime configuration, and Redis/outbox/SSE documentation updates for the new Redis runtime path.
 - Indexing jobs now sort by actionability: running jobs first, then queued/retry, failed/paused/stopped work, and completed jobs last.
 - The app shell now shows the current signed-in user and a direct release history entry point.
 - Release history now has a cleaner version timeline in the frontend modal.
 - Note detail expand/collapse now reveals 400px per step instead of 200px.
 
+### Changed
+- Reworked the app shell and notes grid for a calmer, more stable UI with fewer persistent visual layers and less layout shifting.
+- Reduced Notes view refresh work by separating full-directory loading from paginated note/folder loading and memoizing derived directory lookups.
+- Cleaned repository-generated artifacts out of the tracked tree and ignored future local logs/codebase-memory outputs.
+
 ### Fixed
+- Corrected release history so each version only describes changes introduced in that version.
 - Removed the misleading in-app update/reload button; update detection now points users to the GitHub repository instead of pretending to install updates.
 - Hardened `scripts/dev/run.sh` so it checks ports, starts/waits for Redis, captures frontend logs, and cleans up child processes when either service exits.
 - Redis stream workers now back off quietly while Redis is unavailable and keep outbox events pending instead of marking them failed for connection errors.
@@ -74,14 +85,3 @@ Welcome to the first version of **UnmessIt.AI**! This initial release brings a c
 ### User Interface
 - **Built-in Versioning**: A sleek global update banner and this very Release History modal to keep you in the loop.
 - **Dark Mode Aesthetic**: A highly polished, responsive design utilizing framer-motion animations and debounced loading states.
-
-### Infrastructure Reliability
-- **Redis Runtime For Docker**: Docker installs now include Redis and set `REDIS_URL=redis://redis:6379/0` automatically. Manual backend runs can leave `REDIS_URL` unset and keep the old in-memory event/SSE behavior.
-- **Transactional Event Outbox**: Note lifecycle changes and ingest job updates write durable SQLite outbox rows alongside the state changes that caused them. If Redis is down, events stay pending and retry when the dispatcher recovers.
-- **At-Least-Once Domain Events**: Cross-process domain events are delivered through Redis Streams with the `unmessit:server` consumer group. Consumers acknowledge messages only after handlers succeed.
-- **Persistent Idempotency**: Event handlers record completed `(event_id, handler_name)` pairs in SQLite, so Redis redelivery or duplicate stream entries do not repeat completed handler work.
-- **Redis SSE Fanout**: Server-Sent Events now scale across multiple API processes with Redis Pub/Sub. Live SSE sockets stay process-local, while each instance forwards Redis topic events only to local subscribers.
-- **SSE Connection Presence**: Redis stores short-lived connection presence records with instance id, connection id, topic, and last-seen timestamp. This supports observability and future routing without trying to move live HTTP connections between processes.
-- **Docker And Installer Updates**: Compose files, Bash installer, and PowerShell installer were updated to start Redis, preserve `REDIS_URL`, and keep data in persistent Docker volumes.
-- **Redis Documentation**: Added dedicated Redis event/SSE documentation plus updated durability, SSE, runtime config, README, and codebase rules docs.
-- **Repository Cleanup**: Removed stale root patch scripts and generated log files from the tracked repository, and ignored future `*.log` and generated codebase-memory artifacts.

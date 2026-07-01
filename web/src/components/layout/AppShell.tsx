@@ -112,10 +112,6 @@ export function AppShell({ token, onLogout }: { token: string | null; onLogout: 
 
   return (
     <ConfigProvider token={token}>
-      {/* 2026 Background FX */}
-      <div className="bg-noise" />
-      <div className="bg-ambient" />
-
       {token && (
         <div className="fixed top-0 inset-x-0 z-[60]">
           <div className="mx-auto flex max-w-[1600px] items-center justify-between px-4 py-3 md:px-8">
