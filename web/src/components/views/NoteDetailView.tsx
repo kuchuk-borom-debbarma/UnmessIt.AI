@@ -37,7 +37,7 @@ export function NoteDetailView({ token }: { token: string }) {
     return () => observer.disconnect()
   }, [note, isEditing])
 
-  const CHUNK_HEIGHT = 400
+  const CHUNK_HEIGHT = 200
   const currentMaxHeight = (expandLevel + 1) * CHUNK_HEIGHT
 
   const [editTagsVal, setEditTagsVal] = useState('')
@@ -286,7 +286,7 @@ export function NoteDetailView({ token }: { token: string }) {
                   {expandLevel > 0 && (
                     <button 
                       className="flex items-center justify-center w-10 h-10 rounded-full bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/20 hover:text-foreground transition-all"
-                      onClick={() => setExpandLevel(prev => Math.max(0, prev - 1))}
+                      onClick={() => setExpandLevel(0)}
                       title="Shrink"
                     >
                       <ChevronUp size={20} />
