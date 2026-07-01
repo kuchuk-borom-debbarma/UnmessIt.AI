@@ -235,6 +235,7 @@ export function NoteDetailView({ token }: { token: string }) {
                   value={editTagsVal} 
                   onChange={setEditTagsVal} 
                   token={token} 
+                  allowCreate={true}
                 />
               </div>
               <textarea
