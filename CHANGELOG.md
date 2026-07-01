@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release history now has a cleaner version timeline in the frontend modal.
 
 ### Fixed
+- Removed the misleading in-app update/reload button; update detection now points users to the GitHub repository instead of pretending to install updates.
 - Hardened `scripts/dev/run.sh` so it checks ports, starts/waits for Redis, captures frontend logs, and cleans up child processes when either service exits.
 - Redis stream workers now back off quietly while Redis is unavailable and keep outbox events pending instead of marking them failed for connection errors.
 
