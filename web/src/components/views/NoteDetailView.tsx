@@ -21,21 +21,17 @@ export function NoteDetailView({ token }: { token: string }) {
 
   const [expandLevel, setExpandLevel] = useState(0)
   const contentRef = useRef<HTMLDivElement>(null)
-  const [contentHeight, setContentHeight] = useState(0)
   const [isOverflowing, setIsOverflowing] = useState(false)
   
   useEffect(() => {
     if (!contentRef.current) return
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        // Measure the container's scrollHeight
-        setContentHeight(entry.target.scrollHeight)
         // Also check if it's overflowing right now
         setIsOverflowing(entry.target.scrollHeight > entry.target.clientHeight)
       }
     })
     observer.observe(contentRef.current)
-    setContentHeight(contentRef.current.scrollHeight)
     setIsOverflowing(contentRef.current.scrollHeight > contentRef.current.clientHeight)
     
     return () => observer.disconnect()
