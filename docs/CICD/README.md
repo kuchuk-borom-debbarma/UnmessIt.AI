@@ -23,7 +23,7 @@ It is not a source file. Do not hand-edit or commit it.
 
 The generated JSON uses:
 - `web/package.json` for `version`.
-- `CHANGELOG.md` for the matching release notes section.
+- `CHANGELOG.md` for the current release notes and full version history.
 
 ## Prevent direct commits to staging
 

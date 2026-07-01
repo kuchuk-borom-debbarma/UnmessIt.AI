@@ -14,6 +14,7 @@ type ReleaseHistoryModalProps = {
 
 export function ReleaseHistoryModal({ isOpen, onClose, versionInfo, currentVersion }: ReleaseHistoryModalProps) {
   if (!isOpen || !versionInfo) return null
+  const history = versionInfo.history?.length ? versionInfo.history : [{ version: versionInfo.version, changelog: versionInfo.changelog }]
 
   const handleUpdate = () => {
     // Force reload to bypass cache
@@ -55,13 +56,21 @@ export function ReleaseHistoryModal({ isOpen, onClose, versionInfo, currentVersi
           </div>
 
           {/* Body */}
-          <div className="flex-1 overflow-y-auto px-6 py-6 prose prose-invert prose-p:leading-relaxed prose-pre:bg-zinc-900 max-w-none">
-            <ReactMarkdown 
-              remarkPlugins={[remarkGfm]} 
-              rehypePlugins={[rehypeRaw]}
-            >
-              {versionInfo.changelog}
-            </ReactMarkdown>
+          <div className="flex-1 overflow-y-auto px-6 py-6">
+            <div className="space-y-8">
+              {history.map((release) => (
+                <section key={release.version} className="border-b border-border/50 pb-6 last:border-b-0 last:pb-0">
+                  <div className="prose prose-invert prose-p:leading-relaxed prose-pre:bg-zinc-900 max-w-none">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      rehypePlugins={[rehypeRaw]}
+                    >
+                      {release.changelog}
+                    </ReactMarkdown>
+                  </div>
+                </section>
+              ))}
+            </div>
           </div>
 
           {/* Footer */}
