@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hardened `scripts/dev/run.sh` so it checks ports, starts/waits for Redis, captures frontend logs, and cleans up child processes when either service exits.
 - Redis stream workers now back off quietly while Redis is unavailable and keep outbox events pending instead of marking them failed for connection errors.
 
+## [0.0.3] - 2026-07-02
+
+### Changed
+- Clarified README install guidance for the current local install path, self-hosting with server/frontend/Redis, and future cloud hosting.
+- Documented the developer scripts and when to use bare-metal development versus local Docker development.
+
+### Fixed
+- Hardened Bash and PowerShell installers so updates preserve existing environment values, including `REDIS_URL`.
+- Moved dev Redis to a dedicated default port to avoid conflicts with common local Redis installs.
+- Quieted Redis idle polling in development so normal blocking reads do not look like failures.
+
 ## [0.0.2] - 2026-07-02
 
 ### Added
