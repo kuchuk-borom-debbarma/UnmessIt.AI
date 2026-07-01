@@ -273,8 +273,10 @@ export function NoteDetailView({ token }: { token: string }) {
                 className="relative transition-all duration-500 ease-in-out w-full overflow-hidden"
                 style={{ maxHeight: currentMaxHeight }}
               >
-                <div ref={contentRef} className="p-6 overflow-x-auto">
-                  {renderNoteText()}
+                <div className="p-6 overflow-x-auto">
+                  <div ref={contentRef}>
+                    {renderNoteText()}
+                  </div>
                 </div>
                 {contentHeight > currentMaxHeight && (
                   <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-card to-transparent pointer-events-none" />
