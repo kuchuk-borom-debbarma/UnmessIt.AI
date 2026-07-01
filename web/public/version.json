@@ -1,4 +1,0 @@
-{
-  "version": "0.0.2",
-  "changelog": "## [0.0.2] - 2026-07-02\n\n### Added\n- Added a staging release gate for PRs into `staging`.\n- The gate requires `web/package.json` to increment beyond `origin/staging`.\n- The gate requires `CHANGELOG.md` changes and release notes for the new version.\n- CI regenerates `web/public/version.json` from `web/package.json` and `CHANGELOG.md`.\n- Documented the GitHub branch protection settings needed to block direct commits to `staging`."
-}
