@@ -34,7 +34,7 @@ if ! docker compose version >/dev/null 2>&1; then
 fi
 
 # Directory setup
-INSTALL_DIR="unmessit-ai"
+INSTALL_DIR="$HOME/unmessit-ai"
 if [ -d "$INSTALL_DIR" ]; then
     echo -e "${YELLOW}Directory '$INSTALL_DIR' already exists. The installer will use it.${NC}"
 else

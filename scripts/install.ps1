@@ -19,7 +19,7 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 }
 
 # Directory setup
-$INSTALL_DIR = "unmessit-ai"
+$INSTALL_DIR = Join-Path $env:USERPROFILE "unmessit-ai"
 if (Test-Path $INSTALL_DIR) {
     Write-Host -ForegroundColor Yellow "Directory '$INSTALL_DIR' already exists. The installer will use it."
 } else {
