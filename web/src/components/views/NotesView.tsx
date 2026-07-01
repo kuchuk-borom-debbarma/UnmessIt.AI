@@ -4,6 +4,7 @@ import { API_BASE, api, type Note, type Directory } from '../../lib/api'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '../../lib/utils'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { TagSearchSelect } from './TagSearchSelect'
 
 type ApiPaginatedData<T> = { data: T, total: number, page: number, limit: number }
 type JobStatus = NonNullable<Note['job_status']>
@@ -452,6 +453,19 @@ export function NotesView({ token }: { token: string }) {
   const [searchParams, setSearchParams] = useSearchParams()
   
   // Navigation State
+  
+  const filterTagVal = searchParams.get('tag_val') || ''
+  const handleSelectTag = (val: string) => {
+    if (val) {
+      searchParams.set('tag_val', val)
+    } else {
+      searchParams.delete('tag_val')
+    }
+    setSearchParams(searchParams)
+    setNotePage(1)
+  }
+  const filterTagId = filterTagVal ? filterTagVal.split('|')[0] : null
+
   const selectedDir = searchParams.get('dir')
 
   const handleSelectDir = (dirId: string | null) => {
@@ -531,10 +545,11 @@ export function NotesView({ token }: { token: string }) {
   const load = useCallback(async () => {
     try {
       const parentQuery = selectedDir ? `&directory_id=${selectedDir}` : ''
+      const tagQuery = filterTagId ? `&tag_id=${filterTagId}` : ''
       const dirParentQuery = selectedDir ? `&parent_id=${selectedDir}` : ''
 
       const [n, d, allD] = await Promise.all([
-        api<ApiPaginatedData<Note[]>>(`/api/v1/notes/?page=${notePage}&limit=${noteLimit}${parentQuery}`, { token }),
+        api<ApiPaginatedData<Note[]>>(`/api/v1/notes/?page=${notePage}&limit=${noteLimit}${parentQuery}${tagQuery}`, { token }),
         api<ApiPaginatedData<Directory[]>>(`/api/v1/directories/?page=${dirPage}&limit=${dirLimit}${dirParentQuery}`, { token }),
         api<ApiPaginatedData<Directory[]>>(`/api/v1/directories/?all=true&limit=1000`, { token })
       ])
@@ -548,7 +563,7 @@ export function NotesView({ token }: { token: string }) {
     } finally {
       setLoading(false)
     }
-  }, [token, selectedDir, notePage, noteLimit, dirPage, dirLimit])
+  }, [token, selectedDir, filterTagId, notePage, noteLimit, dirPage, dirLimit])
 
   useEffect(() => {
     load()
@@ -767,6 +782,17 @@ export function NotesView({ token }: { token: string }) {
             </button>
           )}
         </div>
+      </div>
+
+      
+      <div className="mb-6 z-20 relative max-w-sm">
+        <TagSearchSelect
+          label="Filter by Tag"
+          mode="include"
+          value={filterTagVal}
+          onChange={handleSelectTag}
+          token={token}
+        />
       </div>
 
       {/* Folders Grid */}

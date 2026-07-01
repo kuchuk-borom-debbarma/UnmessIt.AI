@@ -31,6 +31,7 @@ def _with_tags(note: dict) -> dict:
 @router.get("/")
 async def list_notes(
     directory_id: str | None = None,
+    tag_id: str | None = None,
     all: bool = False,
     page: int = 1,
     limit: int = 20,
@@ -38,7 +39,7 @@ async def list_notes(
 ) -> dict:
     page = max(1, page)
     limit = max(1, min(limit, 50))
-    result = notes.list_notes(user_id, directory_id, all, page, limit)
+    result = notes.list_notes(user_id, directory_id, tag_id, all, page, limit)
     result["data"] = [_with_tags(note) for note in result["data"]]
     return {"status": "success", **result}
 

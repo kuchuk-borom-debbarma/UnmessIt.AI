@@ -52,5 +52,5 @@ def test_public_rag_service_getter_exists():
 def test_routes_keep_public_urls():
     assert 'APIRouter(prefix="/ingest"' in (ROOT / "routes/ingest.py").read_text()
     assert 'APIRouter(prefix="/notes"' in (ROOT / "routes/notes.py").read_text()
-    assert 'APIRouter(prefix="/api/retrieval"' in (ROOT / "routes/retrieval.py").read_text()
+    assert 'APIRouter(prefix="/retrieval"' in (ROOT / "routes/retrieval.py").read_text()
     assert 'APIRouter(prefix="/dev"' in (ROOT / "routes/dev.py").read_text()
