@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Tag, RefreshCw, Trash2, FolderOpen, BrainCircuit, Edit2, Save, X } from 'lucide-react'
+import { ArrowLeft, Tag, RefreshCw, Trash2, FolderOpen, BrainCircuit, Edit2, Save, X, ChevronDown, ChevronUp } from 'lucide-react'
 import { api, type Note, type Directory } from '../../lib/api'
 import { motion } from 'framer-motion'
 import ReactMarkdown from 'react-markdown'
@@ -18,6 +18,28 @@ export function NoteDetailView({ token }: { token: string }) {
 
   const [isEditing, setIsEditing] = useState(false)
   const [editText, setEditText] = useState('')
+
+  const [expandLevel, setExpandLevel] = useState(0)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [contentHeight, setContentHeight] = useState(0)
+  
+  useEffect(() => {
+    if (!contentRef.current) return
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContentHeight(entry.target.scrollHeight)
+      }
+    })
+    observer.observe(contentRef.current)
+    // Initial measurement
+    setContentHeight(contentRef.current.scrollHeight)
+    
+    return () => observer.disconnect()
+  }, [note, isEditing])
+
+  const CHUNK_HEIGHT = 400
+  const currentMaxHeight = (expandLevel + 1) * CHUNK_HEIGHT
+
   const [editTagsVal, setEditTagsVal] = useState('')
 
   const highlightStart = parseInt(searchParams.get('start') || '-1', 10)
@@ -246,8 +268,41 @@ export function NoteDetailView({ token }: { token: string }) {
               />
             </>
           ) : (
-            <div className="bg-card/40 backdrop-blur-sm border border-border/50 rounded-xl p-6 shadow-sm overflow-x-auto">
-              {renderNoteText()}
+            <div className="bg-card/40 backdrop-blur-sm border border-border/50 rounded-xl shadow-sm overflow-hidden flex flex-col">
+              <div 
+                className="relative transition-all duration-500 ease-in-out w-full overflow-hidden"
+                style={{ maxHeight: currentMaxHeight }}
+              >
+                <div ref={contentRef} className="p-6 overflow-x-auto">
+                  {renderNoteText()}
+                </div>
+                {contentHeight > currentMaxHeight && (
+                  <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-card to-transparent pointer-events-none" />
+                )}
+              </div>
+              
+              {(contentHeight > currentMaxHeight || expandLevel > 0) && (
+                <div className="flex items-center justify-center gap-4 py-3 bg-card/80 backdrop-blur-md border-t border-border/50">
+                  {expandLevel > 0 && (
+                    <button 
+                      className="flex items-center justify-center w-10 h-10 rounded-full bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/20 hover:text-foreground transition-all"
+                      onClick={() => setExpandLevel(prev => Math.max(0, prev - 1))}
+                      title="Shrink"
+                    >
+                      <ChevronUp size={20} />
+                    </button>
+                  )}
+                  {contentHeight > currentMaxHeight && (
+                    <button 
+                      className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-500/10 text-primary-500 hover:bg-primary-500 hover:text-white transition-all shadow-[0_0_15px_rgba(var(--primary-500),0.1)]"
+                      onClick={() => setExpandLevel(prev => prev + 1)}
+                      title="Expand"
+                    >
+                      <ChevronDown size={20} />
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
