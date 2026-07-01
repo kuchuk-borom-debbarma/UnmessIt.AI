@@ -24,12 +24,12 @@ export function NoteDetailView({ token }: { token: string }) {
   const load = useCallback(async () => {
     if (!id) return
     try {
-      const { data } = await api<{ data: Note }>(`/notes/${id}`, { token })
+      const { data } = await api<{ data: Note }>(`/api/v1/notes/${id}`, { token })
       setNote(data)
       setEditText(data.text)
       
       if (data.directory_id) {
-        const { data: dirs } = await api<{ data: Directory[] }>('/directories/', { token })
+        const { data: dirs } = await api<{ data: Directory[] }>('/api/v1/directories/', { token })
         const found = dirs.find(d => d.id === data.directory_id)
         if (found) setDirectory(found)
       }
@@ -102,7 +102,7 @@ export function NoteDetailView({ token }: { token: string }) {
   const handleSave = async () => {
     if (!note || !editText.trim()) return
     try {
-      await api(`/notes/${note.id}`, {
+      await api(`/api/v1/notes/${note.id}`, {
         method: 'PUT',
         token,
         body: JSON.stringify({
@@ -199,7 +199,7 @@ export function NoteDetailView({ token }: { token: string }) {
                   className="flex items-center gap-2 h-10 px-4 rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-colors text-sm font-bold"
                   onClick={async () => {
                     if (confirm('Delete this note?')) {
-                      await api(`/notes/${note.id}`, { method: 'DELETE', token })
+                      await api(`/api/v1/notes/${note.id}`, { method: 'DELETE', token })
                       navigate('/notes')
                     }
                   }}

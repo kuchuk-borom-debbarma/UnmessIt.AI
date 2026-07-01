@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Request
 from src.routes.auth_utils import get_current_user_id
 from src.services.auth import get_auth_service
 
-router = APIRouter(prefix="/api/auth", tags=["auth"])
+router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/sign_up")
 async def sign_up(request: Request) -> dict:

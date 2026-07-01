@@ -142,7 +142,7 @@ const NoteCard = React.memo(function NoteCard({ note, allDirectories, token, loa
 
   const handleMove = async (newDirId: string | null) => {
     try {
-      await api(`/notes/${note.id}`, {
+      await api(`/api/v1/notes/${note.id}`, {
         method: 'PUT',
         token,
         body: JSON.stringify({
@@ -209,7 +209,7 @@ const NoteCard = React.memo(function NoteCard({ note, allDirectories, token, loa
             className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/10 hover:text-red-500"
             onClick={async (e) => {
               e.stopPropagation()
-              await api(`/notes/${note.id}`, { method: 'DELETE', token })
+              await api(`/api/v1/notes/${note.id}`, { method: 'DELETE', token })
               load()
             }}
             title="Move to Trash"
@@ -357,7 +357,7 @@ function NoteCreationModal({ isOpen, onClose, token, allDirectories, selectedDir
   const handleCreateNote = async () => {
     if (!draft.trim()) return
     try {
-      await api('/notes/', {
+      await api('/api/v1/notes/', {
         method: 'POST',
         token,
         body: JSON.stringify({
@@ -503,7 +503,7 @@ export function NotesView({ token }: { token: string }) {
           }
           const extension = file.name.split('.').pop()
           try {
-            await api('/notes/', {
+            await api('/api/v1/notes/', {
               method: 'POST',
               token,
               body: JSON.stringify({
@@ -534,9 +534,9 @@ export function NotesView({ token }: { token: string }) {
       const dirParentQuery = selectedDir ? `&parent_id=${selectedDir}` : ''
 
       const [n, d, allD] = await Promise.all([
-        api<ApiPaginatedData<Note[]>>(`/notes/?page=${notePage}&limit=${noteLimit}${parentQuery}`, { token }),
-        api<ApiPaginatedData<Directory[]>>(`/directories/?page=${dirPage}&limit=${dirLimit}${dirParentQuery}`, { token }),
-        api<ApiPaginatedData<Directory[]>>(`/directories/?all=true&limit=1000`, { token })
+        api<ApiPaginatedData<Note[]>>(`/api/v1/notes/?page=${notePage}&limit=${noteLimit}${parentQuery}`, { token }),
+        api<ApiPaginatedData<Directory[]>>(`/api/v1/directories/?page=${dirPage}&limit=${dirLimit}${dirParentQuery}`, { token }),
+        api<ApiPaginatedData<Directory[]>>(`/api/v1/directories/?all=true&limit=1000`, { token })
       ])
       setNotes(n.data)
       setNoteTotal(n.total)
@@ -619,7 +619,7 @@ export function NotesView({ token }: { token: string }) {
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return
     try {
-      await api('/directories/', {
+      await api('/api/v1/directories/', {
         method: 'POST',
         token,
         body: JSON.stringify({
@@ -637,7 +637,7 @@ export function NotesView({ token }: { token: string }) {
 
   const handleRenameFolder = async (dirId: string, newName: string) => {
     try {
-      await api(`/directories/${dirId}`, {
+      await api(`/api/v1/directories/${dirId}`, {
         method: 'PUT',
         token,
         body: JSON.stringify({ name: newName })
@@ -651,7 +651,7 @@ export function NotesView({ token }: { token: string }) {
   const handleDeleteFolder = async (dirId: string) => {
     if (confirm('Delete this folder and ALL notes inside it permanently?')) {
       try {
-        await api(`/directories/${dirId}`, { method: 'DELETE', token })
+        await api(`/api/v1/directories/${dirId}`, { method: 'DELETE', token })
         if (selectedDir === dirId) {
           handleSelectDir(null)
         } else {

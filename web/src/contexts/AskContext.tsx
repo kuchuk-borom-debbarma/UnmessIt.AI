@@ -124,7 +124,7 @@ export function AskProvider({ children }: { children: ReactNode }) {
       const withinTagsArr = tagIds(withinTags)
       const excludingTagsArr = tagIds(excludingTags)
       
-      const data = await api<QueryResult>('/api/retrieval/query', {
+      const data = await api<QueryResult>('/api/v1/retrieval/query', {
         method: 'POST',
         token,
         body: JSON.stringify({ 

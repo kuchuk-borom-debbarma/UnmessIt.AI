@@ -97,7 +97,7 @@ export function JobsView({ token }: { token: string }) {
 
   const load = useCallback(async () => {
     try {
-      const data = await api<JobsResponse>(`/api/advanced/ingest_jobs?page=${page}&limit=${limit}`, { token })
+      const data = await api<JobsResponse>(`/api/v1/advanced/ingest_jobs?page=${page}&limit=${limit}`, { token })
       setJobs(data.data)
       setTotal(data.total)
     } catch (err) {
@@ -173,7 +173,7 @@ export function JobsView({ token }: { token: string }) {
   const resumeJob = async (jobId: string) => {
     await runJobAction(
       jobId,
-      () => api(`/api/advanced/ingest_jobs/${jobId}/resume`, { method: 'POST', token }),
+      () => api(`/api/v1/advanced/ingest_jobs/${jobId}/resume`, { method: 'POST', token }),
       'Job resumed',
       'Failed to resume job'
     )
@@ -182,7 +182,7 @@ export function JobsView({ token }: { token: string }) {
   const pauseJob = async (jobId: string) => {
     await runJobAction(
       jobId,
-      () => api(`/api/advanced/ingest_jobs/${jobId}/pause`, { method: 'POST', token }),
+      () => api(`/api/v1/advanced/ingest_jobs/${jobId}/pause`, { method: 'POST', token }),
       'Job paused',
       'Failed to pause job'
     )
@@ -192,7 +192,7 @@ export function JobsView({ token }: { token: string }) {
     if (!confirm('Stop and delete this job?')) return
     await runJobAction(
       jobId,
-      () => api(`/api/advanced/ingest_jobs/${jobId}`, { method: 'DELETE', token }),
+      () => api(`/api/v1/advanced/ingest_jobs/${jobId}`, { method: 'DELETE', token }),
       'Job stopped and deleted',
       'Failed to stop job'
     )

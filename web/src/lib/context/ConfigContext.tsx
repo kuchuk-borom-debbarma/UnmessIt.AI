@@ -17,8 +17,8 @@ export function ConfigProvider({ children, token }: { children: ReactNode; token
 
     try {
       const [presets, rotation] = await Promise.all([
-        api<Preset[]>('/configs/presets', { token }),
-        api<RotationConfig>('/configs/rotation', { token }),
+        api<Preset[]>('/api/v1/configs/presets', { token }),
+        api<RotationConfig>('/api/v1/configs/rotation', { token }),
       ])
       setHasActivePreset(presets.some((p) => p.is_active === 1) || (rotation.enabled && rotation.preset_ids.length >= 2))
     } catch {

@@ -27,7 +27,7 @@ function TrashCard({ note, directories, token, load }: { note: Note, directories
             className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:bg-green-500/10 hover:text-green-500"
             onClick={async (e) => {
               e.stopPropagation()
-              await api(`/notes/${note.id}/restore`, { method: 'POST', token })
+              await api(`/api/v1/notes/${note.id}/restore`, { method: 'POST', token })
               load()
             }}
             title="Restore Note"
@@ -39,7 +39,7 @@ function TrashCard({ note, directories, token, load }: { note: Note, directories
             onClick={async (e) => {
               e.stopPropagation()
               if (confirm('Permanently delete this note? This action cannot be undone.')) {
-                await api(`/notes/${note.id}/hard`, { method: 'DELETE', token })
+                await api(`/api/v1/notes/${note.id}/hard`, { method: 'DELETE', token })
                 load()
               }
             }}
@@ -84,8 +84,8 @@ export function TrashView({ token }: { token: string }) {
   const load = useCallback(async () => {
     try {
       const [n, d] = await Promise.all([
-        api<ApiPaginatedData<Note[]>>(`/notes/trash?page=${page}&limit=${limit}`, { token }),
-        api<{data: Directory[]}>('/directories/?all=true', { token })
+        api<ApiPaginatedData<Note[]>>(`/api/v1/notes/trash?page=${page}&limit=${limit}`, { token }),
+        api<{data: Directory[]}>('/api/v1/directories/?all=true', { token })
       ])
       setNotes(n.data)
       setTotal(n.total)

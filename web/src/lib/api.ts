@@ -68,8 +68,8 @@ export async function api<T>(path: string, options: Options = {}): Promise<T> {
 
 export const authApi = {
   signIn: (username: string, password: string) =>
-    api<AuthResult>('/api/auth/sign_in', { method: 'POST', body: JSON.stringify({ username, password }) }),
+    api<AuthResult>('/api/v1/auth/sign_in', { method: 'POST', body: JSON.stringify({ username, password }) }),
   signUp: (username: string, password: string) =>
-    api<AuthResult>('/api/auth/sign_up', { method: 'POST', body: JSON.stringify({ username, password }) }),
-  me: (token: string) => api<{ id: string }>('/api/auth/me', { token }),
+    api<AuthResult>('/api/v1/auth/sign_up', { method: 'POST', body: JSON.stringify({ username, password }) }),
+  me: (token: string) => api<{ id: string }>('/api/v1/auth/me', { token }),
 }

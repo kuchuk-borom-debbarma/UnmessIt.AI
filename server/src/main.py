@@ -49,17 +49,22 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.include_router(health.router)
-    app.include_router(ingest.router)
-    app.include_router(notes_router)
-    app.include_router(directories.router)
-    app.include_router(tags.router)
-    app.include_router(retrieval_router)
-    app.include_router(auth_router)
-    app.include_router(config_router)
-    app.include_router(advanced.router)
+    from fastapi import APIRouter
+    api_router = APIRouter(prefix="/api/v1")
+    
+    api_router.include_router(health.router)
+    api_router.include_router(ingest.router)
+    api_router.include_router(notes_router)
+    api_router.include_router(directories.router)
+    api_router.include_router(tags.router)
+    api_router.include_router(retrieval_router)
+    api_router.include_router(auth_router)
+    api_router.include_router(config_router)
+    api_router.include_router(advanced.router)
     if settings.enable_dev_routes:
-        app.include_router(dev.router)
+        api_router.include_router(dev.router)
+        
+    app.include_router(api_router)
         
     from fastapi import Request
     from fastapi.responses import JSONResponse

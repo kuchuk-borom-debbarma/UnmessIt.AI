@@ -13,7 +13,7 @@ from src.infra.sse import get_sse_service
 from src.services.rag.rag_service import get_rag_service
 from src.services.rag.models import ProgressReporter
 
-router = APIRouter(prefix="/api/retrieval", tags=["Retrieval"])
+router = APIRouter(prefix="/retrieval", tags=["Retrieval"])
 logger = logging.getLogger(__name__)
 
 
