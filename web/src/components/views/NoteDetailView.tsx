@@ -275,8 +275,12 @@ export function NoteDetailView({ token }: { token: string }) {
             <div className="bg-card/40 backdrop-blur-sm border border-border/50 rounded-xl shadow-sm overflow-hidden flex flex-col">
               <div 
                 ref={contentRef}
-                className="relative transition-all duration-500 ease-in-out w-full overflow-hidden"
-                style={{ maxHeight: currentMaxHeight }}
+                className="relative w-full overflow-hidden"
+                style={{ 
+                  maxHeight: currentMaxHeight,
+                  transition: 'max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1)',
+                  willChange: 'max-height'
+                }}
               >
                 <div className="p-6 overflow-x-auto">
                   {renderNoteText()}
