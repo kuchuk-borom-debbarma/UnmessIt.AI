@@ -1,0 +1,25 @@
+name: Staging release gate
+
+on:
+  pull_request:
+    branches: [staging]
+  workflow_dispatch:
+
+jobs:
+  release-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Fetch staging
+        run: git fetch origin staging:refs/remotes/origin/staging
+      - name: Require version and changelog bump
+        run: node scripts/validate_release_gate.js origin/staging
+      - name: Generate version.json
+        run: node scripts/generate_version.js
+      - name: Verify generated version.json is current
+        run: git diff --exit-code web/public/version.json
