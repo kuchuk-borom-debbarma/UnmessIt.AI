@@ -96,6 +96,12 @@ class RedisStreamEventBus(EventBus):
                 await self._claim_stale(client)
             except asyncio.CancelledError:
                 raise
+            except ResponseError as exc:
+                if _is_nogroup(exc):
+                    await _ensure_group(client)
+                    continue
+                logger.warning("redis_stream_consume_failed error=%s", exc)
+                await asyncio.sleep(1)
             except Exception as exc:
                 logger.warning("redis_stream_consume_failed error=%s", exc)
                 await asyncio.sleep(1)
@@ -155,6 +161,10 @@ async def _ensure_group(client) -> None:
 
 def _handler_name(handler: Callable[[dict[str, Any]], None]) -> str:
     return f"{handler.__module__}.{getattr(handler, '__qualname__', handler.__name__)}"
+
+
+def _is_nogroup(exc: ResponseError) -> bool:
+    return "NOGROUP" in str(exc)
 
 
 def _idempotency_key(topic: str, payload: dict[str, Any]) -> str | None:

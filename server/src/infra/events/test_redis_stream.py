@@ -111,6 +111,30 @@ async def test_consume_loop_recovers_after_consumer_error(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_consume_loop_recreates_missing_group(monkeypatch):
+    bus = RedisStreamEventBus()
+    client = object()
+    ensured = []
+    calls = 0
+    monkeypatch.setattr(redis_stream, "get_redis", lambda: client)
+
+    async def consume(_client):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ResponseError("NOGROUP No such key")
+        bus._stopped.set()
+
+    monkeypatch.setattr(bus, "_consume_messages", consume)
+    monkeypatch.setattr(bus, "_claim_stale", lambda _client: asyncio.sleep(0))
+    monkeypatch.setattr(redis_stream, "_ensure_group", lambda _client: asyncio.sleep(0, result=ensured.append(_client)))
+
+    await bus._consume_loop()
+
+    assert ensured == [client]
+
+
+@pytest.mark.asyncio
 async def test_ensure_group_ignores_busygroup():
     class FakeClient:
         async def xgroup_create(self, *args, **kwargs):

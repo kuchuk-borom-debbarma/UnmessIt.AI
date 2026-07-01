@@ -10,6 +10,27 @@ REDIS_CONTAINER="unmessit-dev-redis"
 REDIS_PORT="${UNMESSIT_DEV_REDIS_PORT:-6381}"
 STARTED_REDIS=0
 
+port_in_use() {
+    python3 - "$1" <<'PY'
+import socket
+import sys
+
+with socket.socket() as s:
+    s.settimeout(0.2)
+    raise SystemExit(0 if s.connect_ex(("127.0.0.1", int(sys.argv[1]))) == 0 else 1)
+PY
+}
+
+if port_in_use 2831; then
+    echo "Port 2831 is already in use. Stop the existing web dev server first."
+    exit 1
+fi
+
+if port_in_use 2317; then
+    echo "Port 2317 is already in use. Stop the existing backend server first."
+    exit 1
+fi
+
 if [ -z "${REDIS_URL:-}" ]; then
     if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
         if ! docker ps --format '{{.Names}}' | grep -qx "$REDIS_CONTAINER"; then
