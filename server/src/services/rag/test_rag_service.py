@@ -16,11 +16,32 @@ from src.services.rag.private.chains.source_chunk_assembler import SourceChunkAs
 from src.services.rag.private.chains.source_chunk_drafts import SourceChunkDraftChain
 from src.services.rag.private.chains.source_windows import SourceWindowChain
 from src.services.rag.private.durability import DurableIngest
+from src.services.rag.private.durability import events as durability_events
 from src.services.rag.private.durability import repository as durability_repo
 from src.services.rag.private.durability.models import STAGE_SOURCE_CHUNKS, STATUS_ABORTED, STATUS_FAILED, STATUS_QUEUED, STATUS_WAITING_RETRY
 from src.services.rag.private.durability.runner import DurableIngestRunner
 from src.services.rag.private.pipeline.ingest import submit_ingest_job, get_durable_ingest
 from src.services.rag.private.rag_service_impl import RagServiceImpl
+
+
+def test_ingest_progress_payload_defaults_and_structured_refs():
+    assert durability_events._progress_payload("legacy message") == {
+        "message": "legacy message",
+        "depth": 0,
+        "ref": "message:a943e689213a",
+    }
+
+    assert durability_events._progress_payload({
+        "message": "Drafting",
+        "depth": 3,
+        "ref": "source_chunks:unit-1:draft",
+        "parent_ref": "source_chunks:unit-1",
+    }) == {
+        "message": "Drafting",
+        "depth": 3,
+        "ref": "source_chunks:unit-1:draft",
+        "parent_ref": "source_chunks:unit-1",
+    }
 
 
 class FakeJson:
