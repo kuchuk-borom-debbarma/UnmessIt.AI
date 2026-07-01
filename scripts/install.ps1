@@ -18,6 +18,13 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
+try {
+    docker compose version | Out-Null
+} catch {
+    Write-Host -ForegroundColor Red "Error: Docker Compose is not installed or not available as 'docker compose'. Please install it first."
+    exit 1
+}
+
 # Directory setup
 $INSTALL_DIR = Join-Path $env:USERPROFILE "unmessit-ai"
 if (Test-Path $INSTALL_DIR) {
@@ -34,6 +41,10 @@ $SERVER_PORT = "2317"
 $WEB_PORT = "2831"
 $JWT_SECRET = ""
 $REDIS_URL = "redis://redis:6379/0"
+$UNMESSIT_DATA_DIR = "./data"
+$CORS_ORIGINS = ""
+$ENABLE_DEV_ROUTES = "0"
+$LOG_LEVEL = "INFO"
 
 # Load existing configuration if it exists to preserve secrets and custom ports across updates
 if (Test-Path ".env") {
@@ -42,6 +53,13 @@ if (Test-Path ".env") {
         Set-Variable -Name $Matches[1] -Value $Matches[2]
     }
 }
+
+if (-not $SERVER_PORT) { $SERVER_PORT = "2317" }
+if (-not $WEB_PORT) { $WEB_PORT = "2831" }
+if (-not $REDIS_URL) { $REDIS_URL = "redis://redis:6379/0" }
+if (-not $UNMESSIT_DATA_DIR) { $UNMESSIT_DATA_DIR = "./data" }
+if (-not $ENABLE_DEV_ROUTES) { $ENABLE_DEV_ROUTES = "0" }
+if (-not $LOG_LEVEL) { $LOG_LEVEL = "INFO" }
 
 Write-Host "This installer will set up UnmessIt.AI with standard defaults."
 $MODE = Read-Host "Press [Enter] to continue with defaults, or type 'advanced' to customize ports and secrets"
@@ -66,6 +84,10 @@ if (-not $JWT_SECRET) {
     $JWT_SECRET = -join ($bytes | ForEach-Object { $_.ToString("x2") })
 }
 
+if (-not $CORS_ORIGINS) {
+    $CORS_ORIGINS = "http://localhost:$WEB_PORT,http://127.0.0.1:$WEB_PORT"
+}
+
 Write-Host "`nDownloading docker-compose.prod.yml..." -ForegroundColor Blue
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/staging/docker-compose.prod.yml" -OutFile "docker-compose.prod.yml"
 
@@ -74,9 +96,14 @@ Write-Host "Generating .env file..."
 SERVER_PORT=$SERVER_PORT
 WEB_PORT=$WEB_PORT
 JWT_SECRET=$JWT_SECRET
-UNMESSIT_DATA_DIR=./data
+UNMESSIT_DATA_DIR=$UNMESSIT_DATA_DIR
 REDIS_URL=$REDIS_URL
+CORS_ORIGINS=$CORS_ORIGINS
+ENABLE_DEV_ROUTES=$ENABLE_DEV_ROUTES
+LOG_LEVEL=$LOG_LEVEL
 "@ | Out-File -Encoding UTF8 -FilePath ".env"
+
+docker compose -f docker-compose.prod.yml config | Out-Null
 
 Write-Host "`nPreparing environment (stopping existing containers if any)..." -ForegroundColor Blue
 try { docker compose -f docker-compose.prod.yml down 2>$null } catch {}
