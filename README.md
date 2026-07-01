@@ -64,6 +64,15 @@ http://localhost:2831
 
 ### Custom Configuration
 
+Docker stores your SQLite database and Chroma vectors in a normal folder beside the compose file:
+```txt
+./data
+```
+To put data somewhere else, set `UNMESSIT_DATA_DIR` to any host path:
+```bash
+UNMESSIT_DATA_DIR="$HOME/unmessit-ai/data" docker compose -f docker-compose.prod.yml up -d
+```
+
 *(Optional)* You can customize the server and web ports by setting the `SERVER_PORT` and `WEB_PORT` environment variables. They work out of the box and automatically configure CORS and API URLs:
 ```bash
 SERVER_PORT=8080 WEB_PORT=3000 docker compose -f docker-compose.prod.yml up -d

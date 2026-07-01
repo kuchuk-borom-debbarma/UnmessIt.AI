@@ -12,7 +12,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - server_data:/app/data
+      - ${UNMESSIT_DATA_DIR:-./data}:/app/data
 
   web:
     image: ghcr.io/kuchuk-borom-debbarma/unmessitai-web:staging
@@ -20,6 +20,3 @@ services:
       - "0.0.0.0:${WEB_PORT:-2831}:80"
     depends_on:
       - server
-
-volumes:
-  server_data:

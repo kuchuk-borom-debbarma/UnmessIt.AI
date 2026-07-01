@@ -27,6 +27,7 @@ if (Test-Path $INSTALL_DIR) {
     New-Item -ItemType Directory -Force -Path $INSTALL_DIR | Out-Null
 }
 Set-Location $INSTALL_DIR
+New-Item -ItemType Directory -Force -Path "data" | Out-Null
 
 # Interaction
 $SERVER_PORT = "2317"
@@ -64,6 +65,7 @@ Write-Host "Generating .env file..."
 SERVER_PORT=$SERVER_PORT
 WEB_PORT=$WEB_PORT
 JWT_SECRET=$JWT_SECRET
+UNMESSIT_DATA_DIR=./data
 "@ | Out-File -Encoding UTF8 -FilePath ".env"
 
 Write-Host "`nStarting UnmessIt.AI in the background..." -ForegroundColor Blue
@@ -81,6 +83,8 @@ Write-Host "http://localhost:$SERVER_PORT`n" -ForegroundColor Blue
 $currentPath = (Get-Location).Path
 Write-Host -NoNewline "Your configuration is saved in "
 Write-Host "$currentPath\.env" -ForegroundColor Yellow
+Write-Host -NoNewline "Your UnmessIt.AI data is stored in "
+Write-Host "$currentPath\data" -ForegroundColor Yellow
 
 Write-Host -NoNewline "To stop the app, run: "
 Write-Host "cd `"$currentPath`"; docker compose -f docker-compose.prod.yml down" -ForegroundColor Yellow

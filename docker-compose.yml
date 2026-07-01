@@ -13,7 +13,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - server_data:/app/data
+      - ${UNMESSIT_DATA_DIR:-./data}:/app/data
       - /etc/localtime:/etc/localtime:ro
 
   web:
@@ -27,6 +27,3 @@ services:
       - server
     volumes:
       - /etc/localtime:/etc/localtime:ro
-
-volumes:
-  server_data:

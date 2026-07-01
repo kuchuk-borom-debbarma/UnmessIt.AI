@@ -25,6 +25,7 @@ venv/
 .env.*
 !.env.example
 !**/.env.example
+/data/
 *.sqlite
 *.sqlite3
 *.db

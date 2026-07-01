@@ -42,6 +42,7 @@ else
     mkdir -p "$INSTALL_DIR"
 fi
 cd "$INSTALL_DIR"
+mkdir -p data
 
 # Interaction
 SERVER_PORT=2317
@@ -81,6 +82,7 @@ cat > .env << EOL
 SERVER_PORT=${SERVER_PORT}
 WEB_PORT=${WEB_PORT}
 JWT_SECRET=${JWT_SECRET}
+UNMESSIT_DATA_DIR=./data
 EOL
 
 echo -e "${BLUE}Starting UnmessIt.AI in the background...${NC}"
@@ -95,4 +97,5 @@ echo -e "Access the web app at:  ${BLUE}http://localhost:${WEB_PORT}${NC}"
 echo -e "Access the API at:      ${BLUE}http://localhost:${SERVER_PORT}${NC}"
 echo ""
 echo -e "Your configuration is saved in ${YELLOW}$(pwd)/.env${NC}"
+echo -e "Your UnmessIt.AI data is stored in ${YELLOW}$(pwd)/data${NC}"
 echo -e "To stop the app, run: ${YELLOW}cd $(pwd) && docker compose -f docker-compose.prod.yml down${NC}"
