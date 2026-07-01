@@ -2,6 +2,8 @@ import { createContext, useContext, useState, useRef, useEffect, useCallback } f
 import type { ReactNode } from 'react'
 import { api, API_BASE } from '../lib/api'
 
+const MAX_PROGRESS_STEPS = 200
+
 type SourceChunk = {
   id: string
   raw_input_id: string
@@ -81,7 +83,7 @@ export function AskProvider({ children }: { children: ReactNode }) {
   const flushPending = useCallback(() => {
     if (pendingStepsRef.current.length === 0) return
     const batch = pendingStepsRef.current.splice(0)
-    setProgressSteps(prev => [...prev, ...batch])
+    setProgressSteps(prev => [...prev, ...batch].slice(-MAX_PROGRESS_STEPS))
   }, [])
 
   useEffect(() => {
@@ -162,8 +164,8 @@ export function AskProvider({ children }: { children: ReactNode }) {
     try {
       const within = withinDirectories.split(',').map(s => s.trim()).filter(Boolean)
       const excluding = excludingDirectories.split(',').map(s => s.trim()).filter(Boolean)
-      const withinTagsArr = withinTags.split(',').map(s => s.trim()).filter(Boolean)
-      const excludingTagsArr = excludingTags.split(',').map(s => s.trim()).filter(Boolean)
+      const withinTagsArr = tagIds(withinTags)
+      const excludingTagsArr = tagIds(excludingTags)
       
       const data = await api<QueryResult>('/api/retrieval/query', {
         method: 'POST',
@@ -210,6 +212,10 @@ export function AskProvider({ children }: { children: ReactNode }) {
       {children}
     </AskContext.Provider>
   )
+}
+
+function tagIds(value: string) {
+  return value.split(',').map(item => item.trim().split('|')[0]).filter(Boolean)
 }
 
 export function useAsk() {

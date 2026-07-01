@@ -153,6 +153,19 @@
     @apply inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-input text-muted-foreground transition-colors hover:bg-card hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
   }
 
+  .ask-ambient > div {
+    @apply absolute rounded-full;
+    will-change: auto;
+  }
+
+  .ask-ambient-primary {
+    @apply top-[-10%] left-[-10%] w-[50vw] h-[50vw] bg-primary-500/20 blur-[110px];
+  }
+
+  .ask-ambient-accent {
+    @apply bottom-[-10%] right-[-10%] w-[60vw] h-[60vw] bg-accent-500/15 blur-[130px];
+  }
+
   .dark .premium-btn-secondary {
     @apply hover:bg-white/10;
   }

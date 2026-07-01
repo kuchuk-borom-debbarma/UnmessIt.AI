@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from typing import Any
 
 from src.infra import chroma
@@ -42,6 +43,8 @@ def index(chunks: list[SourceChunk]) -> None:
             dir_ids = [d for d in dir_path.split("/") if d]
             for d in dir_ids:
                 meta[f"dir_{d}"] = True
+            for path in _directory_prefixes(dir_path):
+                meta[_dir_path_key(path)] = True
         
         if note_id:
             note_tags = tags.get_for_note(note_id)
@@ -91,11 +94,13 @@ def update_metadata(chunk_ids: list[str], metadata_updates: dict[str, Any], user
         new_meta = dict(m) if m else {}
         if "directory_path" in metadata_updates:
             for key in list(new_meta):
-                if key.startswith("dir_"):
+                if key.startswith("dir_") or key.startswith("dirpath_"):
                     del new_meta[key]
             for directory_id in str(metadata_updates["directory_path"] or "").split("/"):
                 if directory_id:
                     new_meta[f"dir_{directory_id}"] = True
+            for path in _directory_prefixes(str(metadata_updates["directory_path"] or "")):
+                new_meta[_dir_path_key(path)] = True
         new_meta.update(metadata_updates)
         merged_metadatas.append(new_meta)
         
@@ -116,15 +121,14 @@ def search(
     where_conditions: list[dict[str, Any]] = [{"object_type": "source_chunk"}, {"user_id": user_id}]
     
     if within_directories:
-        if len(within_directories) == 1:
-            where_conditions.append({f"dir_{within_directories[0]}": True})
-        else:
-            or_conditions = [{f"dir_{d}": True} for d in within_directories]
-            where_conditions.append({"$or": or_conditions})
+        include_options = []
+        for path in within_directories:
+            include_options.extend(_directory_filters(path))
+        where_conditions.append(include_options[0] if len(include_options) == 1 else {"$or": include_options})
             
     if excluding_directories:
-        for d in excluding_directories:
-            where_conditions.append({f"dir_{d}": {"$ne": True}})
+        for path in excluding_directories:
+            where_conditions.append({_dir_path_key(path): {"$ne": True}})
             
     if within_tags:
         if within_tags_condition == "all":
@@ -154,3 +158,22 @@ def search(
 def reset(user_id: str) -> None:
     """Clear vectors during dev wipe for a specific user."""
     chroma.reset(user_id)
+
+
+def _directory_prefixes(path: str) -> list[str]:
+    parts = [part for part in path.split("/") if part]
+    return ["/" + "/".join(parts[:index]) + "/" for index in range(1, len(parts) + 1)]
+
+
+def _dir_path_key(path: str) -> str:
+    normalized = path if path.endswith("/") else f"{path}/"
+    return "dirpath_" + hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:16]
+
+
+def _directory_filters(path: str) -> list[dict[str, Any]]:
+    normalized = path if path.endswith("/") else f"{path}/"
+    legacy_parts = [part for part in normalized.split("/") if part]
+    filters = [{_dir_path_key(normalized): True}]
+    if len(legacy_parts) == 1:
+        filters.append({f"dir_{legacy_parts[0]}": True})
+    return filters

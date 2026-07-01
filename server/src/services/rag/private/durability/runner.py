@@ -7,7 +7,7 @@ from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from src.infra.progress import get_last_rotation_snapshot, reset_progress_reporters, set_progress_reporters
+from src.infra.progress import get_last_llm_rotation_snapshot, reset_progress_reporters, set_progress_reporters
 from src.infra.settings import NoActivePresetError, get_user_settings
 from src.repositories import recall, recall_key_vectors, source_chunk_vectors, source_chunks
 from src.services.rag.models import SourceChunk, SourceChunkDraft, SourceWindow
@@ -190,7 +190,7 @@ class DurableIngestRunner:
         
         await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": f"Summarizing chunk {index + 1}/{total} (Saving): \"{snippet}\""})
         processing_snapshot = _processing_snapshot(user_id)
-        rotation_snapshot = get_last_rotation_snapshot()
+        rotation_snapshot = get_last_llm_rotation_snapshot()
         for c_idx, chunk in enumerate(chunks):
             chunk["id"] = _stable_id("source_chunk", unit_key, str(c_idx), chunk["text"])
             chunk["metadata"] = {
@@ -246,7 +246,7 @@ class DurableIngestRunner:
         if not index_result["recall_links"]:
             raise ValueError("recall produced no links")
         processing_snapshot = _processing_snapshot(user_id)
-        rotation_snapshot = get_last_rotation_snapshot()
+        rotation_snapshot = get_last_llm_rotation_snapshot()
         for key in index_result["recall_keys"]:
             key["metadata"] = {
                 **(key.get("metadata") or {}),
