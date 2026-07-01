@@ -71,5 +71,5 @@ export const authApi = {
     api<AuthResult>('/api/v1/auth/sign_in', { method: 'POST', body: JSON.stringify({ username, password }) }),
   signUp: (username: string, password: string) =>
     api<AuthResult>('/api/v1/auth/sign_up', { method: 'POST', body: JSON.stringify({ username, password }) }),
-  me: (token: string) => api<{ id: string }>('/api/v1/auth/me', { token }),
+  me: (token: string) => api<{ id: string; identifier: string }>('/api/v1/auth/me', { token }),
 }

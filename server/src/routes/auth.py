@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Request
+from src.infra.sqlite import get_connection
 from src.routes.auth_utils import get_current_user_id
 from src.services.auth import get_auth_service
 
@@ -19,7 +20,8 @@ async def sign_in(request: Request) -> dict:
 
 @router.get("/me")
 async def me(user_id: str = Depends(get_current_user_id)) -> dict:
-    return {"id": user_id}
+    row = get_connection().execute("SELECT identifier FROM users WHERE id = ?", (user_id,)).fetchone()
+    return {"id": user_id, "identifier": row["identifier"] if row else user_id}
 
 
 @router.post("/logout")

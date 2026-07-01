@@ -259,7 +259,7 @@ export function SettingsView({ token }: { token: string }) {
       <section className="bento-card p-6 md:p-8">
         <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
-            <h2 className="text-2xl font-bold">How AI Should Run</h2>
+            <h2 className="text-2xl font-bold text-foreground">How AI Should Run</h2>
             <p className="mt-1 text-sm font-medium text-muted-foreground">
               Use one specific config for normal use. Turn on rotation only when you have multiple fallback configs.
             </p>
@@ -275,7 +275,7 @@ export function SettingsView({ token }: { token: string }) {
             )}
             onClick={() => setRotationEnabled(false)}
           >
-            <div className="mb-2 flex items-center gap-2 text-lg font-bold">
+            <div className="mb-2 flex items-center gap-2 text-lg font-bold text-foreground">
               <CheckCircle2 size={20} /> Use One Config
             </div>
             <p className="text-sm leading-6 text-muted-foreground">
@@ -293,7 +293,7 @@ export function SettingsView({ token }: { token: string }) {
             )}
             onClick={() => setRotationEnabled(true)}
           >
-            <div className="mb-2 flex items-center gap-2 text-lg font-bold">
+            <div className="mb-2 flex items-center gap-2 text-lg font-bold text-foreground">
               <RotateCw size={20} /> Use Rotation
             </div>
             <p className="text-sm leading-6 text-muted-foreground">
@@ -321,7 +321,7 @@ export function SettingsView({ token }: { token: string }) {
       <section className="bento-card p-6 md:p-8">
         <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
-            <h2 className="text-2xl font-bold">Config Presets</h2>
+            <h2 className="text-2xl font-bold text-foreground">Config Presets</h2>
             <p className="mt-1 text-sm font-medium text-muted-foreground">
               A config stores model names, API keys, base URLs, and rate limits. Embedding model lives here too.
             </p>
@@ -354,7 +354,7 @@ export function SettingsView({ token }: { token: string }) {
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="truncate text-lg font-bold">{preset.name}</h3>
+                        <h3 className="truncate text-lg font-bold text-foreground">{preset.name}</h3>
                         {preset.is_active === 1 && <span className="rounded-full bg-primary-500/15 px-2 py-0.5 text-xs font-bold text-primary-400">Specific config</span>}
                         {selected && <span className="rounded-full bg-accent-500/15 px-2 py-0.5 text-xs font-bold text-accent-400">Rotation</span>}
                       </div>
@@ -397,7 +397,7 @@ export function SettingsView({ token }: { token: string }) {
 
       {rotationEnabled && selectedPresets.length > 0 && (
         <section className="bento-card p-6 md:p-8">
-          <h2 className="mb-1 flex items-center gap-2 text-2xl font-bold">
+          <h2 className="mb-1 flex items-center gap-2 text-2xl font-bold text-foreground">
             <RotateCw size={22} /> Rotation Order
           </h2>
           <p className="mb-5 text-sm font-medium text-muted-foreground">
@@ -423,7 +423,7 @@ export function SettingsView({ token }: { token: string }) {
       <section className="bento-card p-6 md:p-8">
         <button className="flex w-full items-center justify-between text-left" onClick={() => setAdvancedOpen((value) => !value)}>
           <div>
-            <h2 className="text-2xl font-bold">Advanced Processing</h2>
+            <h2 className="text-2xl font-bold text-foreground">Advanced Processing</h2>
             <p className="mt-1 text-sm font-medium text-muted-foreground">Usually safe to leave alone. These settings do not rotate mid-job.</p>
           </div>
           <span className="text-sm font-bold text-primary-400">{advancedOpen ? 'Hide' : 'Show'}</span>

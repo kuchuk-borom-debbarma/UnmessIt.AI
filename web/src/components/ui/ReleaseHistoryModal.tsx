@@ -1,4 +1,4 @@
-import { X, RefreshCw } from 'lucide-react'
+import { X, RefreshCw, Sparkles } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -41,6 +41,7 @@ export function ReleaseHistoryModal({ isOpen, onClose, versionInfo, currentVersi
           <div className="flex items-center justify-between border-b border-border/60 bg-input/20 px-6 py-4">
             <div>
               <h2 className="text-xl font-bold flex items-center gap-2">
+                <Sparkles size={18} className="text-primary-400" />
                 Release History
                 <span className="rounded-full bg-primary-500/15 px-2 py-0.5 text-xs font-bold text-primary-400">
                   New: v{versionInfo.version}
@@ -57,6 +58,13 @@ export function ReleaseHistoryModal({ isOpen, onClose, versionInfo, currentVersi
 
           {/* Body */}
           <div className="flex-1 overflow-y-auto px-6 py-6">
+            <div className="mb-5 flex flex-wrap gap-2">
+              {history.map((release) => (
+                <span key={release.version} className="rounded-lg border border-border bg-input px-3 py-1 text-xs font-bold text-muted-foreground">
+                  v{release.version}
+                </span>
+              ))}
+            </div>
             <div className="space-y-8">
               {history.map((release) => (
                 <section key={release.version} className="border-b border-border/50 pb-6 last:border-b-0 last:pb-0">

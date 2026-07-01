@@ -7,10 +7,12 @@ import pytest
 from fastapi import HTTPException
 
 from src.routes import advanced as advanced_route
+from src.routes import auth as auth_route
 from src.routes import dev as dev_route
 from src.routes import directories as directories_route
 from src.routes import notes as notes_route
 from src.routes import retrieval as retrieval_route
+from src.infra.sqlite import get_connection
 
 
 def test_notes_route_creates_note_and_triggers_event(monkeypatch):
@@ -27,6 +29,17 @@ def test_notes_route_creates_note_and_triggers_event(monkeypatch):
 
     assert response["status"] == "created"
     assert response["note_id"] == "note-1"
+
+
+def test_auth_me_returns_identifier():
+    conn = get_connection()
+    conn.execute("DELETE FROM users")
+    conn.execute("INSERT INTO users (id, identifier, password_hash) VALUES ('user-1', 'alice', 'hash')")
+    conn.commit()
+
+    response = asyncio.run(auth_route.me("user-1"))
+
+    assert response == {"id": "user-1", "identifier": "alice"}
 
 
 def test_notes_route_lists_notes_with_tags(monkeypatch):

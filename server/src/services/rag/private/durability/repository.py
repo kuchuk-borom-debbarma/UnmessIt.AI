@@ -84,9 +84,21 @@ def get_by_hash(content_hash: str) -> IngestJob | None:
 
 
 def list_jobs(user_id: str | None = None, page: int = 1, limit: int = 20) -> dict[str, Any]:
-    """Return paginated jobs newest first for dev inspection."""
+    """Return paginated jobs grouped by actionability."""
     conn = get_connection()
     offset = max(0, (page - 1) * limit)
+    order_sql = """
+            ORDER BY CASE j.status
+                WHEN 'running' THEN 0
+                WHEN 'queued' THEN 1
+                WHEN 'waiting_retry' THEN 2
+                WHEN 'failed' THEN 3
+                WHEN 'paused' THEN 4
+                WHEN 'aborted' THEN 5
+                WHEN 'complete' THEN 6
+                ELSE 7
+            END, j.updated_at DESC
+            """
     
     if user_id:
         count_row = conn.execute(
@@ -106,7 +118,7 @@ def list_jobs(user_id: str | None = None, page: int = 1, limit: int = 20) -> dic
             JOIN raw_inputs r ON r.id = j.raw_input_id
             LEFT JOIN notes n ON n.id = j.id
             WHERE r.user_id = ?
-            ORDER BY j.created_at DESC
+            """ + order_sql + """
             LIMIT ? OFFSET ?
             """,
             (user_id, limit, offset),
@@ -119,7 +131,7 @@ def list_jobs(user_id: str | None = None, page: int = 1, limit: int = 20) -> dic
             SELECT j.*, n.text as note_text 
             FROM ingest_jobs j
             LEFT JOIN notes n ON n.id = j.id
-            ORDER BY j.created_at DESC 
+            """ + order_sql + """
             LIMIT ? OFFSET ?
             """,
             (limit, offset)

@@ -49,6 +49,20 @@ def test_create_reuse_list_and_raw_input_update(monkeypatch):
     assert repository.list_jobs("user-1")["data"][0]["id"] == "job-1"
 
 
+def test_list_jobs_sorts_actionable_before_completed(monkeypatch):
+    monkeypatch.setattr(repository, "redis_enabled", lambda: False)
+    conn = get_connection()
+    for index, status in enumerate([STATUS_COMPLETE, STATUS_PAUSED, STATUS_FAILED, STATUS_WAITING_RETRY, STATUS_QUEUED, STATUS_RUNNING]):
+        raw_id = raw_inputs.save(f"raw-{index}", f"text {index}", "user-1", f"hash-{index}")
+        repository.create_or_reuse_job(f"job-{status}", f"hash-{index}", raw_id)
+        conn.execute("UPDATE ingest_jobs SET status = ?, updated_at = datetime('now', ? || ' seconds') WHERE id = ?", (status, str(index), f"job-{status}"))
+    conn.commit()
+
+    statuses = [job["status"] for job in repository.list_jobs("user-1", limit=10)["data"]]
+
+    assert statuses == [STATUS_RUNNING, STATUS_QUEUED, STATUS_WAITING_RETRY, STATUS_FAILED, STATUS_PAUSED, STATUS_COMPLETE]
+
+
 def test_stage_retry_pause_resume_abort_and_delete(monkeypatch):
     monkeypatch.setattr(repository, "redis_enabled", lambda: False)
     _job()

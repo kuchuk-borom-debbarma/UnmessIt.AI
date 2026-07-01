@@ -39,6 +39,16 @@ type IngestJob = {
 type Toast = { tone: 'success' | 'danger'; message: string }
 type JobsResponse = { data: IngestJob[], total: number, page: number, limit: number }
 
+const statusRank: Record<JobStatus, number> = {
+  running: 0,
+  queued: 1,
+  waiting_retry: 2,
+  failed: 3,
+  paused: 4,
+  aborted: 5,
+  complete: 6,
+}
+
 function numberMetric(value?: number) {
   return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : null
 }
@@ -155,7 +165,9 @@ export function JobsView({ token }: { token: string }) {
 
   const handleProgress = useCallback((data: JobProgressEvent) => {
     setLiveProgress(current => applyProgressEvent(current, data))
-    setJobs(current => current.map(job => job.id === data.job_id ? { ...job, status: data.status, stage: data.stage } : job))
+    setJobs(current => current
+      .map(job => job.id === data.job_id ? { ...job, status: data.status, stage: data.stage } : job)
+      .sort((a, b) => statusRank[a.status] - statusRank[b.status] || new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()))
   }, [])
 
   useIngestJobEvents(token, {
@@ -213,11 +225,14 @@ export function JobsView({ token }: { token: string }) {
         {toast && <ToastMessage toast={toast} />}
       </AnimatePresence>
 
-      <div className="flex items-end justify-between mb-12">
+      <div className="flex flex-col gap-4 mb-8 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-4xl font-extrabold tracking-tight mb-2 text-foreground">Ingestion Pipeline</h1>
-          <p className="text-muted-foreground font-medium">Monitor background chunking and embedding tasks.</p>
+          <p className="text-muted-foreground font-medium">Running jobs appear first, then queued/retry, failed or paused work, and completed history last.</p>
         </div>
+        <button className="premium-btn premium-btn-secondary h-11 gap-2 px-4" onClick={() => void load()}>
+          <RefreshCw size={16} /> Refresh
+        </button>
       </div>
 
       <div className="bento-card bg-white dark:bg-[#0a0a0a] border-border/50 dark:border-[#222] p-2">
