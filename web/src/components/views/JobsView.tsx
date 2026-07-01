@@ -1,5 +1,5 @@
-import { memo, useCallback, useEffect, useState } from 'react'
-import { Play, RefreshCw, AlertCircle, CheckCircle2, Clock3, Pause, Square, ExternalLink } from 'lucide-react'
+import { memo, useCallback, useEffect, useState, useRef } from 'react'
+import { Play, RefreshCw, AlertCircle, CheckCircle2, Clock3, Pause, Square, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react'
 import { api } from '../../lib/api'
 import { cn } from '../../lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -80,8 +80,40 @@ const ProgressLogLine = memo(function ProgressLogLine({ line }: { line: Progress
   const depth = Math.min(line.depth, 6)
   return (
     <div className="flex gap-2" style={{ paddingLeft: depth * 12 }}>
-      <span className="text-amber-500/50 shrink-0">&gt;</span>
+      <span className="text-amber-600/50 dark:text-amber-500/50 shrink-0">&gt;</span>
       <span className="break-words">{line.message}</span>
+    </div>
+  )
+})
+
+const JobProgressLog = memo(function JobProgressLog({ progress }: { progress: ProgressLine[] }) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [expanded, setExpanded] = useState(false)
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [progress])
+
+  if (progress.length === 0) return null
+
+  return (
+    <div className="mt-1 relative border border-amber-500/20 dark:border-amber-900/30 rounded-md bg-amber-500/5 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400/80 overflow-hidden font-mono text-[10px]">
+      <div 
+        ref={scrollRef}
+        className={cn("px-3 py-2 overflow-y-auto custom-scrollbar flex flex-col gap-1 transition-all duration-300", expanded ? "max-h-96" : "max-h-64")}
+      >
+        {progress.map(line => (
+          <ProgressLogLine key={line.ref} line={line} />
+        ))}
+      </div>
+      <button 
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setExpanded(v => !v) }}
+        className="absolute bottom-1 right-1 w-6 h-6 flex items-center justify-center bg-white/50 dark:bg-black/50 hover:bg-white/80 dark:hover:bg-black/80 rounded-md backdrop-blur-sm transition-colors text-amber-600/50 hover:text-amber-600 dark:text-amber-400/50 dark:hover:text-amber-400"
+      >
+        {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+      </button>
     </div>
   )
 })
@@ -183,25 +215,17 @@ export function JobsView({ token }: { token: string }) {
 
       <div className="flex items-end justify-between mb-12">
         <div>
-          <h1 className="text-4xl font-extrabold tracking-tight mb-2">Ingestion Pipeline</h1>
+          <h1 className="text-4xl font-extrabold tracking-tight mb-2 text-foreground">Ingestion Pipeline</h1>
           <p className="text-muted-foreground font-medium">Monitor background chunking and embedding tasks.</p>
         </div>
-        <button 
-          onClick={load}
-          className="premium-btn premium-btn-secondary w-12 h-12 rounded-[1.5rem]"
-          aria-label="Refresh jobs"
-          title="Refresh jobs"
-        >
-          <RefreshCw size={20} className={cn(loading && "animate-spin")} />
-        </button>
       </div>
 
-      <div className="bento-card bg-[#0a0a0a] border-[#222] p-2">
+      <div className="bento-card bg-white dark:bg-[#0a0a0a] border-border/50 dark:border-[#222] p-2">
         {/* Terminal Header */}
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-[#222]">
-          <div className="w-3 h-3 rounded-full bg-red-500/50"></div>
-          <div className="w-3 h-3 rounded-full bg-amber-500/50"></div>
-          <div className="w-3 h-3 rounded-full bg-green-500/50"></div>
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-border/50 dark:border-[#222]">
+          <div className="w-3 h-3 rounded-full bg-red-500/70"></div>
+          <div className="w-3 h-3 rounded-full bg-amber-500/70"></div>
+          <div className="w-3 h-3 rounded-full bg-green-500/70"></div>
           <span className="ml-2 text-xs font-mono text-zinc-500">pipeline-term</span>
         </div>
 
@@ -223,7 +247,7 @@ export function JobsView({ token }: { token: string }) {
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 rounded-xl bg-black border border-[#222] hover:border-primary-500/30 transition-colors font-mono text-sm"
+                    className="flex flex-col md:flex-row md:items-start justify-between gap-4 p-4 rounded-xl bg-black/5 dark:bg-black border border-black/10 dark:border-[#222] hover:border-primary-500/30 transition-colors font-mono text-sm"
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-3 mb-2">
@@ -268,41 +292,35 @@ export function JobsView({ token }: { token: string }) {
                           )}
                         </div>
                         {job.error && (
-                          <div className="text-red-400 mt-1 bg-red-950/30 px-3 py-2 rounded-md border border-red-900/50">
+                          <div className="text-red-600 dark:text-red-400 mt-1 bg-red-500/10 dark:bg-red-950/30 px-3 py-2 rounded-md border border-red-500/20 dark:border-red-900/50">
                             {job.error}
                           </div>
                         )}
-                        {progress.length > 0 && job.status === 'running' && (
-                          <div className="text-amber-400/80 mt-1 bg-amber-950/20 px-3 py-2 rounded-md border border-amber-900/30 font-mono text-[10px] max-h-32 overflow-y-auto flex flex-col gap-1">
-                             {progress.map(line => (
-                               <ProgressLogLine key={line.ref} line={line} />
-                             ))}
-                          </div>
-                        )}
+                        {job.status === 'running' && <JobProgressLog progress={progress} />}
                         {progress.length === 0 && job.metadata?.progress_message && job.status === 'running' && (
-                          <div className="text-amber-400 mt-1 bg-amber-950/30 px-3 py-2 rounded-md border border-amber-900/50 flex items-center gap-2">
+                          <div className="text-amber-600 dark:text-amber-400 mt-1 bg-amber-500/10 dark:bg-amber-950/30 px-3 py-2 rounded-md border border-amber-500/20 dark:border-amber-900/50 flex items-center gap-2">
                              <RefreshCw className="animate-spin" size={12} />
                              {job.metadata.progress_message}
                           </div>
                         )}
                         <div className="flex flex-wrap items-center gap-3 mt-1.5 font-mono text-[10px] uppercase tracking-widest text-zinc-500">
                           <span className="flex items-center gap-1">
-                            Stage: <span className="text-zinc-300">{job.stage}</span>
+                            Stage: <span className="text-zinc-700 dark:text-zinc-300">{job.stage}</span>
                           </span>
                           <span>&bull;</span>
                           <span className="flex items-center gap-1">
-                            Attempts: <span className="text-zinc-300">{job.attempt_count}</span>
+                            Attempts: <span className="text-zinc-700 dark:text-zinc-300">{job.attempt_count}</span>
                           </span>
                           <span>&bull;</span>
                           <span className="flex items-center gap-1">
-                            Updated: <span className="text-zinc-300">{new Date(job.updated_at).toLocaleTimeString()}</span>
+                            Updated: <span className="text-zinc-700 dark:text-zinc-300">{new Date(job.updated_at).toLocaleTimeString()}</span>
                           </span>
                         </div>
                         {metrics.length > 0 && (
                           <div className="flex flex-wrap items-center gap-2 mt-1.5 font-mono text-[10px] uppercase tracking-widest text-zinc-500">
                             {metrics.map(([label, value]) => (
-                              <span key={label} className="inline-flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-950 px-2 py-0.5">
-                                {label}: <span className="text-zinc-300">{value}</span>
+                              <span key={label} className="inline-flex items-center gap-1 rounded-md border border-black/10 dark:border-zinc-800 bg-black/5 dark:bg-zinc-950 px-2 py-0.5">
+                                {label}: <span className="text-zinc-700 dark:text-zinc-300">{value}</span>
                               </span>
                             ))}
                           </div>
@@ -333,7 +351,7 @@ export function JobsView({ token }: { token: string }) {
                       <button 
                         disabled={busyJobId === job.id}
                         onClick={() => deleteJob(job.id)}
-                        className="flex items-center justify-center w-8 h-8 rounded-lg bg-zinc-900 border border-[#222] text-zinc-500 hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-500 transition-colors ml-1 disabled:opacity-50 disabled:pointer-events-none"
+                        className="flex items-center justify-center w-8 h-8 rounded-lg bg-black/5 dark:bg-zinc-900 border border-black/10 dark:border-[#222] text-zinc-500 hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-500 transition-colors ml-1 disabled:opacity-50 disabled:pointer-events-none"
                         title="Stop and Delete Job"
                       >
                         <Square size={14} />

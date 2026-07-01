@@ -53,23 +53,23 @@ const MiniTerminal = memo(function MiniTerminal({
     <div className={cn(
       "mb-6 rounded-2xl border overflow-hidden transition-all duration-300",
       loading
-        ? "border-primary-500/30 bg-black/60 shadow-[0_0_24px_rgba(var(--primary-500-rgb),0.08)]"
-        : "border-border/30 bg-black/40"
+        ? "border-primary-500/30 bg-black/5 dark:bg-black/60 shadow-[0_0_24px_rgba(var(--primary-500-rgb),0.08)]"
+        : "border-border/30 bg-black/5 dark:bg-black/40"
     )}>
       {/* Terminal header bar */}
       <button
         type="button"
         onClick={onToggle}
-        className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-white/[0.03] transition-colors"
+        className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-black/5 dark:hover:bg-white/[0.03] transition-colors"
       >
         <div className="flex items-center gap-1.5">
           <div className="w-2.5 h-2.5 rounded-full bg-rose-500/70" />
           <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/70" />
           <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/70" />
         </div>
-        <Terminal size={12} className={cn("ml-1", loading ? "text-primary-400" : "text-muted-foreground/60")} />
+        <Terminal size={12} className={cn("ml-1", loading ? "text-primary-500 dark:text-primary-400" : "text-muted-foreground/60")} />
         <span className={cn("text-xs font-mono font-medium flex-1 text-left truncate",
-          loading ? "text-primary-300/80" : "text-muted-foreground/60"
+          loading ? "text-primary-600 dark:text-primary-300/80" : "text-muted-foreground/60"
         )}>
           {loading ? lastStep.split('{')[0].trim() : `${steps.length} steps completed`}
         </span>
@@ -98,13 +98,13 @@ const MiniTerminal = memo(function MiniTerminal({
                     key={idx}
                     className={cn(
                       "flex items-start gap-2 leading-relaxed",
-                      isLast && loading ? "text-primary-300" : "text-zinc-500"
+                      isLast && loading ? "text-primary-600 dark:text-primary-300" : "text-zinc-600 dark:text-zinc-500"
                     )}
                   >
                     <span className="shrink-0 mt-px">
                       {isLast && loading
-                        ? <span className="inline-block w-1.5 h-3 bg-primary-400 animate-pulse rounded-sm" />
-                        : <span className="text-zinc-700">›</span>
+                        ? <span className="inline-block w-1.5 h-3 bg-primary-500 dark:bg-primary-400 animate-pulse rounded-sm" />
+                        : <span className="text-zinc-400 dark:text-zinc-700">›</span>
                       }
                     </span>
                     <span className="break-all">{step}</span>
@@ -362,22 +362,22 @@ export function AskView({ token }: { token: string }) {
                       className="overflow-hidden"
                     >
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="p-5 rounded-2xl bg-black/40 border border-[#222] shadow-inner">
+                        <div className="p-5 rounded-2xl bg-black/5 dark:bg-black/40 border border-black/10 dark:border-[#222] shadow-inner">
                           <div className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">Sub-Queries Generated</div>
                           <div className="flex flex-wrap gap-2">
                             {result.retrieval_trace.sub_queries?.map((sq: string, i: number) => (
-                              <span key={i} className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-300">
+                              <span key={i} className="px-2.5 py-1 rounded-lg bg-white dark:bg-zinc-900 border border-black/10 dark:border-zinc-800 text-xs text-zinc-700 dark:text-zinc-300 shadow-sm dark:shadow-none">
                                 {sq}
                               </span>
                             )) || <span className="text-zinc-600 text-xs italic">None</span>}
                           </div>
                         </div>
 
-                        <div className="p-5 rounded-2xl bg-black/40 border border-[#222] shadow-inner">
+                        <div className="p-5 rounded-2xl bg-black/5 dark:bg-black/40 border border-black/10 dark:border-[#222] shadow-inner">
                           <div className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">Entities Extracted</div>
                           <div className="flex flex-wrap gap-2">
                             {result.retrieval_trace.extracted_subjects?.map((subj: string, i: number) => (
-                              <span key={i} className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 flex items-center gap-1">
+                              <span key={i} className="px-2.5 py-1 rounded-lg bg-white dark:bg-zinc-900 border border-black/10 dark:border-zinc-800 text-xs text-zinc-700 dark:text-zinc-300 shadow-sm dark:shadow-none flex items-center gap-1">
                                 <Search size={10} className="text-zinc-500" /> {subj}
                               </span>
                             )) || <span className="text-zinc-600 text-xs italic">None</span>}
@@ -386,26 +386,26 @@ export function AskView({ token }: { token: string }) {
                       </div>
 
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-                        <div className="p-5 rounded-2xl bg-black/40 border border-[#222] flex flex-col items-center justify-center text-center shadow-inner">
-                          <div className="text-3xl font-black text-white mb-1">{result.retrieval_trace.source_chunk_count || 0}</div>
+                        <div className="p-5 rounded-2xl bg-black/5 dark:bg-black/40 border border-black/10 dark:border-[#222] flex flex-col items-center justify-center text-center shadow-inner">
+                          <div className="text-3xl font-black text-black dark:text-white mb-1">{result.retrieval_trace.source_chunk_count || 0}</div>
                           <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Chunks Found</div>
                         </div>
-                        <div className="p-5 rounded-2xl bg-black/40 border border-[#222] flex flex-col items-center justify-center text-center shadow-inner relative overflow-hidden">
+                        <div className="p-5 rounded-2xl bg-black/5 dark:bg-black/40 border border-black/10 dark:border-[#222] flex flex-col items-center justify-center text-center shadow-inner relative overflow-hidden">
                           <div className="absolute inset-0 bg-primary-500/10 blur-xl"></div>
-                          <div className="text-3xl font-black text-primary-400 mb-1 relative z-10">{result.retrieval_trace.citation_count || 0}</div>
-                          <div className="text-[10px] font-bold text-primary-500/70 uppercase tracking-widest relative z-10">Citations Used</div>
+                          <div className="text-3xl font-black text-primary-600 dark:text-primary-400 mb-1 relative z-10">{result.retrieval_trace.citation_count || 0}</div>
+                          <div className="text-[10px] font-bold text-primary-600/70 dark:text-primary-500/70 uppercase tracking-widest relative z-10">Citations Used</div>
                         </div>
-                        <div className="p-5 rounded-2xl bg-black/40 border border-[#222] flex flex-col items-center justify-center text-center shadow-inner md:col-span-2">
-                          <div className="text-lg font-black text-zinc-300 mb-1 truncate w-full px-2">{String(result.retrieval_trace.mode || 'N/A').replace(/_/g, ' ')}</div>
+                        <div className="p-5 rounded-2xl bg-black/5 dark:bg-black/40 border border-black/10 dark:border-[#222] flex flex-col items-center justify-center text-center shadow-inner md:col-span-2">
+                          <div className="text-lg font-black text-zinc-700 dark:text-zinc-300 mb-1 truncate w-full px-2">{String(result.retrieval_trace.mode || 'N/A').replace(/_/g, ' ')}</div>
                           <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Retrieval Mode</div>
                         </div>
                         {result.retrieval_trace.context_chars_before_packing && (
-                          <div className="p-5 rounded-2xl bg-black/40 border border-emerald-900/30 flex flex-col justify-center shadow-inner md:col-span-4">
-                            <div className="flex justify-between items-end mb-3">
-                              <div className="text-[10px] font-bold text-emerald-500/80 uppercase tracking-widest">Token Optimization via Context Engineering</div>
-                              <div className="text-xl font-black text-emerald-400">-{result.retrieval_trace.context_chars_saved?.toLocaleString()} chars</div>
-                            </div>
-                            <div className="w-full bg-zinc-900 rounded-full h-1.5 overflow-hidden">
+                          <div className="p-5 rounded-2xl bg-emerald-500/5 dark:bg-black/40 border border-emerald-500/20 dark:border-emerald-900/30 flex flex-col justify-center shadow-inner md:col-span-4">
+                              <div className="flex justify-between items-end mb-3">
+                                <div className="text-[10px] font-bold text-emerald-600/80 dark:text-emerald-500/80 uppercase tracking-widest">Token Optimization via Context Engineering</div>
+                                <div className="text-xl font-black text-emerald-600 dark:text-emerald-400">-{result.retrieval_trace.context_chars_saved?.toLocaleString()} chars</div>
+                              </div>
+                              <div className="w-full bg-black/5 dark:bg-zinc-900 rounded-full h-1.5 overflow-hidden">
                               <div 
                                 className="bg-emerald-500 h-full rounded-full" 
                                 style={{ width: `${Math.min(100, Math.max(0, ((result.retrieval_trace.context_chars_saved || 0) / (result.retrieval_trace.context_chars_before_packing || 1)) * 100))}%` }}
@@ -420,10 +420,10 @@ export function AskView({ token }: { token: string }) {
                       </div>
 
                       <details className="mt-6 group">
-                        <summary className="text-xs font-mono font-bold text-zinc-600 cursor-pointer hover:text-zinc-400 transition-colors list-none flex items-center gap-2">
+                        <summary className="text-xs font-mono font-bold text-zinc-600 cursor-pointer hover:text-zinc-800 dark:hover:text-zinc-400 transition-colors list-none flex items-center gap-2">
                           <ChevronRight size={14} className="group-open:rotate-90 transition-transform" /> View Raw JSON Trace
                         </summary>
-                        <pre className="mt-3 p-6 rounded-2xl bg-[#0a0a0a] border border-[#222] text-[10px] font-mono text-zinc-500 overflow-x-auto custom-scrollbar shadow-inner">
+                        <pre className="mt-3 p-6 rounded-2xl bg-black/5 dark:bg-[#0a0a0a] border border-black/10 dark:border-[#222] text-[10px] font-mono text-zinc-600 dark:text-zinc-500 overflow-x-auto custom-scrollbar shadow-inner">
                           {JSON.stringify(result.retrieval_trace, null, 2)}
                         </pre>
                       </details>
