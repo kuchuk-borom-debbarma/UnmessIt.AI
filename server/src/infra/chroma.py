@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import hashlib
+import json
 from functools import lru_cache
 from typing import Any
 
@@ -10,7 +11,7 @@ from chromadb.utils import embedding_functions
 
 from src.infra.rate_limit import RateLimitedEmbeddingFunction, get_limiter
 from src.infra.settings import get_user_setting_candidates, get_user_settings
-from src.infra.progress import report_progress_sync, set_last_rotation_snapshot
+from src.infra.progress import report_progress_sync, set_last_embedding_rotation_snapshot, get_last_embedding_rotation_snapshot
 from src.infra.sqlite import DATA_DIR
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,15 @@ def upsert(ids: list[str], texts: list[str], metadatas: list[dict[str, Any]], us
     """Insert or replace vector documents."""
     if not ids:
         return
-    _user_collection(user_id).upsert(ids=ids, documents=texts, metadatas=metadatas)
+    collection = _user_collection(user_id)
+    set_last_embedding_rotation_snapshot(None)
+    collection.upsert(ids=ids, documents=texts, metadatas=metadatas)
+    snapshot = get_last_embedding_rotation_snapshot()
+    if snapshot:
+        collection.update(
+            ids=ids,
+            metadatas=[{**metadata, "embedding_rotation_preset": json.dumps(snapshot, ensure_ascii=False)} for metadata in metadatas],
+        )
 
 
 def collection(user_id: str):
@@ -143,7 +152,7 @@ class RotatingEmbeddingFunction(chromadb.EmbeddingFunction):
                     pass
                 
                 result = _embedding_function_for_key(settings.embedding_cache_key())(input)
-                set_last_rotation_snapshot(settings.rotation_snapshot())
+                set_last_embedding_rotation_snapshot(settings.rotation_snapshot())
                 report_progress_sync(
                     f"Embedding rotation preset succeeded: {settings.preset_name}",
                     {"preset_id": settings.preset_id, "preset_name": settings.preset_name},

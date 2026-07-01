@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import json
+import logging
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from src.routes.auth_utils import get_current_user_id
+from src.repositories import tags
 
 from src.infra.sse import get_sse_service
 from src.services.rag.rag_service import get_rag_service
 from src.services.rag.models import ProgressReporter
 
 router = APIRouter(prefix="/api/retrieval", tags=["Retrieval"])
+logger = logging.getLogger(__name__)
 
 
 class QueryRequest(BaseModel):
@@ -51,8 +54,8 @@ async def sse_events(client_id: str, request: Request) -> StreamingResponse:
                 if await request.is_disconnected():
                     break
                 yield f"event: {event.event}\ndata: {json.dumps(event.data)}\n\n"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("retrieval_sse_stream_failed client_id=%s error=%s", client_id, exc)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -70,9 +73,33 @@ async def query_endpoint(
         request.query, 
         user_id, 
         reporter, 
-        request.within_directories, 
-        request.excluding_directories,
-        request.within_tags,
-        request.excluding_tags,
+        _paths(request.within_directories), 
+        _paths(request.excluding_directories),
+        _tag_ids(request.within_tags, user_id),
+        _tag_ids(request.excluding_tags, user_id),
         request.within_tags_condition
     )
+
+
+def _paths(values: list[str] | None) -> list[str] | None:
+    if not values:
+        return None
+    paths = []
+    for value in values:
+        path = str(value).strip()
+        if path and path not in paths:
+            paths.append(path if path.endswith("/") else f"{path}/")
+    return paths or None
+
+
+def _tag_ids(values: list[str] | None, user_id: str) -> list[str] | None:
+    if not values:
+        return None
+    result = []
+    for value in values:
+        item = str(value).split("|", 1)[0].strip()
+        tag = tags.get_by_name(item, user_id)
+        tag_id = tag["id"] if tag else item
+        if tag_id and tag_id not in result:
+            result.append(tag_id)
+    return result or None

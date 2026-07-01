@@ -1,10 +1,10 @@
-import { Search, RefreshCw, ChevronRight, ChevronDown, ChevronUp, CheckCircle2, ExternalLink, Terminal, SlidersHorizontal, Square, X } from 'lucide-react'
+import { Search, RefreshCw, ChevronRight, ChevronDown, ChevronUp, ExternalLink, Terminal, SlidersHorizontal, Square } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Link } from 'react-router-dom'
 import { DirectorySearchSelect } from './DirectorySearchSelect'
 import { TagSearchSelect } from './TagSearchSelect'
-import { useAsk } from '../../contexts/AskContext'
+import { useAsk } from '../../contexts/useAsk'
 import { useEffect, useRef, memo } from 'react'
 
 type Toast = { tone: 'success' | 'danger'; message: string }
@@ -29,13 +29,12 @@ function ToastMessage({ toast }: { toast: Toast }) {
 
 // Isolated terminal component — memo prevents parent re-renders from scrolling the list
 const MiniTerminal = memo(function MiniTerminal({
-  steps, loading, open, onToggle, hasResult
+  steps, loading, open, onToggle
 }: {
   steps: string[]
   loading: boolean
   open: boolean
   onToggle: () => void
-  hasResult: boolean
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -132,25 +131,9 @@ export function AskView({ token }: { token: string }) {
   return (
     <div className="flex flex-col flex-1 h-full max-w-4xl mx-auto w-full pt-10 md:pt-20 relative">
       {/* Dynamic Ambient Background */}
-      <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
-        <motion.div 
-          animate={{ 
-            scale: [1, 1.1, 1],
-            opacity: [0.15, 0.3, 0.15],
-            rotate: [0, 45, 0]
-          }}
-          transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
-          className="absolute top-[-10%] left-[-10%] w-[50vw] h-[50vw] rounded-full bg-primary-500/30 blur-[120px]"
-        />
-        <motion.div 
-          animate={{ 
-            scale: [1, 1.2, 1],
-            opacity: [0.1, 0.25, 0.1],
-            rotate: [0, -45, 0]
-          }}
-          transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-          className="absolute bottom-[-10%] right-[-10%] w-[60vw] h-[60vw] rounded-full bg-accent-500/20 blur-[140px]"
-        />
+      <div className="ask-ambient fixed inset-0 -z-10 overflow-hidden pointer-events-none">
+        <div className="ask-ambient-primary" />
+        <div className="ask-ambient-accent" />
       </div>
 
       <AnimatePresence>
@@ -158,8 +141,7 @@ export function AskView({ token }: { token: string }) {
       </AnimatePresence>
 
       {/* The Omnibar */}
-      <motion.div 
-        layout
+      <motion.div
         className={cn(
           "w-full transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)] z-10",
           result ? "mb-12" : "my-auto"
@@ -321,7 +303,6 @@ export function AskView({ token }: { token: string }) {
         loading={loading}
         open={terminalOpen}
         onToggle={() => setTerminalOpen(!terminalOpen)}
-        hasResult={!!result}
       />
 
       <AnimatePresence>

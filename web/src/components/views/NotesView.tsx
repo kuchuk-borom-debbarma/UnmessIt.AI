@@ -341,8 +341,11 @@ export function NotesView({ token }: { token: string }) {
             }
           }
         }
-      } catch {
-        if (!controller.signal.aborted) retryTimer = window.setTimeout(connect, 5000)
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          console.error('Ingest job event stream failed:', err)
+          retryTimer = window.setTimeout(connect, 5000)
+        }
       }
     }
     void connect()

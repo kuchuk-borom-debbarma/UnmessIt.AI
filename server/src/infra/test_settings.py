@@ -1,3 +1,7 @@
+import json
+
+from src.infra import chroma, langchain_json
+from src.infra.progress import set_last_embedding_rotation_snapshot
 from src.infra.settings import Settings
 
 
@@ -74,3 +78,51 @@ def test_ai_settings_leave_external_base_urls_in_docker(monkeypatch):
     settings = Settings({"llm_base_url": "https://integrate.api.nvidia.com/v1"})
 
     assert settings.llm_base_url == "https://integrate.api.nvidia.com/v1"
+
+
+async def test_llm_rotation_falls_through_to_next_candidate(monkeypatch):
+    calls = []
+    candidates = (
+        Settings({"id": "bad", "name": "bad", "llm_model": "bad-model"}),
+        Settings({"id": "good", "name": "good", "llm_model": "good-model"}),
+    )
+
+    class FakeResponse:
+        content = '{"ok": true}'
+
+    class FakeLLM:
+        def __init__(self, model: str) -> None:
+            self.model = model
+
+        async def ainvoke(self, messages):
+            calls.append(self.model)
+            if self.model == "bad-model":
+                raise RuntimeError("down")
+            return FakeResponse()
+
+    monkeypatch.setattr(langchain_json, "get_user_setting_candidates", lambda user_id: candidates)
+    monkeypatch.setattr(langchain_json, "_get_chat_llm", lambda cache_key: FakeLLM(cache_key[2]))
+
+    result = await langchain_json.JsonLLMClient().async_invoke_json("system", "human", "user-1")
+
+    assert result == {"ok": True}
+    assert calls == ["bad-model", "good-model"]
+
+
+def test_chroma_upsert_writes_actual_embedding_rotation_snapshot(monkeypatch):
+    updates = {}
+
+    class FakeCollection:
+        def upsert(self, ids, documents, metadatas):
+            set_last_embedding_rotation_snapshot({"preset_id": "embed-good", "preset_name": "embed good"})
+
+        def update(self, ids, metadatas):
+            updates["ids"] = ids
+            updates["metadatas"] = metadatas
+
+    monkeypatch.setattr(chroma, "_user_collection", lambda user_id: FakeCollection())
+
+    chroma.upsert(["vec-1"], ["text"], [{"object_type": "source_chunk"}], "user-1")
+
+    assert updates["ids"] == ["vec-1"]
+    assert json.loads(updates["metadatas"][0]["embedding_rotation_preset"])["preset_id"] == "embed-good"

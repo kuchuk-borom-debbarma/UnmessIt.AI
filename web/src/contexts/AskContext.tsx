@@ -1,53 +1,10 @@
-import { createContext, useContext, useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { api, API_BASE } from '../lib/api'
+import { AskContext } from './AskContextCore'
+import type { QueryResult, Toast } from './AskContextCore'
 
-type SourceChunk = {
-  id: string
-  raw_input_id: string
-  note_id: string
-  text: string
-  summary: string
-}
-
-type QueryResult = {
-  answer: string
-  citations: any[]
-  source_chunks: SourceChunk[]
-  retrieval_trace: Record<string, any>
-}
-
-type Toast = { tone: 'success' | 'danger'; message: string }
-
-interface AskContextType {
-  query: string
-  setQuery: (q: string) => void
-  loading: boolean
-  showTrace: boolean
-  setShowTrace: (s: boolean) => void
-  showFilters: boolean
-  setShowFilters: (s: boolean) => void
-  terminalOpen: boolean
-  setTerminalOpen: (o: boolean) => void
-  withinDirectories: string
-  setWithinDirectories: (d: string) => void
-  excludingDirectories: string
-  setExcludingDirectories: (d: string) => void
-  withinTags: string
-  setWithinTags: (t: string) => void
-  excludingTags: string
-  setExcludingTags: (t: string) => void
-  withinTagsCondition: 'any' | 'all'
-  setWithinTagsCondition: (c: 'any' | 'all') => void
-  result: QueryResult | null
-  toast: Toast | null
-  setToast: (t: Toast | null) => void
-  progressSteps: string[]
-  handleAsk: (token: string) => void
-  stopAsk: () => void
-}
-
-const AskContext = createContext<AskContextType | null>(null)
+const MAX_PROGRESS_STEPS = 200
 
 export function AskProvider({ children }: { children: ReactNode }) {
   const [query, setQuery] = useState(() => sessionStorage.getItem('ask_query') || '')
@@ -81,7 +38,7 @@ export function AskProvider({ children }: { children: ReactNode }) {
   const flushPending = useCallback(() => {
     if (pendingStepsRef.current.length === 0) return
     const batch = pendingStepsRef.current.splice(0)
-    setProgressSteps(prev => [...prev, ...batch])
+    setProgressSteps(prev => [...prev, ...batch].slice(-MAX_PROGRESS_STEPS))
   }, [])
 
   useEffect(() => {
@@ -153,7 +110,9 @@ export function AskProvider({ children }: { children: ReactNode }) {
             flushPending()
           }, 120)
         }
-      } catch {}
+      } catch (err) {
+        console.error('Failed to parse retrieval progress event:', err)
+      }
     })
 
     const abortController = new AbortController()
@@ -162,8 +121,8 @@ export function AskProvider({ children }: { children: ReactNode }) {
     try {
       const within = withinDirectories.split(',').map(s => s.trim()).filter(Boolean)
       const excluding = excludingDirectories.split(',').map(s => s.trim()).filter(Boolean)
-      const withinTagsArr = withinTags.split(',').map(s => s.trim()).filter(Boolean)
-      const excludingTagsArr = excludingTags.split(',').map(s => s.trim()).filter(Boolean)
+      const withinTagsArr = tagIds(withinTags)
+      const excludingTagsArr = tagIds(excludingTags)
       
       const data = await api<QueryResult>('/api/retrieval/query', {
         method: 'POST',
@@ -212,10 +171,6 @@ export function AskProvider({ children }: { children: ReactNode }) {
   )
 }
 
-export function useAsk() {
-  const context = useContext(AskContext)
-  if (!context) {
-    throw new Error('useAsk must be used within an AskProvider')
-  }
-  return context
+function tagIds(value: string) {
+  return value.split(',').map(item => item.trim().split('|')[0]).filter(Boolean)
 }

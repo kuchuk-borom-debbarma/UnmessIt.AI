@@ -65,16 +65,24 @@ class RagServiceImpl:
             answer = {"answer": "Ask a question to search your source chunks.", "citations": [], "directories": [], "notes": []}
             return build_query_result(query, [], answer, trace)
 
+        loop = asyncio.get_running_loop()
+
         async def async_report(message: str, details: dict | None = None) -> None:
             await reporter.report(message, details)
 
         def sync_report(message: str, details: dict | None = None) -> None:
-            asyncio.create_task(reporter.report(message, details))
+            loop.call_soon_threadsafe(asyncio.create_task, reporter.report(message, details))
 
         tokens = set_progress_reporters(async_report, sync_report)
         try:
             await reporter.report("Normalizing query text...", {"query_chars": len(query)})
-            await reporter.report("Searching source-backed evidence...")
+            await reporter.report("Searching source-backed evidence...", {
+                "within_directories": within_directories or [],
+                "excluding_directories": excluding_directories or [],
+                "within_tags": within_tags or [],
+                "excluding_tags": excluding_tags or [],
+                "within_tags_condition": within_tags_condition,
+            })
             chunks, trace = await self.query_evidence.run(query, user_id, reporter, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
             await reporter.report("Generating answer from selected evidence...", {"source_chunk_count": len(chunks)})
             answer = await self.query_answer.run(query, chunks, user_id, reporter)

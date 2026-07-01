@@ -79,7 +79,13 @@ def test_retrieval_route_returns_current_query_shape(monkeypatch):
 
     assert response["answer"] == "Retrieval rewrite pending."
     assert response["source_chunks"] == []
-    assert calls == [("hello", "user-1", None, ["dir-1"], ["dir-2"], ["tag-1"], ["tag-2"], "all")]
+    assert calls == [("hello", "user-1", None, ["dir-1/"], ["dir-2/"], ["tag-1"], ["tag-2"], "all")]
+
+
+def test_retrieval_route_accepts_legacy_tag_names(monkeypatch):
+    monkeypatch.setattr(retrieval_route.tags, "get_by_name", lambda value, user_id: {"id": "tag-id-1"} if value == "Tag One" else None)
+
+    assert retrieval_route._tag_ids(["Tag One", "tag-id-2"], "user-1") == ["tag-id-1", "tag-id-2"]
 
 
 def test_dev_routes_read_repositories(monkeypatch):

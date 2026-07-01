@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.repositories import dev, raw_inputs, recall, recall_key_vectors, source_chunk_vectors, source_chunks
+from src.repositories import config_presets, dev, raw_inputs, recall, recall_key_vectors, source_chunk_vectors, source_chunks
 from src.services.rag.private.chains.recall.candidates import RecallCandidateChain
 from src.services.rag.private.chains.recall.index import RecallIndexChain
 from src.services.rag.private.chains.recall.normalizer import RecallNormalizerChain
@@ -110,8 +110,25 @@ def test_source_chunk_vector_metadata_move_refreshes_directory_flags(monkeypatch
             "tag_keep": True,
             "dir_dir-2": True,
             "dir_nested": True,
+            source_chunk_vectors._dir_path_key("/dir-2/"): True,
+            source_chunk_vectors._dir_path_key("/dir-2/nested/"): True,
         }],
     }
+
+
+def test_source_chunk_vector_directory_filters_use_path_prefix_keys(monkeypatch):
+    captured = {}
+
+    def fake_search(query, user_id, top_k=8, where=None):
+        captured["where"] = where
+        return []
+
+    monkeypatch.setattr(source_chunk_vectors.chroma, "search", fake_search)
+
+    source_chunk_vectors.search("hello", "user-1", within_directories=["/parent/"], excluding_directories=["/blocked/"])
+
+    assert {source_chunk_vectors._dir_path_key("/parent/"): True} in captured["where"]["$and"][2]["$or"]
+    assert {source_chunk_vectors._dir_path_key("/blocked/"): {"$ne": True}} in captured["where"]["$and"]
 
 
 async def test_recall_index_chain_retries_once_after_invalid_output(monkeypatch):
@@ -406,6 +423,31 @@ def test_source_chunk_lexical_search_handles_punctuation(monkeypatch):
     assert [row["id"] for row in rows] == ["chunk-1"]
 
 
+def test_source_chunk_lexical_search_filters_directories_and_tag_ids(monkeypatch):
+    conn = _memory_db()
+    monkeypatch.setattr(source_chunks, "get_connection", lambda: conn)
+    conn.execute("INSERT INTO notes (id, text, user_id, directory_id) VALUES ('note-1', 'text', 'user-1', NULL)")
+    conn.execute("INSERT INTO notes (id, text, user_id, directory_id) VALUES ('note-2', 'text', 'user-1', NULL)")
+    conn.execute("INSERT INTO tags (id, name, user_id) VALUES ('tag-1', 'Tag One', 'user-1')")
+    conn.execute("INSERT INTO tags (id, name, user_id) VALUES ('tag-2', 'Tag Two', 'user-1')")
+    conn.execute("INSERT INTO note_tags (note_id, tag_id) VALUES ('note-1', 'tag-1')")
+    conn.execute("INSERT INTO note_tags (note_id, tag_id) VALUES ('note-2', 'tag-2')")
+    conn.execute("INSERT INTO raw_inputs (id, job_id, content, user_id) VALUES ('raw-1', 'note-1', 'text', 'user-1')")
+    conn.execute("INSERT INTO raw_inputs (id, job_id, content, user_id) VALUES ('raw-2', 'note-2', 'text', 'user-1')")
+    conn.execute(
+        "INSERT INTO source_chunks (id, raw_input_id, text, summary, spans, metadata, user_id, directory_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("chunk-1", "raw-1", "needle text", "summary", "[]", "{}", "user-1", "/parent/child/")
+    )
+    conn.execute(
+        "INSERT INTO source_chunks (id, raw_input_id, text, summary, spans, metadata, user_id, directory_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("chunk-2", "raw-2", "needle text", "summary", "[]", "{}", "user-1", "/other/")
+    )
+
+    rows = source_chunks.search("needle", "user-1", within_directories=["/parent/"], within_tags=["tag-1"], excluding_tags=["tag-2"])
+
+    assert [row["id"] for row in rows] == ["chunk-1"]
+
+
 def test_recall_repository_reused_key_preserves_name_and_updates_summary(monkeypatch):
     conn = _memory_db()
     monkeypatch.setattr(recall, "get_connection", lambda: conn)
@@ -691,8 +733,9 @@ def _memory_db():
 
 def _patch_memory_db(monkeypatch):
     conn = _memory_db()
-    for module in (raw_inputs, source_chunks, recall, durability_repo):
+    for module in (raw_inputs, source_chunks, recall, durability_repo, config_presets):
         monkeypatch.setattr(module, "get_connection", lambda conn=conn: conn)
+    config_presets.save({"name": "test"}, "user-1")
     return conn
 
 

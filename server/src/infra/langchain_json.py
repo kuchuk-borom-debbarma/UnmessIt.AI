@@ -10,7 +10,7 @@ from langchain_openai import ChatOpenAI
 
 from src.infra.rate_limit import RateLimitedModel, get_limiter
 from src.infra.settings import Settings, get_user_setting_candidates, get_user_settings
-from src.infra.progress import report_progress, set_last_rotation_snapshot, get_last_rotation_snapshot, report_progress_sync
+from src.infra.progress import report_progress, set_last_llm_rotation_snapshot, report_progress_sync
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +33,6 @@ class JsonLLMClient:
 
         errors = []
         candidates = list(get_user_setting_candidates(user_id))
-        last_snapshot = get_last_rotation_snapshot()
-        if last_snapshot and last_snapshot.get("preset_id"):
-            sticky_id = last_snapshot["preset_id"]
-            candidates.sort(key=lambda c: 0 if c.preset_id == sticky_id else 1)
 
         for index, settings in enumerate(candidates, start=1):
             report_progress_sync(
@@ -45,7 +41,7 @@ class JsonLLMClient:
             )
             try:
                 result = self._invoke_with_settings(_get_chat_llm(settings.llm_cache_key()), settings, system, human)
-                set_last_rotation_snapshot(settings.rotation_snapshot())
+                set_last_llm_rotation_snapshot(settings.rotation_snapshot())
                 report_progress_sync(
                     f"Rotation preset succeeded: {settings.preset_name}",
                     {"preset_id": settings.preset_id, "preset_name": settings.preset_name},
@@ -90,10 +86,6 @@ class JsonLLMClient:
 
         errors = []
         candidates = list(get_user_setting_candidates(user_id))
-        last_snapshot = get_last_rotation_snapshot()
-        if last_snapshot and last_snapshot.get("preset_id"):
-            sticky_id = last_snapshot["preset_id"]
-            candidates.sort(key=lambda c: 0 if c.preset_id == sticky_id else 1)
 
         for index, settings in enumerate(candidates, start=1):
             await report_progress(
@@ -102,7 +94,7 @@ class JsonLLMClient:
             )
             try:
                 result = await self._async_invoke_with_settings(_get_chat_llm(settings.llm_cache_key()), settings, system, human)
-                set_last_rotation_snapshot(settings.rotation_snapshot())
+                set_last_llm_rotation_snapshot(settings.rotation_snapshot())
                 await report_progress(
                     f"Rotation preset succeeded: {settings.preset_name}",
                     {"preset_id": settings.preset_id, "preset_name": settings.preset_name},

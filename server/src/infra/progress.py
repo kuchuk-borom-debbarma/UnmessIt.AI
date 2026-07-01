@@ -8,7 +8,8 @@ SyncReporter = Callable[[str, dict[str, Any] | None], None]
 
 _async_reporter: ContextVar[AsyncReporter | None] = ContextVar("async_progress_reporter", default=None)
 _sync_reporter: ContextVar[SyncReporter | None] = ContextVar("sync_progress_reporter", default=None)
-_last_rotation_snapshot: ContextVar[dict[str, Any] | None] = ContextVar("last_rotation_snapshot", default=None)
+_last_llm_rotation_snapshot: ContextVar[dict[str, Any] | None] = ContextVar("last_llm_rotation_snapshot", default=None)
+_last_embedding_rotation_snapshot: ContextVar[dict[str, Any] | None] = ContextVar("last_embedding_rotation_snapshot", default=None)
 
 
 def set_progress_reporters(
@@ -35,9 +36,17 @@ def report_progress_sync(message: str, details: dict[str, Any] | None = None) ->
         reporter(message, details)
 
 
-def set_last_rotation_snapshot(snapshot: dict[str, Any] | None) -> None:
-    _last_rotation_snapshot.set(snapshot)
+def set_last_llm_rotation_snapshot(snapshot: dict[str, Any] | None) -> None:
+    _last_llm_rotation_snapshot.set(snapshot)
 
 
-def get_last_rotation_snapshot() -> dict[str, Any] | None:
-    return _last_rotation_snapshot.get()
+def get_last_llm_rotation_snapshot() -> dict[str, Any] | None:
+    return _last_llm_rotation_snapshot.get()
+
+
+def set_last_embedding_rotation_snapshot(snapshot: dict[str, Any] | None) -> None:
+    _last_embedding_rotation_snapshot.set(snapshot)
+
+
+def get_last_embedding_rotation_snapshot() -> dict[str, Any] | None:
+    return _last_embedding_rotation_snapshot.get()

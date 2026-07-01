@@ -35,10 +35,10 @@ def register_ingest_job_sse_bridge() -> None:
     loop = asyncio.get_running_loop()
 
     def _handler(payload: dict[str, Any]) -> None:
-        loop.call_soon_threadsafe(asyncio.create_task, _publish_job(payload))
+        loop.call_soon_threadsafe(_create_logged_task, _publish_job(payload), "ingest_job_changed")
 
     def _progress_handler(payload: dict[str, Any]) -> None:
-        loop.call_soon_threadsafe(asyncio.create_task, _publish_progress(payload))
+        loop.call_soon_threadsafe(_create_logged_task, _publish_progress(payload), "ingest_job_progress")
 
     get_event_bus().subscribe(JOB_CHANGED_TOPIC, _handler)
     get_event_bus().subscribe(JOB_PROGRESS_TOPIC, _progress_handler)
@@ -77,3 +77,15 @@ async def _publish_progress(payload: dict[str, Any]) -> None:
         "job_progress",
         {"job_id": job_id, "status": job["status"], "stage": job["stage"], "message": message},
     )
+
+
+def _create_logged_task(coro, label: str) -> None:
+    task = asyncio.create_task(coro)
+
+    def _log_failure(done: asyncio.Task) -> None:
+        try:
+            done.result()
+        except Exception as exc:
+            logger.warning("ingest_sse_bridge_task_failed label=%s error=%s", label, exc)
+
+    task.add_done_callback(_log_failure)

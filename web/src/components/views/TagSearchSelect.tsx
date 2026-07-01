@@ -31,7 +31,8 @@ export function TagSearchSelect({ label, mode, value, onChange, condition, onCon
   const inputRef = useRef<HTMLInputElement>(null)
   const observerTarget = useRef<HTMLDivElement>(null)
 
-  const selected = value.split(',').map(s => s.trim()).filter(Boolean)
+  const selected = value.split(',').map(parseSelectedTag).filter(item => item.id)
+  const selectedIds = selected.map(item => item.id)
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -90,16 +91,16 @@ export function TagSearchSelect({ label, mode, value, onChange, condition, onCon
   }, [hasMore, loading])
 
   const handleSelect = (tag: Tag) => {
-    if (!selected.includes(tag.name)) {
-      onChange([...selected, tag.name].join(', '))
+    if (!selectedIds.includes(tag.id)) {
+      onChange([...selected.map(formatSelectedTag), formatSelectedTag(tag)].join(', '))
     }
     setQuery('')
     setIsOpen(false)
     inputRef.current?.focus()
   }
 
-  const handleRemove = (name: string) => {
-    onChange(selected.filter(n => n !== name).join(', '))
+  const handleRemove = (id: string) => {
+    onChange(selected.filter(tag => tag.id !== id).map(formatSelectedTag).join(', '))
   }
 
   const isInclude = mode === 'include'
@@ -166,9 +167,9 @@ export function TagSearchSelect({ label, mode, value, onChange, condition, onCon
         )}
         onClick={() => { setIsOpen(true); inputRef.current?.focus() }}
       >
-        {selected.map(name => (
+        {selected.map(tag => (
           <span
-            key={name}
+            key={tag.id}
             className={cn(
               "inline-flex items-center gap-1 pl-2.5 pr-1.5 py-0.5 rounded-lg text-xs font-medium",
               isInclude
@@ -176,15 +177,15 @@ export function TagSearchSelect({ label, mode, value, onChange, condition, onCon
                 : "bg-rose-500/10 text-rose-300 border border-rose-500/20"
             )}
           >
-            <span className="max-w-[100px] truncate">{name}</span>
+            <span className="max-w-[100px] truncate">{tag.name}</span>
             <button
               type="button"
-              onClick={e => { e.stopPropagation(); handleRemove(name) }}
+              onClick={e => { e.stopPropagation(); handleRemove(tag.id) }}
               className={cn(
                 "flex-shrink-0 rounded-md p-0.5 transition-colors",
                 isInclude ? "hover:bg-violet-500/20" : "hover:bg-rose-500/20"
               )}
-              aria-label={`Remove tag ${name}`}
+              aria-label={`Remove tag ${tag.name}`}
             >
               <X size={10} />
             </button>
@@ -221,7 +222,7 @@ export function TagSearchSelect({ label, mode, value, onChange, condition, onCon
                   type="button"
                   className={cn(
                     "w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors border-b border-border/10 last:border-0",
-                    selected.includes(tag.name)
+                    selectedIds.includes(tag.id)
                       ? isInclude ? "bg-violet-500/10" : "bg-rose-500/10"
                       : "hover:bg-primary-500/8"
                   )}
@@ -229,7 +230,7 @@ export function TagSearchSelect({ label, mode, value, onChange, condition, onCon
                 >
                   <TagIcon size={13} className="shrink-0 text-muted-foreground/60" />
                   <span className="text-sm font-medium text-foreground">{tag.name}</span>
-                  {selected.includes(tag.name) && (
+                  {selectedIds.includes(tag.id) && (
                     <div className={cn("ml-auto shrink-0 w-1.5 h-1.5 rounded-full", isInclude ? "bg-violet-400" : "bg-rose-400")} />
                   )}
                 </button>
@@ -245,4 +246,14 @@ export function TagSearchSelect({ label, mode, value, onChange, condition, onCon
       )}
     </div>
   )
+}
+
+function formatSelectedTag(tag: Pick<Tag, 'id' | 'name'>) {
+  return `${tag.id}|${encodeURIComponent(tag.name)}`
+}
+
+function parseSelectedTag(value: string): Tag {
+  const [id, encodedName] = value.trim().split('|')
+  const name = encodedName ? decodeURIComponent(encodedName) : id
+  return { id: id || '', name: name || id || '' }
 }
