@@ -1,6 +1,6 @@
 # UnmessIt.AI
 
-UnmessIt.AI is a local-first RAG notes app. Save messy notes, organize them with directories and tags, and ask questions backed by source chunks and citations.
+UnmessIt.AI is a RAG notes app that runs locally for now. Save messy notes, organize them with directories and tags, and ask questions backed by source chunks and citations.
 
 ## What It Does
 
@@ -12,9 +12,11 @@ UnmessIt.AI is a local-first RAG notes app. Save messy notes, organize them with
 - Uses Redis in Docker for cross-process events and SSE fanout.
 - Supports ordered OpenAI-compatible config presets for per-job/request failover.
 
-## Quick Start
+## Local Install
 
-Use the installer to run the published Docker images.
+For now, the supported install path is a local Docker install on your machine.
+The installer runs the web app, API server, Redis, SQLite data, and vector data
+locally.
 
 **Mac / Linux**
 
@@ -38,13 +40,36 @@ First run:
 4. Wait for indexing to finish.
 5. Ask a question.
 
-Your data lives in `./data`. Re-running the installer updates images and restarts containers without deleting notes, vectors, or config as long as that folder remains.
+Your data lives in the install folder's `data` directory. Re-running the
+installer updates images and restarts containers without deleting notes,
+vectors, or config as long as that folder remains.
 
 Docker installs run Redis for event delivery and SSE fanout. Manual backend runs can leave `REDIS_URL` unset to use in-memory delivery.
 
 If the UI looks stale after an update, hard refresh the browser (`Cmd+Shift+R` on macOS, `Ctrl+F5` on Windows/Linux). New commits may also take a few minutes to publish as Docker images.
 
-## Docker Options
+## Self-Hosting
+
+You can self-host the same stack anywhere Docker Compose runs. The stack has
+three runtime services:
+
+- `web`: React frontend served by Nginx.
+- `server`: FastAPI backend with SQLite-backed app data and ingest state.
+- `redis`: Redis Streams for durable event delivery and Redis Pub/Sub for SSE fanout.
+
+Use the production compose file:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/staging/docker-compose.prod.yml
+mkdir -p data
+docker compose -f docker-compose.prod.yml up -d --pull always
+```
+
+Set a real secret before exposing the server:
+
+```bash
+JWT_SECRET="$(openssl rand -hex 32)" docker compose -f docker-compose.prod.yml up -d
+```
 
 Use a custom data directory:
 
@@ -67,6 +92,15 @@ For custom domains, set the API and CORS values directly:
 ```bash
 CORS_ORIGINS="https://my-frontend.com" VITE_API_BASE_URL="https://api.my-backend.com" docker compose -f docker-compose.prod.yml up -d
 ```
+
+Keep Redis reachable by the server as `REDIS_URL=redis://redis:6379/0` when
+using the bundled compose network. If you run Redis separately, point
+`REDIS_URL` at that instance.
+
+## Cloud
+
+Managed cloud hosting is future work. Today, use the local installer or
+self-host the Docker Compose stack.
 
 ## Development
 
