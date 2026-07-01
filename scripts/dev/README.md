@@ -22,8 +22,9 @@ These scripts will:
 - Display all backend logs directly in your terminal.
 - Stop both services cleanly when you press `Ctrl+C`.
 
-If `REDIS_URL` is already set, the scripts use it. If Docker is unavailable,
-the backend falls back to in-memory events/SSE.
+If `REDIS_URL` is already set, the scripts use it. Otherwise Redis starts on
+`redis://localhost:6381/0`. Override the port with `UNMESSIT_DEV_REDIS_PORT`.
+If Docker is unavailable, the backend falls back to in-memory events/SSE.
 
 ---
 
