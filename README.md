@@ -71,6 +71,12 @@ Alternatively, you can manually navigate to your installation folder (usually `u
 docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d
 ```
+
+> [!WARNING]
+> **Still seeing the old version after updating?**
+> 1. **Browser Caching:** UnmessIt.AI is a Single Page Application. Your browser will aggressively cache the old code. You **must** perform a Hard Refresh (`Cmd + Shift + R` on Mac, or `Ctrl + F5` on Windows) to see the new UI.
+> 2. **Build Delay:** If you are waiting on a brand new code commit, remember that it takes a few minutes for GitHub Actions to build and publish the new Docker image. If you pull too early, you will just re-download the old image!
+
 > [!NOTE]
 > All of your data is safely stored in the `./data` folder. Updating images or restarting containers will **never** delete your existing notes, vectors, or configuration as long as that folder remains intact.
 
