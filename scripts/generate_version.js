@@ -17,31 +17,21 @@ console.log(`Generating version.json for v${currentVersion}...`)
 const changelogPath = path.join(rootDir, 'CHANGELOG.md')
 const changelogContent = fs.readFileSync(changelogPath, 'utf8')
 
-// 3. Extract the release notes for the current version
-// Matches exactly "## [x.y.z]" or "## x.y.z" optionally followed by dates or text
-const versionRegex = new RegExp(`^##\\s+\\[?${currentVersion}\\]?.*$`, 'm')
-const match = changelogContent.match(versionRegex)
-
-let releaseNotes = ''
-
-if (match && match.index !== undefined) {
-  const startIndex = match.index
-  
-  // Find the start of the NEXT version header, if it exists
-  const nextVersionRegex = /^##\s+\[?\d+\.\d+\.\d+/gm
-  
-  // Move past the current match
-  nextVersionRegex.lastIndex = startIndex + match[0].length
-  
-  const nextMatch = nextVersionRegex.exec(changelogContent)
-  
-  if (nextMatch) {
-    releaseNotes = changelogContent.substring(startIndex, nextMatch.index).trim()
-  } else {
-    // If no next version, take the rest of the file
-    releaseNotes = changelogContent.substring(startIndex).trim()
+// 3. Extract all version sections, newest first.
+const versionHeaderRegex = /^##\s+\[?(\d+\.\d+\.\d+)\]?.*$/gm
+const matches = [...changelogContent.matchAll(versionHeaderRegex)]
+const history = matches.map((match, index) => {
+  const next = matches[index + 1]
+  return {
+    version: match[1],
+    changelog: changelogContent.substring(match.index, next?.index).trim()
   }
-} else {
+})
+
+const currentEntry = history.find((entry) => entry.version === currentVersion)
+let releaseNotes = currentEntry?.changelog || ''
+
+if (!releaseNotes) {
   console.warn(`⚠️ Warning: Could not find release notes for version ${currentVersion} in CHANGELOG.md`)
   releaseNotes = `## UnmessIt.AI ${currentVersion}\n\n*No release notes found in CHANGELOG.md.*`
 }
@@ -49,7 +39,8 @@ if (match && match.index !== undefined) {
 // 4. Write to web/public/version.json
 const outputData = {
   version: currentVersion,
-  changelog: releaseNotes
+  changelog: releaseNotes,
+  history
 }
 
 const outputPath = path.join(webDir, 'public', 'version.json')

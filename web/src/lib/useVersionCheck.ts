@@ -3,6 +3,10 @@ import { useState, useEffect } from 'react'
 export type VersionInfo = {
   version: string
   changelog: string
+  history?: {
+    version: string
+    changelog: string
+  }[]
 }
 
 // Ensure proper semver comparison (e.g. 1.0.1 > 1.0.0)

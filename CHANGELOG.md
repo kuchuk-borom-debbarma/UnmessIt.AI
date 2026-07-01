@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The gate requires `CHANGELOG.md` changes and release notes for the new version.
 - CI regenerates `web/public/version.json` from `web/package.json` and `CHANGELOG.md`.
 - `web/public/version.json` is now generated in CI/build instead of being manually maintained.
+- Release history now includes changelog entries for every version in the frontend metadata.
 - Documented the GitHub branch protection settings needed to block direct commits to `staging`.
 
 ## [0.0.1] - 2026-07-01
