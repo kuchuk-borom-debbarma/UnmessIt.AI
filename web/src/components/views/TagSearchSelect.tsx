@@ -62,7 +62,7 @@ export function TagSearchSelect({ label, mode, value, onChange, condition, onCon
       setLoading(true)
       try {
         const data = await api<{ data: Tag[] }>(
-          `/tags/search?q=${encodeURIComponent(debouncedQuery)}&limit=10&cursor=${cursor}`,
+          `/api/v1/tags/search?q=${encodeURIComponent(debouncedQuery)}&limit=10&cursor=${cursor}`,
           { token }
         )
         if (isMounted) {

@@ -168,7 +168,7 @@ export function SettingsView({ token }: { token: string }) {
       ingest_retry_backoff_seconds: processing.ingest_retry_backoff_seconds,
     }
     try {
-      await api<{ id: string }>(editingId ? `/configs/presets/${editingId}` : '/configs/presets', {
+      await api<{ id: string }>(editingId ? `/api/v1/configs/presets/${editingId}` : '/api/v1/configs/presets', {
         method: editingId ? 'PUT' : 'POST',
         token,
         body: JSON.stringify(payload),
