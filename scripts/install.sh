@@ -49,19 +49,25 @@ SERVER_PORT=2317
 WEB_PORT=2831
 JWT_SECRET=""
 
+# Load existing configuration if it exists to preserve secrets and custom ports across updates
+if [ -f ".env" ]; then
+    echo -e "${YELLOW}Existing .env file found. Loading current configuration...${NC}"
+    export $(grep -v '^#' .env | xargs)
+fi
+
 echo "This installer will set up UnmessIt.AI with standard defaults."
 read -p "Press [Enter] to continue with defaults, or type 'advanced' to customize ports and secrets: " MODE
 
 if [ "$MODE" = "advanced" ]; then
     echo ""
-    read -p "Enter Server Port (default: 2317): " input_sp
-    SERVER_PORT=${input_sp:-2317}
+    read -p "Enter Server Port (default: ${SERVER_PORT}): " input_sp
+    if [ -n "$input_sp" ]; then SERVER_PORT=$input_sp; fi
     
-    read -p "Enter Web Port (default: 2831): " input_wp
-    WEB_PORT=${input_wp:-2831}
+    read -p "Enter Web Port (default: ${WEB_PORT}): " input_wp
+    if [ -n "$input_wp" ]; then WEB_PORT=$input_wp; fi
     
-    read -p "Enter a secure JWT Secret (leave blank to auto-generate): " input_jwt
-    JWT_SECRET=$input_jwt
+    read -p "Enter a secure JWT Secret (leave blank to keep existing or auto-generate): " input_jwt
+    if [ -n "$input_jwt" ]; then JWT_SECRET=$input_jwt; fi
 fi
 
 if [ -z "$JWT_SECRET" ]; then

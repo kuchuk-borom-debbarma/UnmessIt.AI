@@ -34,18 +34,26 @@ $SERVER_PORT = "2317"
 $WEB_PORT = "2831"
 $JWT_SECRET = ""
 
+# Load existing configuration if it exists to preserve secrets and custom ports across updates
+if (Test-Path ".env") {
+    Write-Host "`nExisting .env file found. Loading current configuration..." -ForegroundColor Yellow
+    Get-Content ".env" | Where-Object { $_ -match "^([^#=]+)=(.*)$" } | ForEach-Object {
+        Set-Variable -Name $Matches[1] -Value $Matches[2]
+    }
+}
+
 Write-Host "This installer will set up UnmessIt.AI with standard defaults."
 $MODE = Read-Host "Press [Enter] to continue with defaults, or type 'advanced' to customize ports and secrets"
 
 if ($MODE -eq "advanced") {
     Write-Host ""
-    $input_sp = Read-Host "Enter Server Port (default: 2317)"
+    $input_sp = Read-Host "Enter Server Port (default: $SERVER_PORT)"
     if ($input_sp) { $SERVER_PORT = $input_sp }
 
-    $input_wp = Read-Host "Enter Web Port (default: 2831)"
+    $input_wp = Read-Host "Enter Web Port (default: $WEB_PORT)"
     if ($input_wp) { $WEB_PORT = $input_wp }
 
-    $input_jwt = Read-Host "Enter a secure JWT Secret (leave blank to auto-generate)"
+    $input_jwt = Read-Host "Enter a secure JWT Secret (leave blank to keep existing or auto-generate)"
     if ($input_jwt) { $JWT_SECRET = $input_jwt }
 }
 
