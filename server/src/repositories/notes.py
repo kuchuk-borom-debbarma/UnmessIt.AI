@@ -8,18 +8,19 @@ from src.repositories import directories
 from src.infra.sqlite import get_connection
 
 
-def create(text: str, user_id: str, directory_id: str | None = None, metadata: dict[str, Any] | None = None) -> str:
+def create(text: str, user_id: str, directory_id: str | None = None, metadata: dict[str, Any] | None = None, conn=None) -> str:
     _check_directory(directory_id, user_id)
     note_id = str(uuid4())
-    conn = get_connection()
-    conn.execute(
+    db = conn or get_connection()
+    db.execute(
         """
         INSERT INTO notes (id, text, directory_id, user_id, metadata)
         VALUES (?, ?, ?, ?, ?)
         """,
         (note_id, text, directory_id, user_id, json.dumps(metadata or {}, ensure_ascii=False))
     )
-    conn.commit()
+    if conn is None:
+        db.commit()
     return note_id
 
 
@@ -36,11 +37,11 @@ def get(note_id: str, user_id: str) -> dict[str, Any] | None:
     return _note(row) if row else None
 
 
-def update(note_id: str, text: str, user_id: str, directory_id: str | None = None, metadata: dict[str, Any] | None = None) -> bool:
+def update(note_id: str, text: str, user_id: str, directory_id: str | None = None, metadata: dict[str, Any] | None = None, conn=None) -> bool:
     _check_directory(directory_id, user_id)
-    conn = get_connection()
+    db = conn or get_connection()
     if metadata is not None:
-        cursor = conn.execute(
+        cursor = db.execute(
             """
             UPDATE notes 
             SET text = ?, directory_id = ?, metadata = ?, updated_at = CURRENT_TIMESTAMP
@@ -49,7 +50,7 @@ def update(note_id: str, text: str, user_id: str, directory_id: str | None = Non
             (text, directory_id, json.dumps(metadata, ensure_ascii=False), note_id, user_id)
         )
     else:
-        cursor = conn.execute(
+        cursor = db.execute(
             """
             UPDATE notes 
             SET text = ?, directory_id = ?, updated_at = CURRENT_TIMESTAMP
@@ -57,38 +58,42 @@ def update(note_id: str, text: str, user_id: str, directory_id: str | None = Non
             """,
             (text, directory_id, note_id, user_id)
         )
-    conn.commit()
+    if conn is None:
+        db.commit()
     return cursor.rowcount > 0
 
 
-def delete(note_id: str, user_id: str) -> bool:
+def delete(note_id: str, user_id: str, conn=None) -> bool:
     """Soft delete a note."""
-    conn = get_connection()
-    cursor = conn.execute(
+    db = conn or get_connection()
+    cursor = db.execute(
         "UPDATE notes SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
         (note_id, user_id)
     )
-    conn.commit()
+    if conn is None:
+        db.commit()
     return cursor.rowcount > 0
 
-def hard_delete(note_id: str, user_id: str) -> bool:
+def hard_delete(note_id: str, user_id: str, conn=None) -> bool:
     """Permanently delete a note."""
-    conn = get_connection()
-    cursor = conn.execute(
+    db = conn or get_connection()
+    cursor = db.execute(
         "DELETE FROM notes WHERE id = ? AND user_id = ?",
         (note_id, user_id)
     )
-    conn.commit()
+    if conn is None:
+        db.commit()
     return cursor.rowcount > 0
 
-def restore(note_id: str, user_id: str) -> bool:
+def restore(note_id: str, user_id: str, conn=None) -> bool:
     """Restore a soft-deleted note."""
-    conn = get_connection()
-    cursor = conn.execute(
+    db = conn or get_connection()
+    cursor = db.execute(
         "UPDATE notes SET deleted_at = NULL WHERE id = ? AND user_id = ?",
         (note_id, user_id)
     )
-    conn.commit()
+    if conn is None:
+        db.commit()
     return cursor.rowcount > 0
 
 def list_notes(user_id: str, directory_id: str | None = None, tag_id: str | None = None, include_all: bool = False, page: int = 1, limit: int = 20) -> dict[str, Any]:

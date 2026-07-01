@@ -57,6 +57,33 @@ CREATE TABLE IF NOT EXISTS ingest_checkpoints (
 
 CREATE INDEX IF NOT EXISTS idx_ingest_checkpoints_job_stage ON ingest_checkpoints(job_id, stage, status);
 
+CREATE TABLE IF NOT EXISTS event_outbox (
+    id TEXT PRIMARY KEY,
+    topic TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    payload JSON NOT NULL,
+    idempotency_key TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'published', 'failed')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    published_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_event_outbox_idempotency ON event_outbox(idempotency_key) WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_event_outbox_status_created ON event_outbox(status, created_at);
+
+CREATE TABLE IF NOT EXISTS event_handler_runs (
+    event_id TEXT NOT NULL,
+    handler_name TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('running', 'complete', 'failed')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(event_id, handler_name)
+);
+
 CREATE TABLE IF NOT EXISTS source_chunks (
     id TEXT PRIMARY KEY,
     raw_input_id TEXT NOT NULL,

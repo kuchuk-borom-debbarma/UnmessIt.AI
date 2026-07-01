@@ -1,5 +1,6 @@
 .idea
 *.iml
+.codebase-memory/
 
 # Frontend
 node_modules/
@@ -19,6 +20,7 @@ htmlcov/
 # Virtual environments
 .venv/
 venv/
+*.log
 
 # Local environment and data
 .env
@@ -26,6 +28,7 @@ venv/
 !.env.example
 !**/.env.example
 /data/
+*.log
 *.sqlite
 *.sqlite3
 *.db

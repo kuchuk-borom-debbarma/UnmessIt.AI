@@ -1,66 +1,58 @@
-# Notes Service and Event-Driven Ingestion
+# Notes And Ingestion
 
-The UnmessIt.AI architecture separates the organizational domain (Notes, Directories, Tags) from the intensive AI processing domain (RAG, Source Chunks, Vectors) using an event-driven flow.
+Notes are the user-facing source. RAG is the background index.
 
-## 1. Domain Separation
+## Boundaries
 
-### The Notes Domain (`server/src/services/notes/`)
-This is the user-facing organizational layer. It is responsible for:
-- Storing the exact text content of what the user wrote (`notes` table).
-- Categorizing notes flexibly (`tags` and `note_tags` tables).
-- Organizing notes hierarchically using a Materialized Path pattern for fast subtree queries (`directories` table).
-- Managing note lifecycles with a Soft/Hard Delete Trash system.
+Notes, directories, and tags own organization:
 
-The Notes Service focuses strictly on CRUD operations and organization. It does not perform any LLM calls, chunking, or embedding.
+- `notes`
+- `directories`
+- `tags`
+- `note_tags`
 
-### The RAG Domain (`server/src/services/rag/`)
-This is the background AI processing layer. It is responsible for:
-- Accepting raw text inputs (`raw_inputs`).
-- Chunking, summarizing, and linking (`source_chunks`, `recall_keys`).
-- Embedding text and metadata into the vector database.
+RAG owns retrieval artifacts:
 
-## 2. Event-Driven Flow
+- `raw_inputs`
+- `source_chunks`
+- `recall_keys`
+- `recall_links`
+- Chroma vectors
+- durable ingest jobs and checkpoints
 
-To keep the Notes API responses fast and the bounded contexts decoupled, the two domains communicate via an asynchronous in-memory `EventBus`.
+Notes code does not call LLMs or write vectors directly. It saves user data and emits events. The RAG listener submits durable ingest jobs from those events.
 
-1. **User Action**: The client sends a request to `POST /notes/` with text and optional tags/directory.
-2. **Persistence**: The `NotesService` writes the data to the SQLite `notes` and `note_tags` tables.
-3. **Event Emitted**: The `NotesService` publishes a `note.created` event to the `EventBus`, carrying the `note_id`, `text`, and `user_id`.
-4. **Immediate Response**: The API responds with `200 OK` and the `note_id`.
-5. **Background Listener**: The RAG listener (`server/src/services/rag/private/listener/listener.py`), which subscribed to `note.created` on startup, catches the event.
-6. **Async Ingestion**: The listener spawns an `asyncio.create_task()` background worker that calls `submit_ingest_job(text, user_id, job_id=note_id)`.
-7. **Durable Processing**: The `rag_service` creates a durable ingestion job to process the raw text into source chunks and vectors. (See `RAG_DURABILITY.md` and `SEAI_INDEXING_FLOW.md` for details).
+## Create Flow
 
-## 3. Directory Materialized Paths
-
-To efficiently query entire folder subtrees without expensive recursive SQL queries (CTEs), the `directories` table implements a **Materialized Path** pattern.
-
-- `parent_id`: Points to the immediate parent directory for simple direct-child lookups.
-- `path`: Stores the full breadcrumb path of UUIDs (e.g., `/parent-uuid/child-uuid/`).
-
-To list all descendants of a folder (including sub-folders of sub-folders), the query simply uses `LIKE`:
-```sql
-SELECT * FROM directories WHERE path LIKE '/parent-uuid/%'
+```txt
+POST /notes/
+-> save note, tags, directory id
+-> publish note.created
+-> RAG listener submits durable ingest with job_id=note_id
+-> API response returns before indexing finishes
 ```
-This is heavily optimized by the `idx_directories_path` index.
 
-## 4. Trash System (Soft / Hard Delete)
+`POST /ingest/` still exists for direct raw ingestion. Note-created ingestion uses the same durable pipeline.
 
-To allow users to safely remove notes without immediate catastrophic loss, the Notes Service implements a Trash system:
+## Updates
 
-1. **Soft Delete (`DELETE /notes/{id}`)**: Marks the note with a `deleted_at` timestamp. 
-2. **Event Cascade**: Emits a `note.soft_deleted` event. The RAG listener catches this and synchronously masks the associated `raw_input` in SQLite and drops the vectors from ChromaDB to ensure isolated search contexts.
-3. **Restore (`POST /notes/{id}/restore`)**: Clears the `deleted_at` flag. Emits a `note.restored` event which prompts the RAG layer to instantly push the pre-computed `source_chunks` back into ChromaDB without hitting the LLM again.
-4. **Hard Delete (`DELETE /notes/{id}/hard`)**: Permanently destroys the note from the SQLite database. Emits a `note.hard_deleted` event to cascade the permanent deletion of raw inputs, source chunks, and vectors.
+`PUT /notes/{id}` emits `note.updated`. If text changed, stale raw inputs, source chunks, vectors, checkpoints, and job rows for that note are removed before a new durable job is queued with the same note id.
 
-## 5. Updates
+If only the directory changes, the listener updates `directory_path` metadata for saved source chunks and vectors without re-running LLM work.
 
-When a note is updated (`PUT /notes/{id}`), a `note.updated` event is emitted. The RAG listener catches this and submits the new text using the same `note_id` as the `job_id`. If the text changed, stale raw inputs, source chunks, vectors, checkpoints, and job rows for that note are removed before the new durable job is queued.
+## Deletes
 
-## 6. Directory Movements
+- Soft delete marks the note as deleted, masks the raw input, and removes active vectors.
+- Restore clears deletion state and re-indexes existing chunks into Chroma.
+- Hard delete removes the note and cascades removal of raw inputs, chunks, recall links, vectors, and job state.
 
-When a note is moved to a new directory (i.e. `PUT /notes/{id}` where `directory_id` changes):
-1. A `note.moved` event is emitted carrying the new directory ID.
-2. The RAG listener asynchronously resolves the new directory's materialized path.
-3. It instantly updates the `directory_path` in the SQLite `source_chunks` table.
-4. It efficiently merges the new `directory_path` into the existing vector metadata via Chroma's `collection.update()`, without requiring heavy LLM re-ingestion.
+Recall keys can outlive a deleted note when other chunks still link to them.
+
+## Directories
+
+Directories use a materialized path:
+
+- `parent_id`: immediate parent
+- `path`: full UUID breadcrumb, such as `/parent/child/`
+
+Subtree lookup is a bounded SQLite query over `path`, then retrieval passes matching directory paths into Chroma metadata filters.

@@ -48,6 +48,7 @@ mkdir -p data
 SERVER_PORT=2317
 WEB_PORT=2831
 JWT_SECRET=""
+REDIS_URL="redis://redis:6379/0"
 
 # Load existing configuration if it exists to preserve secrets and custom ports across updates
 if [ -f ".env" ]; then
@@ -89,6 +90,7 @@ SERVER_PORT=${SERVER_PORT}
 WEB_PORT=${WEB_PORT}
 JWT_SECRET=${JWT_SECRET}
 UNMESSIT_DATA_DIR=./data
+REDIS_URL=${REDIS_URL}
 EOL
 
 echo -e "${BLUE}Preparing environment (stopping existing containers if any)...${NC}"

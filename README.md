@@ -1,124 +1,77 @@
-<div align="center">
-  <img src="./resources/logo.svg" alt="UnmessIt.AI Logo" width="120" />
-</div>
-
 # UnmessIt.AI
 
-UnmessIt.AI is your Personal RAG AI. It turns your messy, scattered notes into a reliable knowledge engine. 
+UnmessIt.AI is a local-first RAG notes app. Save messy notes, organize them with directories and tags, and ask questions backed by source chunks and citations.
 
-Stop digging through folders to find what you wrote weeks ago. Just dump your notes, organize them how you like, and ask natural-language questions. UnmessIt uses Retrieval-Augmented Generation (RAG) to instantly synthesize exact answers directly from your notes. You can restrict the AI's search to specific directories, or ask across everything—fully backed by citations you can trust.
+## What It Does
 
-## Major Features
+- Stores notes, nested directories, tags, user config, and durable ingest state in SQLite.
+- Builds source chunks, recall keys, recall links, and Chroma vectors from saved notes.
+- Answers questions from source chunks only, with citations and retrieval traces.
+- Lets retrieval include or exclude directory subtrees.
+- Runs ingest as durable background jobs that can retry, pause, resume, and survive restarts.
+- Uses Redis in Docker for cross-process events and SSE fanout.
+- Supports ordered OpenAI-compatible config presets for per-job/request failover.
 
-- **Multi-Hop Reasoning**: Ask complex questions. The engine traverses your cross-linked notes to piece together facts scattered across multiple documents.
-- **Verifiable Truth**: No AI hallucinations. Every answer includes the exact source chunks and a full retrieval trace so you know exactly where the information came from.
-- **Cross-Domain Filtering**: Granular control to filter your AI searches by specific directories. Query within or exclude entire subtrees, perfectly matching your organizational hierarchy.
-- **Always Up to Date**: Live, event-driven ingest means new notes are indexed as soon as you save them. No waiting for batch jobs to run.
-- **Flexible Organization**: Structure your knowledge your way. We don't force a new system—use unlimited nested directories and flexible tags to keep things organized.
+## Quick Start
 
-- **Tag Filtering**: Apply granular filtering to your AI searches using specific tags across your entire workspace.
-
-## Minor Features
-
-- **AI Configuration**: Keep chunking and embedding settings stable while rotating ordered API lanes for per-job failover.
-- **Transparent Indexing**: Track the indexing progress of every note in real-time. See exactly when jobs are queued, running, or failed.
-- **Durable Execution**: Long-running indexing jobs are checkpointed in SQLite, so they can gracefully pause and resume if an API provider times out.
-- **Memory Inspection**: View exact source chunks and recall links generated from your notes to understand how the AI sees your data.
-
-## Next Up
-
-- **Custom Knowledge Connections**: Teach the AI by manually linking notes, entities, or concepts together, overriding or extending the automated knowledge graph.
-- **Conversation History**: Add chat history for multi-turn conversations.
-
-## Far Far in the Future
-
-- **Cloud Platform**: A fully hosted cloud version of UnmessIt.AI for zero-setup, ubiquitous access to your knowledge base.
-
----
-
-## Fast Start (Local Run)
-
-The easiest way to run UnmessIt.AI is using our pre-built Docker images. You don't need to build anything from source! Just open your terminal or command prompt, copy the command for your operating system, and hit enter to launch the interactive setup wizard.
+Use the installer to run the published Docker images.
 
 **Mac / Linux**
+
 ```bash
 bash <(curl -s https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/staging/scripts/install.sh)
 ```
 
-**Windows (PowerShell)**
+**Windows PowerShell**
+
 ```powershell
 iwr -useb https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/staging/scripts/install.ps1 | iex
 ```
 
-Open your browser to:
-```txt
-http://localhost:2831
-```
+Open `http://localhost:2831`.
+
+First run:
 
 1. Sign up for a local account.
-2. Open **Settings** and create one OpenAI config preset.
-3. Create a note.
-4. Wait for it to index.
-5. Filter the AI search scope to specific directories (optional).
-6. Ask a question!
+2. Create an OpenAI-compatible config preset in Settings.
+3. Create notes.
+4. Wait for indexing to finish.
+5. Ask a question.
 
-### Updating to Latest
+Your data lives in `./data`. Re-running the installer updates images and restarts containers without deleting notes, vectors, or config as long as that folder remains.
 
-To get the latest updates, simply re-run the installation command for your operating system from the **Fast Start** section above. The script automatically handles pulling the newest images and cleanly restarting your containers to ensure you are always on the latest version.
+Docker installs run Redis for event delivery and SSE fanout. Manual backend runs can leave `REDIS_URL` unset to use in-memory delivery.
 
-> [!WARNING]
-> **Still seeing the old version after updating?**
-> 1. **Browser Caching:** UnmessIt.AI is a Single Page Application. Your browser will aggressively cache the old code. You **must** perform a Hard Refresh (`Cmd + Shift + R` on Mac, or `Ctrl + F5` on Windows) to see the new UI.
-> 2. **Build Delay:** If you are waiting on a brand new code commit, remember that it takes a few minutes for GitHub Actions to build and publish the new Docker image. If you pull too early, you will just re-download the old image!
+If the UI looks stale after an update, hard refresh the browser (`Cmd+Shift+R` on macOS, `Ctrl+F5` on Windows/Linux). New commits may also take a few minutes to publish as Docker images.
 
-> [!NOTE]
-> All of your data is safely stored in the `./data` folder. Updating images or restarting containers will **never** delete your existing notes, vectors, or configuration as long as that folder remains intact.
+## Docker Options
 
-### Fast Local Updates (Building From Source)
+Use a custom data directory:
 
-If you have cloned the repository locally and don't want to wait for the remote GitHub Actions to build new images, you can utilize your machine's local Docker layer caching to rebuild and apply code updates in seconds:
-
-```bash
-# 1. Pull the latest code
-git pull origin staging # or main
-
-# 2. Build production images locally (utilizes caching for blazing fast builds)
-docker compose build
-
-# 3. Restart the containers with the newly built code
-docker compose up -d
-```
-> [!TIP]
-> The `docker-compose.yml` file is perfectly optimized for layer caching. Unless you modify `package.json` or `pyproject.toml`, Docker will skip the heavy dependency installation steps and only rebuild your code changes. Your existing data in the `./data` volume remains completely untouched and safe during this process.
-
-### Custom Configuration
-
-Docker stores your SQLite database and Chroma vectors in a normal folder beside the compose file:
-```txt
-./data
-```
-To put data somewhere else, set `UNMESSIT_DATA_DIR` to any host path:
 ```bash
 UNMESSIT_DATA_DIR="$HOME/unmessit-ai/data" docker compose -f docker-compose.prod.yml up -d
 ```
 
-*(Optional)* You can customize the server and web ports by setting the `SERVER_PORT` and `WEB_PORT` environment variables. They work out of the box and automatically configure CORS and API URLs:
+Use custom ports:
+
 ```bash
 SERVER_PORT=8080 WEB_PORT=3000 docker compose -f docker-compose.prod.yml up -d
 ```
-*(If you changed `WEB_PORT`, go to `http://localhost:<WEB_PORT>` instead)*
 
-Docker publishes both the web app and API on `0.0.0.0`, so another device can use `http://<host-ip>:<WEB_PORT>`. The Docker web image proxies API calls to the server container, so remote browsers do not need `localhost:2317` baked into the frontend.
+The Docker web container proxies `/api` to the server, so remote browsers can use `http://<host-ip>:<WEB_PORT>` without a baked-in localhost API URL.
 
-If a config preset points at a host-local OpenAI-compatible server such as LM Studio, Docker automatically rewrites loopback base URLs like `http://127.0.0.1:1234/v1` or `http://localhost:1234/v1` to `http://host.docker.internal:1234/v1` at runtime. See [Docker Networking](./server/docs/DOCKER_NETWORKING.md) for details.
+For host-local model servers such as LM Studio, Docker rewrites loopback preset URLs like `http://127.0.0.1:1234/v1` to `http://host.docker.internal:1234/v1`. See [Docker Networking](./server/docs/DOCKER_NETWORKING.md).
 
-If you are deploying to a specific domain or need advanced networking configuration, you can also manually override `VITE_API_BASE_URL` and `CORS_ORIGINS` directly:
+For custom domains, set the API and CORS values directly:
+
 ```bash
 CORS_ORIGINS="https://my-frontend.com" VITE_API_BASE_URL="https://api.my-backend.com" docker compose -f docker-compose.prod.yml up -d
 ```
-## Manual Development
 
-Backend (FastAPI):
+## Development
+
+Backend:
+
 ```bash
 cd server
 cp .env.example .env
@@ -126,11 +79,26 @@ uv sync
 uv run python -m src.main
 ```
 
-Frontend (React/Vite):
+Set `REDIS_URL=redis://localhost:6379/0` for manual multi-process event/SSE testing. Leave it unset for simple local development.
+
+Frontend:
+
 ```bash
 cd web
 npm install
 npm run dev -- --host 127.0.0.1
 ```
 
-For detailed API documentation and runtime configuration, refer to the [Current State](./current-state.md) and technical docs in `server/docs/`.
+Build local Docker images:
+
+```bash
+git pull origin staging
+docker compose build
+docker compose up -d
+```
+
+## Docs
+
+- [Current State](./current-state.md)
+- [Server docs](./server/docs/)
+- [Codebase rules](./server/docs/rules/codebase_rules.md)

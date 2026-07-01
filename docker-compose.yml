@@ -10,6 +10,9 @@ services:
       ENABLE_DEV_ROUTES: ${ENABLE_DEV_ROUTES:-0}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       UNMESSIT_DOCKER: "1"
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      - redis
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -27,3 +30,11 @@ services:
       - server
     volumes:
       - /etc/localtime:/etc/localtime:ro
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:

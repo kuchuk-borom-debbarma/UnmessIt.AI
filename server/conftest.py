@@ -12,7 +12,6 @@ os.environ["UNMESSIT_DATA_DIR"] = str(temp_path)
 
 # Now we can safely import our app modules
 import src.infra.sqlite
-import src.infra.chroma
 
 @pytest.fixture(autouse=True, scope="session")
 def setup_test_db():
