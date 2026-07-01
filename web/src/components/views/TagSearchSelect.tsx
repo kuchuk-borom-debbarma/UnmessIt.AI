@@ -236,7 +236,7 @@ export function TagSearchSelect({ label, mode, value, onChange, condition, onCon
                   className={cn(
                     "w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors border-b border-border/10 last:border-0 hover:bg-primary-500/8 text-primary-500 font-medium"
                   )}
-                  onClick={() => handleSelect({ id: '', name: query.trim() })}
+                  onClick={() => handleSelect({ id: `__new_${Date.now()}_${Math.random()}`, name: query.trim() })}
                 >
                   <Plus size={13} className="shrink-0" />
                   <span>Create tag <span className="font-bold">"{query.trim()}"</span></span>
