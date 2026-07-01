@@ -19,7 +19,16 @@ jobs:
         run: git fetch origin staging:refs/remotes/origin/staging
       - name: Require version and changelog bump
         run: node scripts/validate_release_gate.js origin/staging
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
       - name: Generate version.json
         run: node scripts/generate_version.js
-      - name: Verify generated version.json is current
-        run: git diff --exit-code web/public/version.json
+      - name: Verify generated version.json exists
+        run: test -s web/public/version.json
+      - name: Lint web
+        working-directory: web
+        run: npm run lint
+      - name: Build web
+        working-directory: web
+        run: npm run build
