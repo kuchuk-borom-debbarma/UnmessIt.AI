@@ -37,7 +37,7 @@ export function NoteDetailView({ token }: { token: string }) {
     return () => observer.disconnect()
   }, [note, isEditing])
 
-  const CHUNK_HEIGHT = 200
+  const CHUNK_HEIGHT = 400
   const currentMaxHeight = (expandLevel + 1) * CHUNK_HEIGHT
 
   const [editTagsVal, setEditTagsVal] = useState('')

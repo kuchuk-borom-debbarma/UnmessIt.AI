@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Indexing jobs now sort by actionability: running jobs first, then queued/retry, failed/paused/stopped work, and completed jobs last.
 - The app shell now shows the current signed-in user and a direct release history entry point.
 - Release history now has a cleaner version timeline in the frontend modal.
+- Note detail expand/collapse now reveals 400px per step instead of 200px.
 
 ### Fixed
 - Removed the misleading in-app update/reload button; update detection now points users to the GitHub repository instead of pretending to install updates.
