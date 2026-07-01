@@ -62,15 +62,34 @@ http://localhost:2831
 5. Filter the AI search scope to specific directories (optional).
 6. Ask a question!
 
-### Updating to Latest
+### Updating to Latest (Remote Images)
 
-To get the latest updates, simply re-run the same installation command for your operating system from the **Fast Start** section above. It will automatically pull the newest images and restart the containers without losing any of your data.
+To get the latest updates via our pre-built remote images, simply re-run the same installation command for your operating system from the **Fast Start** section above. It will automatically pull the newest images and restart the containers.
 
 Alternatively, you can manually navigate to your installation folder (usually `unmessit-ai`) and run:
 ```bash
 docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d
 ```
+> [!NOTE]
+> All of your data is safely stored in the `./data` folder. Updating images or restarting containers will **never** delete your existing notes, vectors, or configuration as long as that folder remains intact.
+
+### Fast Local Updates (Building From Source)
+
+If you have cloned the repository locally and don't want to wait for the remote GitHub Actions to build new images, you can utilize your machine's local Docker layer caching to rebuild and apply code updates in seconds:
+
+```bash
+# 1. Pull the latest code
+git pull origin staging # or main
+
+# 2. Build production images locally (utilizes caching for blazing fast builds)
+docker compose build
+
+# 3. Restart the containers with the newly built code
+docker compose up -d
+```
+> [!TIP]
+> The `docker-compose.yml` file is perfectly optimized for layer caching. Unless you modify `package.json` or `pyproject.toml`, Docker will skip the heavy dependency installation steps and only rebuild your code changes. Your existing data in the `./data` volume remains completely untouched and safe during this process.
 
 ### Custom Configuration
 
