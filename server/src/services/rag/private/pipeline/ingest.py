@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections import defaultdict
 from functools import lru_cache
 from uuid import uuid4
 
@@ -14,6 +16,8 @@ from src.services.rag.private.chains.source_windows import SourceWindowChain
 from src.services.rag.private.durability import DurableIngest
 
 logger = logging.getLogger(__name__)
+
+_submit_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 
 @lru_cache(maxsize=1)
@@ -32,9 +36,11 @@ def get_durable_ingest() -> DurableIngest:
 async def submit_ingest_job(data: str, user_id: str, job_id: str | None = None) -> IngestResult:
     """Submit durable ingestion and return the durable job result."""
     job_id = job_id or str(uuid4())
-    durability = get_durable_ingest()
+    lock = _submit_locks[job_id]
     
-    job = await durability.submit(data, user_id, job_id)
+    async with lock:
+        durability = get_durable_ingest()
+        job = await durability.submit(data, user_id, job_id)
     return {
         "job_id": job["id"],
         "status": job["status"],
