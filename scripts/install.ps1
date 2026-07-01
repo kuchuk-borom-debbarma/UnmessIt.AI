@@ -68,6 +68,9 @@ JWT_SECRET=$JWT_SECRET
 UNMESSIT_DATA_DIR=./data
 "@ | Out-File -Encoding UTF8 -FilePath ".env"
 
+Write-Host "`nPreparing environment (stopping existing containers if any)..." -ForegroundColor Blue
+try { docker compose -f docker-compose.prod.yml down 2>$null } catch {}
+
 Write-Host "`nStarting UnmessIt.AI in the background..." -ForegroundColor Blue
 docker compose -f docker-compose.prod.yml up -d --pull always
 

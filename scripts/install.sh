@@ -85,6 +85,9 @@ JWT_SECRET=${JWT_SECRET}
 UNMESSIT_DATA_DIR=./data
 EOL
 
+echo -e "${BLUE}Preparing environment (stopping existing containers if any)...${NC}"
+docker compose -f docker-compose.prod.yml down || true
+
 echo -e "${BLUE}Starting UnmessIt.AI in the background...${NC}"
 docker compose -f docker-compose.prod.yml up -d --pull always
 
