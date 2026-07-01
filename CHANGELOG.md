@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The app shell now shows the current signed-in user and a direct release history entry point.
 - Release history now has a cleaner version timeline in the frontend modal.
 
+### Fixed
+- Hardened `scripts/dev/run.sh` so it checks ports, starts/waits for Redis, captures frontend logs, and cleans up child processes when either service exits.
+- Redis stream workers now back off quietly while Redis is unavailable and keep outbox events pending instead of marking them failed for connection errors.
+
 ## [0.0.2] - 2026-07-02
 
 ### Added

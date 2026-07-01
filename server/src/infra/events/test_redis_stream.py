@@ -84,6 +84,28 @@ async def test_dispatch_loop_marks_failed_when_xadd_fails(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dispatch_loop_keeps_pending_when_redis_connection_fails(monkeypatch):
+    bus = RedisStreamEventBus()
+    failed = []
+
+    class FakeClient:
+        async def xadd(self, *args, **kwargs):
+            raise redis_stream.RedisConnectionError("Connection refused")
+
+    async def fake_sleep(_seconds):
+        bus._stopped.set()
+
+    monkeypatch.setattr(redis_stream, "get_redis", lambda: FakeClient())
+    monkeypatch.setattr(redis_stream.event_outbox, "pending", lambda _limit: [{"id": "event-1", "topic": "topic", "event_type": "topic", "payload": {}}])
+    monkeypatch.setattr(redis_stream.event_outbox, "mark_failed", lambda event_id: failed.append(event_id))
+    monkeypatch.setattr(redis_stream.asyncio, "sleep", fake_sleep)
+
+    await bus._dispatch_loop()
+
+    assert failed == []
+
+
+@pytest.mark.asyncio
 async def test_consume_loop_waits_when_redis_is_unavailable(monkeypatch):
     bus = RedisStreamEventBus()
     monkeypatch.setattr(redis_stream, "get_redis", lambda: None)
@@ -91,6 +113,23 @@ async def test_consume_loop_waits_when_redis_is_unavailable(monkeypatch):
     async def fake_sleep(_seconds):
         bus._stopped.set()
 
+    monkeypatch.setattr(redis_stream.asyncio, "sleep", fake_sleep)
+
+    await bus._consume_loop()
+
+
+@pytest.mark.asyncio
+async def test_consume_loop_backs_off_when_redis_connection_fails(monkeypatch):
+    bus = RedisStreamEventBus()
+    monkeypatch.setattr(redis_stream, "get_redis", lambda: object())
+
+    async def fail_with_connection_error(_client):
+        raise redis_stream.RedisConnectionError("Connection refused")
+
+    async def fake_sleep(_seconds):
+        bus._stopped.set()
+
+    monkeypatch.setattr(bus, "_consume_messages", fail_with_connection_error)
     monkeypatch.setattr(redis_stream.asyncio, "sleep", fake_sleep)
 
     await bus._consume_loop()

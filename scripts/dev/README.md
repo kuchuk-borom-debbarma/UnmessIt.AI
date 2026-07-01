@@ -34,6 +34,7 @@ These scripts will:
 - Start the Uvicorn backend on `http://localhost:2317`.
 - Start a local Redis container for Redis Streams/SSE when Docker is available.
 - Display all backend logs directly in your terminal.
+- Write frontend logs to `.dev-logs/web.log`.
 - Stop both services cleanly when you press `Ctrl+C`.
 
 If `REDIS_URL` is already set, the scripts use it. Otherwise Redis starts on

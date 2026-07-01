@@ -7,9 +7,14 @@ import socket
 from typing import Any, Callable
 
 try:
-    from redis.exceptions import ResponseError
+    from redis.exceptions import ConnectionError as RedisConnectionError
+    from redis.exceptions import ResponseError, TimeoutError
 except ModuleNotFoundError:  # pragma: no cover - import guard before uv sync
     class ResponseError(Exception):
+        pass
+    class RedisConnectionError(Exception):
+        pass
+    class TimeoutError(Exception):
         pass
 
 from src.infra.redis import get_redis
@@ -48,7 +53,10 @@ class RedisStreamEventBus(EventBus):
         client = get_redis()
         if client is None:
             return
-        await _ensure_group(client)
+        try:
+            await _ensure_group(client)
+        except (RedisConnectionError, TimeoutError, OSError):
+            logger.debug("redis_stream_start_waiting_for_redis")
         self._tasks = [
             asyncio.create_task(self._dispatch_loop(), name="redis-outbox-dispatcher"),
             asyncio.create_task(self._consume_loop(), name="redis-stream-consumer"),
@@ -80,6 +88,10 @@ class RedisStreamEventBus(EventBus):
                     )
                     await asyncio.to_thread(event_outbox.mark_published, event["id"])
                 except Exception as exc:
+                    if _is_redis_connection_error(exc):
+                        logger.debug("event_outbox_publish_waiting_for_redis error=%s", exc)
+                        await asyncio.sleep(5)
+                        break
                     await asyncio.to_thread(event_outbox.mark_failed, event["id"])
                     logger.warning("event_outbox_publish_failed event_id=%s error=%s", event["id"], exc)
                     break
@@ -102,6 +114,9 @@ class RedisStreamEventBus(EventBus):
                     continue
                 logger.warning("redis_stream_consume_failed error=%s", exc)
                 await asyncio.sleep(1)
+            except (RedisConnectionError, TimeoutError, OSError) as exc:
+                logger.debug("redis_stream_waiting_for_redis error=%s", exc)
+                await asyncio.sleep(5)
             except Exception as exc:
                 logger.warning("redis_stream_consume_failed error=%s", exc)
                 await asyncio.sleep(1)
@@ -165,6 +180,10 @@ def _handler_name(handler: Callable[[dict[str, Any]], None]) -> str:
 
 def _is_nogroup(exc: ResponseError) -> bool:
     return "NOGROUP" in str(exc)
+
+
+def _is_redis_connection_error(exc: Exception) -> bool:
+    return isinstance(exc, (RedisConnectionError, TimeoutError, OSError)) or "Connection refused" in str(exc)
 
 
 def _idempotency_key(topic: str, payload: dict[str, Any]) -> str | None:
