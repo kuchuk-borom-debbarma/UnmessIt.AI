@@ -65,6 +65,9 @@ jobs:
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.REPO_OWNER }}/unmessitai-server:buildcache
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.REPO_OWNER }}/unmessitai-server:buildcache,mode=max
 
+      - name: Generate version.json for Web
+        run: node scripts/generate_version.js
+
       - name: Build and push Web image
         uses: docker/build-push-action@v5
         with:

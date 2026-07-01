@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "prebuild": "node ../scripts/generate_version.js",
+    "prebuild": "node ../scripts/generate_version.js || echo 'Skipping version generation'",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview"
