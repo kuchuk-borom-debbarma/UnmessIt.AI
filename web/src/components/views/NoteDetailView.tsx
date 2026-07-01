@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Tag, RefreshCw, Trash2, FolderOpen, BrainCircuit } from 'lucide-react'
+import { ArrowLeft, Tag, RefreshCw, Trash2, FolderOpen, BrainCircuit, Edit2, Save, X, ChevronDown, ChevronUp } from 'lucide-react'
 import { api, type Note, type Directory } from '../../lib/api'
 import { motion } from 'framer-motion'
-
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { TagSearchSelect } from './TagSearchSelect'
+import rehypeRaw from 'rehype-raw'
 export function NoteDetailView({ token }: { token: string }) {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -13,17 +16,44 @@ export function NoteDetailView({ token }: { token: string }) {
   const [loading, setLoading] = useState(true)
   const [searchParams] = useSearchParams()
 
+  const [isEditing, setIsEditing] = useState(false)
+  const [editText, setEditText] = useState('')
+
+  const [expandLevel, setExpandLevel] = useState(0)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [contentHeight, setContentHeight] = useState(0)
+  
+  useEffect(() => {
+    if (!contentRef.current) return
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContentHeight(entry.target.scrollHeight)
+      }
+    })
+    observer.observe(contentRef.current)
+    // Initial measurement
+    setContentHeight(contentRef.current.scrollHeight)
+    
+    return () => observer.disconnect()
+  }, [note, isEditing])
+
+  const CHUNK_HEIGHT = 400
+  const currentMaxHeight = (expandLevel + 1) * CHUNK_HEIGHT
+
+  const [editTagsVal, setEditTagsVal] = useState('')
+
   const highlightStart = parseInt(searchParams.get('start') || '-1', 10)
   const highlightEnd = parseInt(searchParams.get('end') || '-1', 10)
 
   const load = useCallback(async () => {
     if (!id) return
     try {
-      const { data } = await api<{ data: Note }>(`/notes/${id}`, { token })
+      const { data } = await api<{ data: Note }>(`/api/v1/notes/${id}`, { token })
       setNote(data)
+      setEditText(data.text)
       
       if (data.directory_id) {
-        const { data: dirs } = await api<{ data: Directory[] }>('/directories/', { token })
+        const { data: dirs } = await api<{ data: Directory[] }>('/api/v1/directories/', { token })
         const found = dirs.find(d => d.id === data.directory_id)
         if (found) setDirectory(found)
       }
@@ -53,12 +83,32 @@ export function NoteDetailView({ token }: { token: string }) {
 
   const renderNoteText = () => {
     if (!note) return null
+    
+    const isMarkdown = note.metadata?.extension === 'md' || note.metadata?.extension === 'markdown'
+    
+    if (isMarkdown) {
+      let content = note.text
+      if (highlightStart >= 0 && highlightEnd > highlightStart && highlightEnd <= note.text.length) {
+        const before = note.text.slice(0, highlightStart)
+        const highlight = note.text.slice(highlightStart, highlightEnd)
+        const after = note.text.slice(highlightEnd)
+        content = `${before}<mark id="citation-highlight" class="bg-primary-500/30 text-foreground rounded px-1 py-0.5 transition-colors duration-1000">${highlight}</mark>${after}`
+      }
+      return (
+        <div className="prose dark:prose-invert max-w-none prose-pre:bg-input/50 prose-pre:border prose-pre:border-border/50">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+            {content}
+          </ReactMarkdown>
+        </div>
+      )
+    }
+
     if (highlightStart >= 0 && highlightEnd > highlightStart && highlightEnd <= note.text.length) {
       const before = note.text.slice(0, highlightStart)
       const highlight = note.text.slice(highlightStart, highlightEnd)
       const after = note.text.slice(highlightEnd)
       return (
-        <>
+        <div className="whitespace-pre-wrap">
           {before}
           <mark 
             id="citation-highlight" 
@@ -67,10 +117,37 @@ export function NoteDetailView({ token }: { token: string }) {
             {highlight}
           </mark>
           {after}
-        </>
+        </div>
       )
     }
-    return note.text
+    return <div className="whitespace-pre-wrap">{note.text}</div>
+  }
+
+  const handleSave = async () => {
+    if (!note || !editText.trim()) return
+    
+    const tagNames = editTagsVal.split(',').filter(Boolean).map(v => {
+      const parts = v.trim().split('|')
+      const name = parts[1] ? decodeURIComponent(parts[1]) : parts[0]
+      return name
+    })
+
+    try {
+      await api(`/api/v1/notes/${note.id}`, {
+        method: 'PUT',
+        token,
+        body: JSON.stringify({
+          text: editText,
+          tags: tagNames,
+          directory_id: note.directory_id
+        })
+      })
+
+      setIsEditing(false)
+      load()
+    } catch (err: any) {
+      alert(err.message || 'Failed to update note')
+    }
   }
 
   if (loading) {
@@ -118,30 +195,116 @@ export function NoteDetailView({ token }: { token: string }) {
             {directory?.name || 'Root'}
           </div>
           <div className="flex items-center gap-3">
-            <button 
-              className="flex items-center gap-2 h-10 px-4 rounded-lg bg-accent-500/10 text-accent-500 hover:bg-accent-500 hover:text-white transition-colors text-sm font-bold"
-              onClick={() => navigate(`/notes/${note.id}/insights`)}
-            >
-              <BrainCircuit size={16} /> Insights
-            </button>
-            <button 
-              className="flex items-center gap-2 h-10 px-4 rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-colors text-sm font-bold"
-              onClick={async () => {
-                if (confirm('Delete this note?')) {
-                  await api(`/notes/${note.id}`, { method: 'DELETE', token })
-                  navigate('/notes')
-                }
-              }}
-            >
-              <Trash2 size={16} /> Delete Note
-            </button>
+            {isEditing ? (
+              <>
+                <button 
+                  className="flex items-center gap-2 h-10 px-4 rounded-lg bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/20 transition-colors text-sm font-bold"
+                  onClick={() => {
+                    setEditText(note.text)
+                    setIsEditing(false)
+                  }}
+                >
+                  <X size={16} /> Cancel
+                </button>
+                <button 
+                  className="flex items-center gap-2 h-10 px-4 rounded-lg bg-primary-500 text-white hover:bg-primary-600 transition-colors text-sm font-bold"
+                  onClick={handleSave}
+                >
+                  <Save size={16} /> Save Changes
+                </button>
+              </>
+            ) : (
+              <>
+                <button 
+                  className="flex items-center gap-2 h-10 px-4 rounded-lg bg-primary-500/10 text-primary-500 hover:bg-primary-500 hover:text-white transition-colors text-sm font-bold"
+                  onClick={() => {
+                    setEditText(note.text)
+                    setEditTagsVal(note.tags.map(t => `${t.id}|${encodeURIComponent(t.name)}`).join(', '))
+                    setIsEditing(true)
+                  }}
+                >
+                  <Edit2 size={16} /> Edit Note
+                </button>
+                <button 
+                  className="flex items-center gap-2 h-10 px-4 rounded-lg bg-accent-500/10 text-accent-500 hover:bg-accent-500 hover:text-white transition-colors text-sm font-bold"
+                  onClick={() => navigate(`/notes/${note.id}/insights`)}
+                >
+                  <BrainCircuit size={16} /> Insights
+                </button>
+                <button 
+                  className="flex items-center gap-2 h-10 px-4 rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-colors text-sm font-bold"
+                  onClick={async () => {
+                    if (confirm('Delete this note?')) {
+                      await api(`/api/v1/notes/${note.id}`, { method: 'DELETE', token })
+                      navigate('/notes')
+                    }
+                  }}
+                >
+                  <Trash2 size={16} /> Delete Note
+                </button>
+              </>
+            )}
           </div>
         </div>
 
         <div className="prose prose-lg dark:prose-invert max-w-none">
-          <div className="text-lg leading-8 text-foreground/90 whitespace-pre-wrap">
-            {renderNoteText()}
-          </div>
+          {isEditing ? (
+            <>
+              <div className="mb-4">
+                <TagSearchSelect 
+                  label="Tags" 
+                  mode="include" 
+                  value={editTagsVal} 
+                  onChange={setEditTagsVal} 
+                  token={token} 
+                  allowCreate={true}
+                />
+              </div>
+              <textarea
+                autoFocus
+                className="w-full min-h-[300px] bg-transparent border border-border/50 rounded-xl p-4 text-lg leading-8 text-foreground/90 focus:ring-2 focus:ring-primary-500/50 outline-none resize-y"
+                value={editText}
+                onChange={e => setEditText(e.target.value)}
+              />
+            </>
+          ) : (
+            <div className="bg-card/40 backdrop-blur-sm border border-border/50 rounded-xl shadow-sm overflow-hidden flex flex-col">
+              <div 
+                className="relative transition-all duration-500 ease-in-out w-full overflow-hidden"
+                style={{ maxHeight: currentMaxHeight }}
+              >
+                <div ref={contentRef} className="p-6 overflow-x-auto">
+                  {renderNoteText()}
+                </div>
+                {contentHeight > currentMaxHeight && (
+                  <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-card to-transparent pointer-events-none" />
+                )}
+              </div>
+              
+              {(contentHeight > currentMaxHeight || expandLevel > 0) && (
+                <div className="flex items-center justify-center gap-4 py-3 bg-card/80 backdrop-blur-md border-t border-border/50">
+                  {expandLevel > 0 && (
+                    <button 
+                      className="flex items-center justify-center w-10 h-10 rounded-full bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/20 hover:text-foreground transition-all"
+                      onClick={() => setExpandLevel(prev => Math.max(0, prev - 1))}
+                      title="Shrink"
+                    >
+                      <ChevronUp size={20} />
+                    </button>
+                  )}
+                  {contentHeight > currentMaxHeight && (
+                    <button 
+                      className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-500/10 text-primary-500 hover:bg-primary-500 hover:text-white transition-all shadow-[0_0_15px_rgba(var(--primary-500),0.1)]"
+                      onClick={() => setExpandLevel(prev => prev + 1)}
+                      title="Expand"
+                    >
+                      <ChevronDown size={20} />
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="mt-12 pt-6 border-t border-border/50 flex flex-wrap items-center justify-between gap-4 text-sm text-muted-foreground font-semibold">

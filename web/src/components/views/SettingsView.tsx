@@ -112,9 +112,9 @@ export function SettingsView({ token }: { token: string }) {
   const load = useCallback(async () => {
     try {
       const [presetData, processingData, rotationData] = await Promise.all([
-        api<Preset[]>('/configs/presets', { token }),
-        api<ProcessingSettings>('/configs/processing', { token }),
-        api<RotationConfig>('/configs/rotation', { token }),
+        api<Preset[]>('/api/v1/configs/presets', { token }),
+        api<ProcessingSettings>('/api/v1/configs/processing', { token }),
+        api<RotationConfig>('/api/v1/configs/rotation', { token }),
       ])
       setPresets(presetData)
       setProcessing(processingData)
@@ -168,7 +168,7 @@ export function SettingsView({ token }: { token: string }) {
       ingest_retry_backoff_seconds: processing.ingest_retry_backoff_seconds,
     }
     try {
-      await api<{ id: string }>(editingId ? `/configs/presets/${editingId}` : '/configs/presets', {
+      await api<{ id: string }>(editingId ? `/api/v1/configs/presets/${editingId}` : '/api/v1/configs/presets', {
         method: editingId ? 'PUT' : 'POST',
         token,
         body: JSON.stringify(payload),
@@ -184,9 +184,9 @@ export function SettingsView({ token }: { token: string }) {
   }
 
   const setActive = async (presetId: string) => {
-    await api(`/configs/presets/${presetId}/activate`, { method: 'PUT', token })
+    await api(`/api/v1/configs/presets/${presetId}/activate`, { method: 'PUT', token })
     setRotationEnabled(false)
-    await api('/configs/rotation', { method: 'PUT', token, body: JSON.stringify({ enabled: false, preset_ids: selectedIds }) })
+    await api('/api/v1/configs/rotation', { method: 'PUT', token, body: JSON.stringify({ enabled: false, preset_ids: selectedIds }) })
     await load()
     await checkConfig()
   }
@@ -194,7 +194,7 @@ export function SettingsView({ token }: { token: string }) {
   const saveRotation = async () => {
     setToast(null)
     try {
-      await api('/configs/rotation', {
+      await api('/api/v1/configs/rotation', {
         method: 'PUT',
         token,
         body: JSON.stringify({ enabled: rotationEnabled, preset_ids: selectedIds }),
@@ -210,7 +210,7 @@ export function SettingsView({ token }: { token: string }) {
   const saveProcessing = async () => {
     setToast(null)
     try {
-      await api('/configs/processing', { method: 'PUT', token, body: JSON.stringify(processing) })
+      await api('/api/v1/configs/processing', { method: 'PUT', token, body: JSON.stringify(processing) })
       setToast({ tone: 'success', message: 'Processing settings saved.' })
     } catch (err) {
       setToast({ tone: 'danger', message: err instanceof Error ? err.message : 'Processing save failed' })
@@ -372,7 +372,7 @@ export function SettingsView({ token }: { token: string }) {
                     <button
                       className="icon-btn text-red-400 hover:bg-red-500/10"
                       onClick={() => {
-                        if (confirm('Delete config preset?')) void api(`/configs/presets/${preset.id}`, { method: 'DELETE', token }).then(load).then(checkConfig)
+                        if (confirm('Delete config preset?')) void api(`/api/v1/configs/presets/${preset.id}`, { method: 'DELETE', token }).then(load).then(checkConfig)
                       }}
                       aria-label="Delete config"
                     >

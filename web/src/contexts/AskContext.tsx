@@ -93,7 +93,7 @@ export function AskProvider({ children }: { children: ReactNode }) {
     pendingStepsRef.current = []
 
     const clientId = crypto.randomUUID()
-    const evtSource = new EventSource(`${API_BASE}/api/retrieval/events/${clientId}`)
+    const evtSource = new EventSource(`${API_BASE}/api/v1/retrieval/events/${clientId}`)
     evtSourceRef.current = evtSource
 
     evtSource.addEventListener('progress', (e) => {
@@ -124,7 +124,7 @@ export function AskProvider({ children }: { children: ReactNode }) {
       const withinTagsArr = tagIds(withinTags)
       const excludingTagsArr = tagIds(excludingTags)
       
-      const data = await api<QueryResult>('/api/retrieval/query', {
+      const data = await api<QueryResult>('/api/v1/retrieval/query', {
         method: 'POST',
         token,
         body: JSON.stringify({ 

@@ -14,6 +14,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - server_data:/app/data
+      - /etc/localtime:/etc/localtime:ro
 
   web:
     build:
@@ -24,6 +25,8 @@ services:
       - "0.0.0.0:${WEB_PORT:-2831}:80"
     depends_on:
       - server
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
 
 volumes:
   server_data:

@@ -15,7 +15,7 @@ function GlobalConnectionBanner() {
     let mounted = true
     const checkHealth = async () => {
       try {
-        const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) })
+        const res = await fetch(`${API_BASE}/api/v1/health`, { signal: AbortSignal.timeout(3000) })
         if (mounted) setIsOffline(!res.ok)
       } catch {
         if (mounted) setIsOffline(true)

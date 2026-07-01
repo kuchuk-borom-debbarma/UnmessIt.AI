@@ -48,6 +48,7 @@ def init_db() -> None:
     _add_column_if_missing(conn, "recall_links", "user_id", "TEXT REFERENCES users(id) ON DELETE CASCADE")
     _add_column_if_missing(conn, "notes", "deleted_at", "DATETIME")
     _add_column_if_missing(conn, "notes", "directory_id", "TEXT REFERENCES directories(id) ON DELETE SET NULL")
+    _add_column_if_missing(conn, "notes", "metadata", "JSON NOT NULL DEFAULT '{}'")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_inputs_job_id ON raw_inputs(job_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_inputs_content_hash ON raw_inputs(content_hash)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_raw_inputs_user_id ON raw_inputs(user_id)")

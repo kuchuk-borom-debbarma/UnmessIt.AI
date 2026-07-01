@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { api } from '../../lib/api'
-import { Search, Loader2, X, Tag, TagIcon } from 'lucide-react'
+import { Search, Loader2, X, Tag, TagIcon, Plus } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
 type Tag = {
@@ -9,6 +9,7 @@ type Tag = {
 }
 
 interface TagSearchSelectProps {
+  allowCreate?: boolean
   label: string
   mode: 'include' | 'exclude'
   value: string
@@ -18,7 +19,7 @@ interface TagSearchSelectProps {
   token: string
 }
 
-export function TagSearchSelect({ label, mode, value, onChange, condition, onConditionChange, token }: TagSearchSelectProps) {
+export function TagSearchSelect({ label, mode, value, onChange, condition, onConditionChange, token, allowCreate }: TagSearchSelectProps) {
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [results, setResults] = useState<Tag[]>([])
@@ -61,7 +62,7 @@ export function TagSearchSelect({ label, mode, value, onChange, condition, onCon
       setLoading(true)
       try {
         const data = await api<{ data: Tag[] }>(
-          `/tags/search?q=${encodeURIComponent(debouncedQuery)}&limit=10&cursor=${cursor}`,
+          `/api/v1/tags/search?q=${encodeURIComponent(debouncedQuery)}&limit=10&cursor=${cursor}`,
           { token }
         )
         if (isMounted) {
@@ -202,6 +203,18 @@ export function TagSearchSelect({ label, mode, value, onChange, condition, onCon
             value={query}
             onChange={e => { setQuery(e.target.value); setIsOpen(true) }}
             onFocus={() => setIsOpen(true)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && query.trim()) {
+                e.preventDefault()
+                const exactMatch = results.find(r => r.name.toLowerCase() === query.trim().toLowerCase())
+                if (exactMatch) {
+                  handleSelect(exactMatch)
+                } else if (allowCreate) {
+                  handleSelect({ id: '', name: query.trim() })
+                }
+              }
+            }}
+
           />
           {loading && <Loader2 size={12} className="absolute right-1 text-muted-foreground/60 animate-spin" />}
         </div>
@@ -210,12 +223,25 @@ export function TagSearchSelect({ label, mode, value, onChange, condition, onCon
       {/* Dropdown */}
       {isOpen && (
         <div className="absolute z-30 left-0 right-0 mt-1.5 bg-card/95 backdrop-blur-xl border border-border/50 rounded-xl shadow-2xl overflow-hidden max-h-48 overflow-y-auto">
-          {results.length === 0 && !loading ? (
+          {results.length === 0 && !loading && (!allowCreate || !query.trim()) ? (
             <div className="p-3 text-center text-xs text-muted-foreground">
               {query.trim() ? 'No tags found' : 'Start typing to search tags'}
             </div>
           ) : (
             <>
+
+              {allowCreate && query.trim() && !results.some(r => r.name.toLowerCase() === query.trim().toLowerCase()) && (
+                <button
+                  type="button"
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors border-b border-border/10 last:border-0 hover:bg-primary-500/8 text-primary-500 font-medium"
+                  )}
+                  onClick={() => handleSelect({ id: `__new_${Date.now()}_${Math.random()}`, name: query.trim() })}
+                >
+                  <Plus size={13} className="shrink-0" />
+                  <span>Create tag <span className="font-bold">"{query.trim()}"</span></span>
+                </button>
+              )}
               {results.map(tag => (
                 <button
                   key={tag.id}

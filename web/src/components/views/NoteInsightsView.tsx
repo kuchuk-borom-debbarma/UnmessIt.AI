@@ -28,11 +28,11 @@ export function NoteInsightsView({ token }: { token: string }) {
     try {
       let res;
       if (activeTab === 'chunks') {
-        res = await api<any>(`/api/advanced/notes/${id}/chunks?page=${page}&limit=10`, { token })
+        res = await api<any>(`/api/v1/advanced/notes/${id}/chunks?page=${page}&limit=10`, { token })
       } else if (activeTab === 'keys') {
-        res = await api<any>(`/api/advanced/notes/${id}/recall_keys?page=${page}&limit=20`, { token })
+        res = await api<any>(`/api/v1/advanced/notes/${id}/recall_keys?page=${page}&limit=20`, { token })
       } else {
-        res = await api<any>(`/api/advanced/notes/${id}/recall_links?page=${page}&limit=20`, { token })
+        res = await api<any>(`/api/v1/advanced/notes/${id}/recall_links?page=${page}&limit=20`, { token })
       }
       setData(res.data || res)
     } catch (err) {

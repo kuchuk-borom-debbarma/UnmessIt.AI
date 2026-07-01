@@ -1,35 +1,137 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { Plus, Tag, RefreshCw, Trash2, FolderOpen, FileText, Maximize2, FolderPlus, FolderMinus, ChevronRight, X, CheckCircle2, Clock3, AlertCircle, Pause } from 'lucide-react'
+import { Plus, Tag, RefreshCw, Trash2, FolderOpen, FileText, Maximize2, FolderPlus, FolderMinus, ChevronRight, X, CheckCircle2, Clock3, AlertCircle, Pause, Edit2, FolderInput } from 'lucide-react'
 import { API_BASE, api, type Note, type Directory } from '../../lib/api'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '../../lib/utils'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { TagSearchSelect } from './TagSearchSelect'
 
 type ApiPaginatedData<T> = { data: T, total: number, page: number, limit: number }
 type JobStatus = NonNullable<Note['job_status']>
 type JobEvent = { job: { id: string; status: JobStatus } }
 type JobProgressEvent = { job_id: string; status: JobStatus }
 
-const FolderCard = React.memo(function FolderCard({ dir, onSelect, onDelete }: { dir: Directory, onSelect: () => void, onDelete: () => void }) {
+function MoveItemModal({ isOpen, onClose, currentDirId, allDirectories, onMove, itemName }: { isOpen: boolean, onClose: () => void, currentDirId: string | null, allDirectories: Directory[], onMove: (dirId: string | null) => void, itemName?: string }) {
+  const [query, setQuery] = useState('')
+  const filteredDirs = allDirectories.filter(d => d.path.toLowerCase().includes(query.toLowerCase()))
+
+  if (!isOpen) return null
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm" onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="w-full max-w-md bg-card border border-border/50 shadow-2xl rounded-2xl p-4 flex flex-col gap-4 max-h-[80vh]"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex justify-between items-center">
+          <h3 className="text-lg font-bold">Move {itemName ? `"${itemName}"` : "Item"}</h3>
+          <button onClick={onClose} className="p-2 text-muted-foreground hover:bg-muted rounded-full">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="relative">
+          <FolderInput size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/50" />
+          <input
+            autoFocus
+            className="w-full bg-input/50 border border-border/50 rounded-xl pl-10 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/50"
+            placeholder="Search folders..."
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+          />
+        </div>
+        <div className="flex-1 overflow-y-auto min-h-[100px] max-h-[300px] flex flex-col gap-1 -mx-2 px-2">
+          <button
+            className={cn("text-left px-3 py-2 rounded-lg text-sm transition-colors hover:bg-primary-500/10 flex items-center gap-2", currentDirId === null ? "bg-primary-500/20 text-primary-500 font-bold" : "text-muted-foreground")}
+            onClick={() => onMove(null)}
+          >
+            <FolderOpen size={14}/> Root Directory
+          </button>
+          {filteredDirs.map(d => (
+            <button
+              key={d.id}
+              className={cn("text-left px-3 py-2 rounded-lg text-sm transition-colors hover:bg-primary-500/10 flex items-center gap-2", currentDirId === d.id ? "bg-primary-500/20 text-primary-500 font-bold" : "text-muted-foreground")}
+              onClick={() => onMove(d.id)}
+            >
+              <FolderOpen size={14}/> 
+              <span className="truncate flex-1">{d.name}</span>
+              <span className="text-muted-foreground/30 text-xs ml-auto truncate max-w-[150px]">{d.path}</span>
+            </button>
+          ))}
+          {filteredDirs.length === 0 && (
+            <div className="text-center py-8 text-sm text-muted-foreground">No matching folders found.</div>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  )
+}
+
+const FolderCard = React.memo(function FolderCard({ dir, onSelect, onDelete, onRename }: { dir: Directory, onSelect: () => void, onDelete: () => void, onRename: (newName: string) => void }) {
+  const [isEditing, setIsEditing] = useState(false)
+  const [editName, setEditName] = useState(dir.name)
+
+  const handleSave = () => {
+    if (editName.trim() && editName !== dir.name) {
+      onRename(editName.trim())
+    }
+    setIsEditing(false)
+  }
+
   return (
     <div 
       className="bento-card p-4 flex items-center justify-between cursor-pointer group hover:border-primary-500/50 transition-colors"
-      onClick={onSelect}
+      onClick={() => { if (!isEditing) onSelect() }}
     >
-      <div className="flex items-center gap-3 text-foreground/90 font-bold">
-        <FolderOpen size={18} className="text-primary-500" />
-        {dir.name}
+      <div className="flex items-center gap-3 text-foreground/90 font-bold flex-1 mr-2">
+        <FolderOpen size={18} className="text-primary-500 shrink-0" />
+        {isEditing ? (
+          <input 
+            autoFocus
+            className="premium-input h-8 py-0 w-full text-sm font-bold bg-background"
+            value={editName}
+            onChange={e => setEditName(e.target.value)}
+            onBlur={handleSave}
+            onKeyDown={e => {
+              if (e.key === 'Enter') handleSave()
+              if (e.key === 'Escape') {
+                setEditName(dir.name)
+                setIsEditing(false)
+              }
+            }}
+            onClick={e => e.stopPropagation()}
+          />
+        ) : (
+          <span className="truncate">{dir.name}</span>
+        )}
       </div>
-      <button 
-        className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:bg-red-500/10 hover:text-red-500 transition-colors"
-        onClick={(e) => {
-          e.stopPropagation()
-          onDelete()
-        }}
-        title="Delete Folder"
-      >
-        <FolderMinus size={14} />
-      </button>
+      {!isEditing && (
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button 
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:bg-primary-500/10 hover:text-primary-500 transition-colors"
+            onClick={(e) => {
+              e.stopPropagation()
+              setEditName(dir.name)
+              setIsEditing(true)
+            }}
+            title="Rename Folder"
+          >
+            <Edit2 size={14} />
+          </button>
+          <button 
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:bg-red-500/10 hover:text-red-500 transition-colors"
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete()
+            }}
+            title="Delete Folder"
+          >
+            <FolderMinus size={14} />
+          </button>
+        </div>
+      )}
     </div>
   )
 })
@@ -37,6 +139,25 @@ const FolderCard = React.memo(function FolderCard({ dir, onSelect, onDelete }: {
 const NoteCard = React.memo(function NoteCard({ note, allDirectories, token, load }: { note: Note, allDirectories: Directory[], token: string, load: () => void }) {
   const navigate = useNavigate()
   const isLong = note.text.length > 400 || note.text.split('\n').length > 8
+  const [isMoving, setIsMoving] = useState(false)
+
+  const handleMove = async (newDirId: string | null) => {
+    try {
+      await api(`/api/v1/notes/${note.id}`, {
+        method: 'PUT',
+        token,
+        body: JSON.stringify({
+          text: note.text,
+          tags: note.tags.map(t => t.name),
+          directory_id: newDirId
+        })
+      })
+      setIsMoving(false)
+      load()
+    } catch (err: any) {
+      alert(err.message || 'Failed to move note')
+    }
+  }
 
   return (
     <motion.div 
@@ -48,9 +169,9 @@ const NoteCard = React.memo(function NoteCard({ note, allDirectories, token, loa
       onClick={() => navigate(`/notes/${note.id}`)}
     >
       <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground/70">
-          <FolderOpen size={14} /> 
-          {allDirectories.find(d => d.id === note.directory_id)?.name || 'Root'}
+        <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-muted-foreground/70 flex-1 min-w-0 pr-2">
+          <FolderOpen size={14} className="shrink-0" /> 
+          <span className="truncate">{allDirectories.find(d => d.id === note.directory_id)?.name || 'Root'}</span>
           
           {note.job_status && (
             <div className="flex items-center gap-1 ml-2 border-l border-border/50 pl-2">
@@ -64,9 +185,19 @@ const NoteCard = React.memo(function NoteCard({ note, allDirectories, token, loa
             </div>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
           <button 
-            className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:bg-primary-500/10 hover:text-primary-500"
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:bg-primary-500/10 hover:text-primary-500 transition-colors"
+            onClick={(e) => {
+              e.stopPropagation()
+              setIsMoving(true)
+            }}
+            title="Move Note"
+          >
+            <FolderInput size={14} />
+          </button>
+          <button 
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:bg-primary-500/10 hover:text-primary-500 transition-colors"
             onClick={(e) => {
               e.stopPropagation()
               navigate(`/notes/${note.id}`)
@@ -79,7 +210,7 @@ const NoteCard = React.memo(function NoteCard({ note, allDirectories, token, loa
             className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/10 hover:text-red-500"
             onClick={async (e) => {
               e.stopPropagation()
-              await api(`/notes/${note.id}`, { method: 'DELETE', token })
+              await api(`/api/v1/notes/${note.id}`, { method: 'DELETE', token })
               load()
             }}
             title="Move to Trash"
@@ -110,9 +241,89 @@ const NoteCard = React.memo(function NoteCard({ note, allDirectories, token, loa
           {new Date(note.created_at).toLocaleDateString()}
         </div>
       </div>
+      <MoveItemModal
+        isOpen={isMoving}
+        onClose={() => setIsMoving(false)}
+        currentDirId={note.directory_id}
+        allDirectories={allDirectories}
+        onMove={handleMove}
+        itemName="Note"
+      />
     </motion.div>
   )
 })
+
+function NoteTypeModal({ isOpen, onClose, onSelectUpload, onSelectManual }: { isOpen: boolean, onClose: () => void, onSelectUpload: (files: File[]) => void, onSelectManual: () => void }) {
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0) {
+      onSelectUpload(files);
+      // Reset the input so the same file can be selected again if needed
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            className="w-full max-w-md bg-card border border-border/50 shadow-2xl rounded-3xl p-6"
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold">New Note</h3>
+              <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/5 transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="bento-card p-6 flex flex-col items-center justify-center gap-4 hover:border-primary-500/50 transition-colors group"
+              >
+                <div className="w-12 h-12 rounded-full bg-primary-500/10 flex items-center justify-center text-primary-500 group-hover:scale-110 transition-transform">
+                  <FileText size={24} />
+                </div>
+                <div className="text-center">
+                  <div className="font-bold mb-1">Upload File</div>
+                  <div className="text-xs text-muted-foreground">.txt or .md</div>
+                </div>
+              </button>
+              
+              <button
+                onClick={onSelectManual}
+                className="bento-card p-6 flex flex-col items-center justify-center gap-4 hover:border-primary-500/50 transition-colors group"
+              >
+                <div className="w-12 h-12 rounded-full bg-primary-500/10 flex items-center justify-center text-primary-500 group-hover:scale-110 transition-transform">
+                  <Edit2 size={24} />
+                </div>
+                <div className="text-center">
+                  <div className="font-bold mb-1">Create Manually</div>
+                  <div className="text-xs text-muted-foreground">Text Editor</div>
+                </div>
+              </button>
+            </div>
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                onChange={handleFileChange} 
+                className="hidden" 
+                accept=".txt,.md,.markdown"
+                multiple
+              />
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+}
 
 function NoteCreationModal({ isOpen, onClose, token, allDirectories, selectedDir, onSuccess }: { isOpen: boolean, onClose: () => void, token: string, allDirectories: Directory[], selectedDir: string | null, onSuccess: () => void }) {
   const [draft, setDraft] = useState('')
@@ -147,7 +358,7 @@ function NoteCreationModal({ isOpen, onClose, token, allDirectories, selectedDir
   const handleCreateNote = async () => {
     if (!draft.trim()) return
     try {
-      await api('/notes/', {
+      await api('/api/v1/notes/', {
         method: 'POST',
         token,
         body: JSON.stringify({
@@ -242,6 +453,19 @@ export function NotesView({ token }: { token: string }) {
   const [searchParams, setSearchParams] = useSearchParams()
   
   // Navigation State
+  
+  const filterTagVal = searchParams.get('tag_val') || ''
+  const handleSelectTag = (val: string) => {
+    if (val) {
+      searchParams.set('tag_val', val)
+    } else {
+      searchParams.delete('tag_val')
+    }
+    setSearchParams(searchParams)
+    setNotePage(1)
+  }
+  const filterTagId = filterTagVal ? filterTagVal.split('|')[0] : null
+
   const selectedDir = searchParams.get('dir')
 
   const handleSelectDir = (dirId: string | null) => {
@@ -267,27 +491,67 @@ export function NotesView({ token }: { token: string }) {
   // Pagination State
   const [notePage, setNotePage] = useState(1)
   const [noteTotal, setNoteTotal] = useState(0)
-  const noteLimit = 20
-  
   const [dirPage, setDirPage] = useState(1)
   const [dirTotal, setDirTotal] = useState(0)
-  const dirLimit = 20
-  
+  const noteLimit = 50
+  const dirLimit = 50
+
   // UI State
-  const [isComposing, setIsComposing] = useState(false)
-  
   const [isCreatingFolder, setIsCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
+  const [isSelectingType, setIsSelectingType] = useState(false)
+  const [isComposing, setIsComposing] = useState(false)
+  
+  // Upload Handler
+  const handleUploadFile = async (files: File[]) => {
+    setIsSelectingType(false)
+    for (const file of files) {
+      const reader = new FileReader()
+      await new Promise<void>((resolve) => {
+        reader.onload = async (e) => {
+          const text = e.target?.result as string
+          if (!text.trim()) {
+            console.warn(`File ${file.name} is empty!`)
+            resolve()
+            return
+          }
+          const extension = file.name.split('.').pop()
+          try {
+            await api('/api/v1/notes/', {
+              method: 'POST',
+              token,
+              body: JSON.stringify({
+                text: text,
+                directory_id: selectedDir || null,
+                tags: [],
+                metadata: {
+                  filename: file.name,
+                  extension: extension,
+                }
+              })
+            })
+          } catch (err: any) {
+            console.error(`Failed to upload note ${file.name}:`, err)
+          }
+          resolve()
+        }
+        reader.onerror = () => resolve()
+        reader.readAsText(file)
+      })
+    }
+    load()
+  }
 
   const load = useCallback(async () => {
     try {
       const parentQuery = selectedDir ? `&directory_id=${selectedDir}` : ''
+      const tagQuery = filterTagId ? `&tag_id=${filterTagId}` : ''
       const dirParentQuery = selectedDir ? `&parent_id=${selectedDir}` : ''
 
       const [n, d, allD] = await Promise.all([
-        api<ApiPaginatedData<Note[]>>(`/notes/?page=${notePage}&limit=${noteLimit}${parentQuery}`, { token }),
-        api<ApiPaginatedData<Directory[]>>(`/directories/?page=${dirPage}&limit=${dirLimit}${dirParentQuery}`, { token }),
-        api<ApiPaginatedData<Directory[]>>(`/directories/?all=true&limit=1000`, { token })
+        api<ApiPaginatedData<Note[]>>(`/api/v1/notes/?page=${notePage}&limit=${noteLimit}${parentQuery}${tagQuery}`, { token }),
+        api<ApiPaginatedData<Directory[]>>(`/api/v1/directories/?page=${dirPage}&limit=${dirLimit}${dirParentQuery}`, { token }),
+        api<ApiPaginatedData<Directory[]>>(`/api/v1/directories/?all=true&limit=1000`, { token })
       ])
       setNotes(n.data)
       setNoteTotal(n.total)
@@ -299,7 +563,7 @@ export function NotesView({ token }: { token: string }) {
     } finally {
       setLoading(false)
     }
-  }, [token, selectedDir, notePage, noteLimit, dirPage, dirLimit])
+  }, [token, selectedDir, filterTagId, notePage, noteLimit, dirPage, dirLimit])
 
   useEffect(() => {
     load()
@@ -313,7 +577,7 @@ export function NotesView({ token }: { token: string }) {
     }
     const connect = async () => {
       try {
-        const response = await fetch(`${API_BASE}/api/advanced/ingest_jobs/events`, {
+        const response = await fetch(`${API_BASE}/api/v1/advanced/ingest_jobs/events`, {
           headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,
         })
@@ -370,7 +634,7 @@ export function NotesView({ token }: { token: string }) {
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return
     try {
-      await api('/directories/', {
+      await api('/api/v1/directories/', {
         method: 'POST',
         token,
         body: JSON.stringify({
@@ -386,10 +650,23 @@ export function NotesView({ token }: { token: string }) {
     }
   }
 
+  const handleRenameFolder = async (dirId: string, newName: string) => {
+    try {
+      await api(`/api/v1/directories/${dirId}`, {
+        method: 'PUT',
+        token,
+        body: JSON.stringify({ name: newName })
+      })
+      await load()
+    } catch (err: any) {
+      alert(err.message || 'Failed to rename folder')
+    }
+  }
+
   const handleDeleteFolder = async (dirId: string) => {
     if (confirm('Delete this folder and ALL notes inside it permanently?')) {
       try {
-        await api(`/directories/${dirId}`, { method: 'DELETE', token })
+        await api(`/api/v1/directories/${dirId}`, { method: 'DELETE', token })
         if (selectedDir === dirId) {
           handleSelectDir(null)
         } else {
@@ -433,7 +710,7 @@ export function NotesView({ token }: { token: string }) {
           <button 
             className="premium-btn premium-btn-primary h-12 px-6 gap-2"
             onClick={() => {
-              setIsComposing(true)
+              setIsSelectingType(true)
             }}
           >
             <Plus size={18} /> New Note
@@ -507,6 +784,17 @@ export function NotesView({ token }: { token: string }) {
         </div>
       </div>
 
+      
+      <div className="mb-6 z-20 relative max-w-sm">
+        <TagSearchSelect
+          label="Filter by Tag"
+          mode="include"
+          value={filterTagVal}
+          onChange={handleSelectTag}
+          token={token}
+        />
+      </div>
+
       {/* Folders Grid */}
       {directories.length > 0 && (
         <div className="mb-8">
@@ -516,7 +804,8 @@ export function NotesView({ token }: { token: string }) {
                 key={d.id} 
                 dir={d} 
                 onSelect={() => handleSelectDir(d.id)} 
-                onDelete={() => handleDeleteFolder(d.id)} 
+                onDelete={() => handleDeleteFolder(d.id)}
+                onRename={(newName) => handleRenameFolder(d.id, newName)}
               />
             ))}
           </div>
@@ -558,8 +847,17 @@ export function NotesView({ token }: { token: string }) {
       )}
 
       {/* Note Creation Modal */}
-      <NoteCreationModal
-        isOpen={isComposing}
+      <NoteTypeModal
+        isOpen={isSelectingType}
+        onClose={() => setIsSelectingType(false)}
+        onSelectUpload={handleUploadFile}
+        onSelectManual={() => {
+          setIsSelectingType(false)
+          setIsComposing(true)
+        }}
+      />
+      <NoteCreationModal 
+        isOpen={isComposing} 
         onClose={() => setIsComposing(false)}
         token={token}
         allDirectories={allDirectories}

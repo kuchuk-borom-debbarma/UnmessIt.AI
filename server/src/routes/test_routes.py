@@ -15,7 +15,7 @@ from src.routes import retrieval as retrieval_route
 
 def test_notes_route_creates_note_and_triggers_event(monkeypatch):
     class FakeNotesService:
-        async def create_note(self, text: str, user_id: str, directory_id: str | None = None, tag_names: list[str] | None = None) -> str:
+        async def create_note(self, text: str, user_id: str, directory_id: str | None = None, tag_names: list[str] | None = None, metadata: dict | None = None) -> str:
             return "note-1"
 
     monkeypatch.setattr(notes_route, "get_notes_service", lambda: FakeNotesService())
@@ -30,10 +30,10 @@ def test_notes_route_creates_note_and_triggers_event(monkeypatch):
 
 
 def test_notes_route_lists_notes_with_tags(monkeypatch):
-    monkeypatch.setattr(notes_route.notes, "list_notes", lambda user_id, directory_id=None, include_all=False, page=1, limit=20: {"data": [{"id": "note-1", "text": "hello"}], "total": 1})
+    monkeypatch.setattr(notes_route.notes, "list_notes", lambda user_id, directory_id=None, tag_id=None, include_all=False, page=1, limit=20: {"data": [{"id": "note-1", "text": "hello"}], "total": 1})
     monkeypatch.setattr(notes_route.tags, "get_for_note", lambda note_id: [{"id": "tag-1", "name": "test"}])
 
-    response = asyncio.run(notes_route.list_notes(None, False, 1, 20, "user-1"))
+    response = asyncio.run(notes_route.list_notes(user_id="user-1", directory_id=None, tag_id=None, all=False, page=1, limit=20))
 
     assert response["data"][0]["tags"][0]["name"] == "test"
 

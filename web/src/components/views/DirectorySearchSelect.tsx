@@ -64,7 +64,7 @@ export function DirectorySearchSelect({ label, mode, value, onChange, token }: D
       setLoading(true)
       try {
         const data = await api<{ data: Directory[] }>(
-          `/directories/search?q=${encodeURIComponent(debouncedQuery)}&limit=10&cursor=${cursor}`,
+          `/api/v1/directories/search?q=${encodeURIComponent(debouncedQuery)}&limit=10&cursor=${cursor}`,
           { token }
         )
         if (isMounted) {

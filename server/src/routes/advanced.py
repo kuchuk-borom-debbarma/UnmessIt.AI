@@ -13,7 +13,7 @@ from src.services.auth import get_auth_service
 from src.infra.sse import get_sse_service
 from src.services.rag.rag_service import get_rag_service
 
-router = APIRouter(prefix="/api/advanced", tags=["advanced"])
+router = APIRouter(prefix="/advanced", tags=["advanced"])
 logger = logging.getLogger(__name__)
 
 
