@@ -26,7 +26,8 @@ class DurableScheduler:
         if job_id in self._running:
             return
         self._running.add(job_id)
-        asyncio.create_task(self._run_loop(job_id), name=f"ingest-{job_id[:8]}")
+        task = asyncio.create_task(self._run_loop(job_id), name=f"ingest-{job_id[:8]}")
+        task.add_done_callback(lambda done: self._log_task_failure(done, job_id))
 
     async def resume_pending(self) -> None:
         """Resume queued/running/due retry jobs after server startup."""
@@ -59,7 +60,8 @@ class DurableScheduler:
                         await asyncio.sleep(delay)
                 try:
                     await self.runner.run_once(job_id)
-                except Exception:
+                except Exception as exc:
+                    logger.warning("ingest_job_run_loop_failed job_id=%s error=%s", job_id, exc)
                     job = await asyncio.to_thread(repository.get, job_id)
                     if not job or job["status"] == STATUS_FAILED:
                         return
@@ -67,6 +69,12 @@ class DurableScheduler:
                     continue
         finally:
             self._running.discard(job_id)
+
+    def _log_task_failure(self, done: asyncio.Task, job_id: str) -> None:
+        try:
+            done.result()
+        except Exception as exc:
+            logger.warning("ingest_job_task_failed job_id=%s error=%s", job_id, exc)
 
 
 def _delay_seconds(next_run_at: str | None) -> float:

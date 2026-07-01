@@ -65,11 +65,13 @@ class RagServiceImpl:
             answer = {"answer": "Ask a question to search your source chunks.", "citations": [], "directories": [], "notes": []}
             return build_query_result(query, [], answer, trace)
 
+        loop = asyncio.get_running_loop()
+
         async def async_report(message: str, details: dict | None = None) -> None:
             await reporter.report(message, details)
 
         def sync_report(message: str, details: dict | None = None) -> None:
-            asyncio.create_task(reporter.report(message, details))
+            loop.call_soon_threadsafe(asyncio.create_task, reporter.report(message, details))
 
         tokens = set_progress_reporters(async_report, sync_report)
         try:

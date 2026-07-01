@@ -1,55 +1,10 @@
-import { createContext, useContext, useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { api, API_BASE } from '../lib/api'
+import { AskContext } from './AskContextCore'
+import type { QueryResult, Toast } from './AskContextCore'
 
 const MAX_PROGRESS_STEPS = 200
-
-type SourceChunk = {
-  id: string
-  raw_input_id: string
-  note_id: string
-  text: string
-  summary: string
-}
-
-type QueryResult = {
-  answer: string
-  citations: any[]
-  source_chunks: SourceChunk[]
-  retrieval_trace: Record<string, any>
-}
-
-type Toast = { tone: 'success' | 'danger'; message: string }
-
-interface AskContextType {
-  query: string
-  setQuery: (q: string) => void
-  loading: boolean
-  showTrace: boolean
-  setShowTrace: (s: boolean) => void
-  showFilters: boolean
-  setShowFilters: (s: boolean) => void
-  terminalOpen: boolean
-  setTerminalOpen: (o: boolean) => void
-  withinDirectories: string
-  setWithinDirectories: (d: string) => void
-  excludingDirectories: string
-  setExcludingDirectories: (d: string) => void
-  withinTags: string
-  setWithinTags: (t: string) => void
-  excludingTags: string
-  setExcludingTags: (t: string) => void
-  withinTagsCondition: 'any' | 'all'
-  setWithinTagsCondition: (c: 'any' | 'all') => void
-  result: QueryResult | null
-  toast: Toast | null
-  setToast: (t: Toast | null) => void
-  progressSteps: string[]
-  handleAsk: (token: string) => void
-  stopAsk: () => void
-}
-
-const AskContext = createContext<AskContextType | null>(null)
 
 export function AskProvider({ children }: { children: ReactNode }) {
   const [query, setQuery] = useState(() => sessionStorage.getItem('ask_query') || '')
@@ -155,7 +110,9 @@ export function AskProvider({ children }: { children: ReactNode }) {
             flushPending()
           }, 120)
         }
-      } catch {}
+      } catch (err) {
+        console.error('Failed to parse retrieval progress event:', err)
+      }
     })
 
     const abortController = new AbortController()
@@ -216,12 +173,4 @@ export function AskProvider({ children }: { children: ReactNode }) {
 
 function tagIds(value: string) {
   return value.split(',').map(item => item.trim().split('|')[0]).filter(Boolean)
-}
-
-export function useAsk() {
-  const context = useContext(AskContext)
-  if (!context) {
-    throw new Error('useAsk must be used within an AskProvider')
-  }
-  return context
 }

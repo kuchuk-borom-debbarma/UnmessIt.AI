@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -13,6 +14,7 @@ from src.services.rag.rag_service import get_rag_service
 from src.services.rag.models import ProgressReporter
 
 router = APIRouter(prefix="/api/retrieval", tags=["Retrieval"])
+logger = logging.getLogger(__name__)
 
 
 class QueryRequest(BaseModel):
@@ -52,8 +54,8 @@ async def sse_events(client_id: str, request: Request) -> StreamingResponse:
                 if await request.is_disconnected():
                     break
                 yield f"event: {event.event}\ndata: {json.dumps(event.data)}\n\n"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("retrieval_sse_stream_failed client_id=%s error=%s", client_id, exc)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

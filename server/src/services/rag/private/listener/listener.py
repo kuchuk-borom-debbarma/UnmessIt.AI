@@ -36,18 +36,18 @@ async def _handle_note_updated(payload: dict[str, Any]) -> None:
 
 
 def _on_note_created(payload: dict[str, Any]) -> None:
-    asyncio.create_task(_handle_note_created(payload))
+    _track_task(_handle_note_created(payload), "note_created")
 
 
 def _on_note_updated(payload: dict[str, Any]) -> None:
     # Right now, simple approach: just re-submit the ingest job
     # Over time, we can make this more granular (e.g. diffing chunks)
     # The pipeline is idempotent if content hash matches.
-    asyncio.create_task(submit_ingest_job(
+    _track_task(submit_ingest_job(
         content=payload["text"],
         user_id=payload["user_id"],
         job_id=payload["note_id"]
-    ))
+    ), "note_updated")
 
 
 async def _handle_note_moved(payload: dict[str, Any]) -> None:
@@ -84,7 +84,7 @@ async def _handle_note_moved(payload: dict[str, Any]) -> None:
         logger.error(f"Failed to update directory path for moved note {note_id}: {e}")
 
 def _on_note_moved(payload: dict[str, Any]) -> None:
-    asyncio.create_task(_handle_note_moved(payload))
+    _track_task(_handle_note_moved(payload), "note_moved")
 
 
 def _on_note_hard_deleted(payload: dict[str, Any]) -> None:
@@ -101,7 +101,7 @@ def _on_note_hard_deleted(payload: dict[str, Any]) -> None:
                 source_chunk_vectors.delete([chunk["id"] for chunk in chunks], user_id)
             raw_inputs.hard_delete(input_id)
             
-    asyncio.create_task(asyncio.to_thread(_cleanup))
+    _track_task(asyncio.to_thread(_cleanup), "note_hard_deleted")
 
 
 def _on_note_soft_deleted(payload: dict[str, Any]) -> None:
@@ -118,7 +118,7 @@ def _on_note_soft_deleted(payload: dict[str, Any]) -> None:
                 source_chunk_vectors.delete([chunk["id"] for chunk in chunks], user_id)
             raw_inputs.soft_delete(input_id)
             
-    asyncio.create_task(asyncio.to_thread(_cleanup))
+    _track_task(asyncio.to_thread(_cleanup), "note_soft_deleted")
 
 
 def _on_note_restored(payload: dict[str, Any]) -> None:
@@ -136,7 +136,7 @@ def _on_note_restored(payload: dict[str, Any]) -> None:
             if chunks:
                 source_chunk_vectors.index(chunks)
                 
-    asyncio.create_task(asyncio.to_thread(_restore))
+    _track_task(asyncio.to_thread(_restore), "note_restored")
 
 
 def _on_note_tags_changed(payload: dict[str, Any]) -> None:
@@ -154,7 +154,7 @@ def _on_note_tags_changed(payload: dict[str, Any]) -> None:
                 source_chunk_vectors.delete(chunk_ids, user_id)
                 source_chunk_vectors.index(chunks)
                 
-    asyncio.create_task(asyncio.to_thread(_update_tags))
+    _track_task(asyncio.to_thread(_update_tags), "note_tags_changed")
 
 
 def register_rag_listeners() -> None:
@@ -166,3 +166,15 @@ def register_rag_listeners() -> None:
     bus.subscribe("note.soft_deleted", _on_note_soft_deleted)
     bus.subscribe("note.restored", _on_note_restored)
     bus.subscribe("note.tags_changed", _on_note_tags_changed)
+
+
+def _track_task(coro, label: str) -> None:
+    task = asyncio.create_task(coro)
+
+    def _log_failure(done: asyncio.Task) -> None:
+        try:
+            done.result()
+        except Exception as exc:
+            logger.error("rag_listener_task_failed label=%s error=%s", label, exc)
+
+    task.add_done_callback(_log_failure)

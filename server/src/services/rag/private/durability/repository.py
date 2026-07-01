@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -22,6 +23,8 @@ from .models import (
     STAGE_RAW_INPUT,
     IngestJob,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class IngestPaused(RuntimeError):
@@ -437,13 +440,13 @@ def _publish_changed(job_id: str) -> None:
     try:
         from .events import publish_job_changed
         publish_job_changed(job_id)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("ingest_job_changed_publish_failed job_id=%s error=%s", job_id, exc)
 
 
 def _publish_progress(job_id: str, message: str) -> None:
     try:
         from .events import publish_job_progress
         publish_job_progress(job_id, message)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("ingest_job_progress_publish_failed job_id=%s error=%s", job_id, exc)

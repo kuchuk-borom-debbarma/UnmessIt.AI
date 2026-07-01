@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from starlette.requests import Request
@@ -13,6 +14,7 @@ from src.infra.sse import get_sse_service
 from src.services.rag.rag_service import get_rag_service
 
 router = APIRouter(prefix="/api/advanced", tags=["advanced"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/memory")
@@ -108,8 +110,8 @@ async def ingest_job_events(request: Request, token: str | None = None) -> Strea
                 if await request.is_disconnected():
                     break
                 yield f"event: {event.event}\ndata: {json.dumps(event.data)}\n\n"
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("ingest_jobs_sse_stream_failed user_id=%s error=%s", user["id"], exc)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

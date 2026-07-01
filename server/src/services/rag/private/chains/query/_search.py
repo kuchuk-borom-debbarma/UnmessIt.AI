@@ -101,7 +101,7 @@ async def _evidence_for(sub_query: str, global_query: str, user_id: str, extract
     async def _vector_path():
         if reporter:
             await reporter.report(f"Vector source search: '{sub_query}'")
-        chunks, ids = await _vector_source_chunks(sub_query, user_id, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
+        chunks, ids = await _vector_source_chunks(sub_query, user_id, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition, reporter)
         if reporter:
             await reporter.report(f"Vector source search returned {len(ids)} hit(s)", {"sub_query": sub_query, "source_chunk_ids": ids})
         return chunks, ids
@@ -162,12 +162,14 @@ async def _evidence_for(sub_query: str, global_query: str, user_id: str, extract
     return chunks, trace_part
 
 
-async def _vector_source_chunks(query: str, user_id: str, within_directories: list[str], excluding_directories: list[str], within_tags: list[str], excluding_tags: list[str], within_tags_condition: str) -> tuple[list[dict[str, Any]], list[str]]:
+async def _vector_source_chunks(query: str, user_id: str, within_directories: list[str], excluding_directories: list[str], within_tags: list[str], excluding_tags: list[str], within_tags_condition: str, reporter=None) -> tuple[list[dict[str, Any]], list[str]]:
     """Use Chroma when available; lexical search still works if embeddings are down."""
     try:
         hits = await asyncio.to_thread(source_chunk_vectors.search, query, user_id, 8, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
     except Exception as exc:
         logger.warning("query_source_vector_search_failed error=%s", exc)
+        if reporter:
+            await reporter.report("Vector source search failed; continuing with lexical and recall search.", {"error": str(exc)[:500]})
         return [], []
     ids = [hit["object_id"] for hit in hits if hit.get("object_type") == "source_chunk"]
     chunks = await asyncio.to_thread(source_chunks.get_by_ids, ids, user_id)
