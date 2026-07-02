@@ -6,6 +6,7 @@ Keep the server boring, small, and easy to read.
 - `src/main.py` creates the FastAPI app, initializes SQLite, configures logging, and includes routes.
 - `src/routes/` is HTTP delivery only: validate input, call a getter/function, return a response.
 - `src/infra/` owns low-level technology setup: LangChain JSON, SQLite connection/init, Chroma, settings, logging.
+- Redis setup, Redis Streams dispatch, and Redis-backed SSE live under `src/infra/`; SQLite outbox persistence lives in repositories.
 - `src/repositories/` owns plain SQLite/Chroma function modules. Do not add repository classes unless state is unavoidable.
 - `src/services/rag/` owns the product flow: public retrieval service, private chains, durable ingestion pipeline, and job controls.
 
@@ -37,6 +38,7 @@ Keep the server boring, small, and easy to read.
 - Chains use the JSON client passed by `get_rag_service()`.
 - Do not log API keys, full prompts, full model responses, or full raw source text.
 - Chroma is a rebuildable index; SQLite source rows are the source of truth.
+- Redis is a delivery/cache layer. SQLite remains the source of truth for jobs, events, and idempotency.
 
 ## 6. Routes
 - Keep these URLs stable: `POST /ingest/`, `POST /api/retrieval/query`, `GET /notes/`, `POST /notes/`, `GET /directories/`, `GET /tags/`, `GET /configs/presets`, `GET /configs/processing`, `PUT /configs/processing`, `GET /configs/rotation`, `PUT /configs/rotation`.

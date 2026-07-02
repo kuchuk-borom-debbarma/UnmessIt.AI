@@ -48,12 +48,34 @@ mkdir -p data
 SERVER_PORT=2317
 WEB_PORT=2831
 JWT_SECRET=""
+REDIS_URL="redis://redis:6379/0"
+UNMESSIT_DATA_DIR="./data"
+CORS_ORIGINS=""
+ENABLE_DEV_ROUTES=0
+LOG_LEVEL=INFO
 
 # Load existing configuration if it exists to preserve secrets and custom ports across updates
 if [ -f ".env" ]; then
     echo -e "${YELLOW}Existing .env file found. Loading current configuration...${NC}"
-    export $(grep -v '^#' .env | xargs)
+    get_env_value() {
+        awk -F= -v key="$1" '$0 !~ /^[[:space:]]*#/ && $1 == key {sub(/^[^=]*=/, ""); print; exit}' .env
+    }
+    SERVER_PORT="$(get_env_value SERVER_PORT || true)"
+    WEB_PORT="$(get_env_value WEB_PORT || true)"
+    JWT_SECRET="$(get_env_value JWT_SECRET || true)"
+    REDIS_URL="$(get_env_value REDIS_URL || true)"
+    UNMESSIT_DATA_DIR="$(get_env_value UNMESSIT_DATA_DIR || true)"
+    CORS_ORIGINS="$(get_env_value CORS_ORIGINS || true)"
+    ENABLE_DEV_ROUTES="$(get_env_value ENABLE_DEV_ROUTES || true)"
+    LOG_LEVEL="$(get_env_value LOG_LEVEL || true)"
 fi
+
+SERVER_PORT=${SERVER_PORT:-2317}
+WEB_PORT=${WEB_PORT:-2831}
+REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+UNMESSIT_DATA_DIR=${UNMESSIT_DATA_DIR:-./data}
+ENABLE_DEV_ROUTES=${ENABLE_DEV_ROUTES:-0}
+LOG_LEVEL=${LOG_LEVEL:-INFO}
 
 echo "This installer will set up UnmessIt.AI with standard defaults."
 read -p "Press [Enter] to continue with defaults, or type 'advanced' to customize ports and secrets: " MODE
@@ -79,17 +101,25 @@ if [ -z "$JWT_SECRET" ]; then
     fi
 fi
 
+CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:${WEB_PORT},http://127.0.0.1:${WEB_PORT}}
+
 echo ""
 echo -e "${BLUE}Downloading docker-compose.prod.yml...${NC}"
-curl -s -O https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/staging/docker-compose.prod.yml
+curl -fsSL https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/staging/docker-compose.prod.yml -o docker-compose.prod.yml
 
 echo "Generating .env file..."
 cat > .env << EOL
 SERVER_PORT=${SERVER_PORT}
 WEB_PORT=${WEB_PORT}
 JWT_SECRET=${JWT_SECRET}
-UNMESSIT_DATA_DIR=./data
+UNMESSIT_DATA_DIR=${UNMESSIT_DATA_DIR}
+REDIS_URL=${REDIS_URL}
+CORS_ORIGINS=${CORS_ORIGINS}
+ENABLE_DEV_ROUTES=${ENABLE_DEV_ROUTES}
+LOG_LEVEL=${LOG_LEVEL}
 EOL
+
+docker compose -f docker-compose.prod.yml config >/dev/null
 
 echo -e "${BLUE}Preparing environment (stopping existing containers if any)...${NC}"
 docker compose -f docker-compose.prod.yml down || true

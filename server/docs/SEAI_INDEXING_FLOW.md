@@ -1,6 +1,6 @@
 # SEAI Indexing Flow
 
-SEAI now means **Source Evidence And Indexing** for this codebase. The active memory ingestion flow is deliberately small:
+SEAI means **Source Evidence And Indexing** here. The active ingestion flow is small:
 
 ```txt
 raw input
@@ -10,53 +10,41 @@ raw input
 -> vector index
 ```
 
-Raw input remains the source of truth. Source chunks, recall keys, and recall links are indexes over that source. They help retrieval find and organize evidence; they do not replace the original text.
+Raw input remains the source of truth. Source chunks, recall keys, recall links, and vectors are indexes over that source.
 
 ## Objects
 
-**Raw input** is the exact user submission. It is saved before LLM work so all later spans point back to durable source text.
+**Raw input** is the exact user submission. It is saved before LLM work so later spans point back to durable source text.
 
-**Source window** is a bounded slice of raw input used to keep source chunk splitting practical for local and cloud models.
+**Source window** is a bounded slice of raw input used to keep chunk splitting practical.
 
-**Source chunk** is one citable unit inside a raw input. Code chooses it by source position so ingestion preserves every part of the input; the LLM summarizes the chunk but does not choose what text survives.
+**Source chunk** is one citable unit inside a raw input. Code chooses it by source position; the LLM summarizes it but does not decide what text survives.
 
-**Recall key** is a lightweight derived handle for something the knowledge base may need to recall. It can be an entity, topic, event, task, question, or another user-specific thing.
+**Recall key** is a lightweight handle for something worth finding later: an entity, topic, event, task, question, or other user-specific thing.
 
-**Recall link** connects a recall key to a source chunk. A link can carry relation and time metadata so retrieval can build useful views without loading everything.
+**Recall link** connects a recall key to a source chunk. Links can carry relation and time metadata, but they are hints, not citable truth.
 
-This branch originally targeted temporal memory. The active indexing work became the smaller foundation temporal memory needs: source-backed chunks, recall links, and optional time hints. Dedicated temporal ordering is not implemented in this document yet.
+## Fields
 
-## Recall Key Fields
+Recall keys:
 
-Recall keys use coarse normalized fields plus source-grounded hints:
+- `kind`: `entity`, `topic`, `event`, `task`, `question`, or `other`
+- `kind_label`
+- `aliases`
+- `summary`
+- `metadata`
 
-- `kind`: `entity`, `topic`, `event`, `task`, `question`, or `other`.
-- `kind_label`: optional natural label from the source.
-- `aliases`: conservative alternate names only.
-- `summary`: short orientation hint, not citable evidence.
-- `metadata`: small source-grounded extras.
+Recall links:
 
-Unknown LLM kinds normalize to `other`; the original value is preserved in metadata.
+- `relation`: `mentions`, `about`, `updates`, `contradicts`, `supports`, or `other`
+- `relation_label`
+- `event_time`
+- `time_label`
+- `metadata`
 
-## Recall Link Fields
+Unknown LLM kinds or relations normalize to `other`; the original value is preserved in metadata. Temporal fields are optional and must stay source-grounded.
 
-Recall links use:
-
-- `relation`: `mentions`, `about`, `updates`, `contradicts`, `supports`, or `other`.
-- `relation_label`: optional natural source-grounded phrase.
-- `event_time`: optional normalized time from source text.
-- `time_label`: optional original time phrase.
-- `metadata`: small source-grounded extras.
-
-Unknown LLM relations normalize to `other`; the original value is preserved in metadata.
-
-Temporal fields are hints, not truth:
-
-- `event_time` should be a normalized date, year, or comparable value only when the source clearly supports it.
-- `time_label` should preserve source phrases such as "before the time skip", "later", or "after the decision".
-- Missing time fields are acceptable. The system should prefer partial temporal evidence over invented precision.
-
-## Indexing Flow
+## Flow
 
 1. Receive raw text.
 2. Preprocess text if configured.
@@ -64,49 +52,30 @@ Temporal fields are hints, not truth:
 4. Split input into source windows.
 5. Save each source window as a source chunk.
 6. Summarize each source chunk neutrally.
-7. Extract or match recall keys for the new chunks.
+7. Extract or match recall keys for new chunks.
 8. Save recall keys and append recall links.
 9. Embed source chunks and recall keys for vector search.
 
-If recall indexing fails, raw input, source chunks, and vector index should still remain usable.
+Implementation lives under `server/src/services/rag/`. Note events submit durable jobs through `submit_ingest_job(...)`.
 
-The implementation lives under `server/src/services/rag/`. Ingestion is triggered asynchronously via events emitted by the Notes service. The event listener submits a durable job through `submit_ingest_job(...)`.
+See `server/docs/NOTES_AND_INGESTION.md` and `server/docs/RAG_DURABILITY.md`.
 
-For details on the event-driven decoupling between Notes and RAG, see `server/docs/NOTES_AND_INGESTION.md`.
+## Document Lifecycle
 
-Durable job details live in `server/docs/RAG_DURABILITY.md`.
+- Soft delete masks the raw input and removes active source-chunk vectors.
+- Queries filter deleted chunks out of source evidence.
+- Restore re-indexes saved chunks without rerunning the LLM.
+- Hard delete removes raw input, source chunks, recall links, vectors, and job state.
+- Recall keys can stay when other chunks still use them.
 
-## Trash Bin & Document Lifecycle
+## Recall Deduplication
 
-To support safe deletion of knowledge without fragmenting cross-document entities, the system implements a strict "Trash Bin" lifecycle for `raw_inputs`:
+Recall indexing uses four duplicate guards:
 
-- **Soft Delete**: When a document is soft-deleted, it is marked with `deleted_at` in the SQLite database and its source chunk vectors are synchronously removed from ChromaDB.
-- **Query Isolation**: All RAG queries explicitly filter out chunks where `deleted_at IS NOT NULL`. This instantly excludes the document's knowledge from the LLM context.
-- **Recall Key Stability**: Soft-deleting a document does *not* delete cross-document recall keys (e.g., "Eren Yeager"), ensuring knowledge continuity for other documents. However, the system simply ignores the links from the soft-deleted document.
-- **Restore**: Restoring a document clears the `deleted_at` flag and immediately re-indexes its chunks into ChromaDB, restoring its exact previous state.
-- **Hard Delete**: Hard deleting permanently removes the raw input and cascades to drop all its `source_chunks` and `recall_links` forever.
-
-## Recall Deduplication & Matching
-
-To prevent knowledge fragmentation (e.g., creating 50 separate nodes for "Prince Andrew"), the system employs a strict 4-layer deduplication flow during ingestion.
-
-### 1. Candidate Retrieval (Pre-LLM)
-Before the LLM extracts any entities, the system searches the database for existing keys so the LLM can reuse them.
-**How it knows what to search:**
-The `candidates.py` step extracts search hints from the raw text and chunk summaries:
-- **Keyword Terms:** It extracts up to 12 important words (≥4 chars, filtering stop words) to query SQLite for exact name/alias matches and FTS keyword matches.
-- **Semantic Text:** It concatenates the text and summaries to run a Chroma vector search against existing recall keys (skipped if the DB is empty).
-These candidates (merged and capped at 20) are passed in the LLM prompt. The LLM is instructed to output the `existing_recall_key_id` if a new extraction matches a candidate.
-
-### 2. In-Memory Batch Deduplication
-If the LLM's response contains multiple extractions with the exact same normalized name in a single batch (e.g., hallucinating "Prince Andrew" twice for the same chunk), `normalizer.py` intercepts this. It maintains an in-memory dictionary and collapses identical names into a single key object before it touches the database, preventing batch-level UUID duplication.
-
-### 3. Exact Match Resolution
-If the LLM proposes a new key (without an `existing_recall_key_id`), `normalizer.py` queries the database as a safety net. If it finds an existing key with the exact same normalized name, it forcefully overrides the LLM and reuses the existing ID. This aggressively patches over cases where the LLM was "lazy" or candidate retrieval missed the exact match.
-
-### 4. Structural Database Lock
-To structurally prevent concurrency race conditions (e.g., two background workers processing chunks at the exact same millisecond, finding nothing, and both trying to insert "Prince Andrew"), SQLite enforces a `UNIQUE` constraint on `recall_key_terms(normalized_term)` for `term_type='name'`. 
-If a race condition occurs, the first worker succeeds. The second worker fails with a `UNIQUE constraint failed` error, which safely aborts the unit. The durable ingest system then retries the failed chunk with a backoff, and on the next attempt, it seamlessly finds and reuses the first worker's newly created key at Step 1.
+- Candidate retrieval before the LLM, capped before prompting.
+- In-memory batch dedupe by normalized name.
+- Exact-match repository lookup before creating a new key.
+- SQLite unique constraint on normalized name terms.
 
 Safe recall key updates:
 
@@ -117,20 +86,16 @@ Safe recall key updates:
 - Shallow-merge safe metadata.
 - Update `updated_at`.
 
-Existing recall key names stay stable. New source chunks may enrich the key's
-summary, aliases, label, or metadata, but they should not narrow the key to only
-the latest chunk.
+Existing recall key names stay stable. New source chunks may enrich a key, but normal ingest appends links instead of rewriting old chunks.
 
-Normal ingest appends links. It does not delete old links or rewrite old chunks.
-
-## Source-Bound Rules
+## Source Rules
 
 - Raw input is the authority.
-- Source chunks must point to raw spans and should not be lossy.
+- Source chunks point to raw spans and should not be lossy.
 - Recall keys and summaries must not introduce unsupported facts.
 - Labels, reasons, and metadata are hints, not citable evidence.
-- Final answers should cite source chunk spans, not recall metadata.
+- Final answers cite source chunk spans, not recall metadata.
 
-## Not In This Enhancement
+## Limits
 
-This design does not include atom extraction, full graph traversal, contradiction resolution, production multi-user storage, recursive summary engines, or dedicated temporal ordering. Temporal retrieval should build on `event_time`, `time_label`, source spans, and recall links in a later pass.
+This design does not include atom extraction, full graph traversal, contradiction resolution, recursive summary engines, or dedicated temporal ordering. Temporal retrieval should build on `event_time`, `time_label`, source spans, and recall links only when real examples need it.

@@ -7,18 +7,19 @@ from uuid import uuid4
 from src.infra.sqlite import get_connection
 
 
-def create(name: str, user_id: str) -> str:
+def create(name: str, user_id: str, conn=None) -> str:
     """Create a new tag. Raises sqlite3.IntegrityError if name already exists for user."""
     tag_id = str(uuid4())
-    conn = get_connection()
-    conn.execute(
+    db = conn or get_connection()
+    db.execute(
         """
         INSERT INTO tags (id, name, user_id)
         VALUES (?, ?, ?)
         """,
         (tag_id, name, user_id)
     )
-    conn.commit()
+    if conn is None:
+        db.commit()
     return tag_id
 
 
@@ -53,29 +54,31 @@ def get_by_name(name: str, user_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def add_to_note(note_id: str, tag_id: str) -> None:
+def add_to_note(note_id: str, tag_id: str, conn=None) -> None:
     """Associate a tag with a note."""
-    conn = get_connection()
+    db = conn or get_connection()
     try:
-        conn.execute(
+        db.execute(
             """
             INSERT INTO note_tags (note_id, tag_id)
             VALUES (?, ?)
             """,
             (note_id, tag_id)
         )
-        conn.commit()
+        if conn is None:
+            db.commit()
     except sqlite3.IntegrityError:
         pass # Already tagged
 
 
-def remove_from_note(note_id: str, tag_id: str) -> None:
-    conn = get_connection()
-    conn.execute(
+def remove_from_note(note_id: str, tag_id: str, conn=None) -> None:
+    db = conn or get_connection()
+    db.execute(
         "DELETE FROM note_tags WHERE note_id = ? AND tag_id = ?",
         (note_id, tag_id)
     )
-    conn.commit()
+    if conn is None:
+        db.commit()
 
 
 def get_for_note(note_id: str) -> list[dict[str, Any]]:

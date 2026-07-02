@@ -2,14 +2,16 @@ import { Outlet } from 'react-router-dom'
 import { FloatingDock } from './FloatingDock'
 import { useVersionCheck } from '../../lib/useVersionCheck'
 import { ReleaseHistoryModal } from '../ui/ReleaseHistoryModal'
-import { RefreshCw } from 'lucide-react'
+import { ExternalLink, RefreshCw, UserCircle } from 'lucide-react'
 // import { motion } from 'framer-motion'
 import { ConfigProvider } from '../../lib/context/ConfigContext'
 import { useConfig } from '../../lib/context/useConfig'
 import { AlertTriangle, ChevronRight, ServerOff } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { useEffect, useState } from 'react'
-import { API_BASE } from '../../lib/api'
+import { API_BASE, authApi } from '../../lib/api'
+
+const REPOSITORY_URL = 'https://github.com/kuchuk-borom-debbarma/UnmessIt.AI'
 
 function GlobalConnectionBanner() {
   const [isOffline, setIsOffline] = useState(false)
@@ -69,9 +71,7 @@ function GlobalWarningBanner() {
   )
 }
 
-function GlobalUpdateBanner({ onShowChangelog }: { onShowChangelog: () => void }) {
-  const { updateAvailable, versionInfo } = useVersionCheck()
-
+function GlobalUpdateBanner({ updateAvailable, versionInfo }: { updateAvailable: boolean; versionInfo: ReturnType<typeof useVersionCheck>['versionInfo'] }) {
   if (!updateAvailable || !versionInfo) return null
 
   return (
@@ -85,29 +85,54 @@ function GlobalUpdateBanner({ onShowChangelog }: { onShowChangelog: () => void }
           <p className="text-xs font-medium text-primary-500/80 hidden sm:block">A new version of UnmessIt.AI is available.</p>
         </div>
       </div>
-      <button onClick={onShowChangelog} className="premium-btn premium-btn-primary h-9 px-4">
-        View Details <ChevronRight size={16} className="ml-2" />
-      </button>
+      <a href={REPOSITORY_URL} target="_blank" rel="noreferrer" className="premium-btn premium-btn-primary h-9 px-4">
+        View on GitHub <ExternalLink size={16} className="ml-2" />
+      </a>
     </div>
   )
 }
 
 export function AppShell({ token, onLogout }: { token: string | null; onLogout: () => void }) {
   const [showChangelog, setShowChangelog] = useState(false)
-  const { versionInfo, currentVersion } = useVersionCheck()
+  const [user, setUser] = useState<{ id: string; identifier: string } | null>(null)
+  const { updateAvailable, versionInfo, currentVersion } = useVersionCheck()
   // const location = useLocation()
+
+  useEffect(() => {
+    if (!token) {
+      setUser(null)
+      return
+    }
+    let mounted = true
+    authApi.me(token)
+      .then((next) => { if (mounted) setUser(next) })
+      .catch(() => { if (mounted) setUser(null) })
+    return () => { mounted = false }
+  }, [token])
 
   return (
     <ConfigProvider token={token}>
-      {/* 2026 Background FX */}
-      <div className="bg-noise" />
-      <div className="bg-ambient" />
-
       {token && (
         <div className="fixed top-0 inset-x-0 z-[60]">
+          <div className="mx-auto flex max-w-[1600px] items-center justify-between px-4 py-3 md:px-8">
+            <div className="liquid-glass flex min-w-0 items-center gap-3 rounded-lg px-3 py-2">
+              <UserCircle size={20} className="shrink-0 text-primary-400" />
+              <div className="min-w-0">
+                <div className="truncate text-sm font-bold">{user?.identifier || 'Signed in'}</div>
+                <div className="truncate text-[11px] font-medium text-muted-foreground">Local workspace</div>
+              </div>
+            </div>
+            <button
+              className="liquid-glass inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-bold text-muted-foreground transition-colors hover:text-foreground"
+              onClick={() => setShowChangelog(true)}
+            >
+              v{currentVersion}
+              <span className="hidden text-xs font-semibold text-primary-400 sm:inline">Release history</span>
+            </button>
+          </div>
           <GlobalConnectionBanner />
           <GlobalWarningBanner />
-          <GlobalUpdateBanner onShowChangelog={() => setShowChangelog(true)} />
+          <GlobalUpdateBanner updateAvailable={updateAvailable} versionInfo={versionInfo} />
         </div>
       )}
 
@@ -124,6 +149,7 @@ export function AppShell({ token, onLogout }: { token: string | null; onLogout: 
         onClose={() => setShowChangelog(false)} 
         versionInfo={versionInfo} 
         currentVersion={currentVersion} 
+        updateAvailable={updateAvailable}
       />
     </ConfigProvider>
   )

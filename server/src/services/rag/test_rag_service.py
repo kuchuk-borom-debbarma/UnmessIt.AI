@@ -11,7 +11,9 @@ from src.repositories import config_presets, dev, raw_inputs, recall, recall_key
 from src.services.rag.private.chains.recall.candidates import RecallCandidateChain
 from src.services.rag.private.chains.recall.index import RecallIndexChain
 from src.services.rag.private.chains.recall.normalizer import RecallNormalizerChain
-from src.services.rag.private.chains.query import QueryEvidenceChain
+from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, QueryVerifierChain
+from src.services.rag.private.chains.query._breakdown import _decompose
+from src.services.rag.private.chains.query._search import _rank_chunks, _snippets
 from src.services.rag.private.chains.source_chunk_assembler import SourceChunkAssemblerChain
 from src.services.rag.private.chains.source_chunk_drafts import SourceChunkDraftChain
 from src.services.rag.private.chains.source_windows import SourceWindowChain
@@ -60,6 +62,54 @@ class FakeJson:
 
     async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
         return self.invoke_json(system, human)
+
+
+async def test_query_verifier_filters_off_scope_chunks_and_requests_retry():
+    class FakeVerifierJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            assert "without mixing unrelated contexts" in system
+            return {
+                "status": "needs_retry",
+                "reason": "The requested scope is missing one focused subject.",
+                "on_topic_ids": ["chunk-cp"],
+                "off_topic_ids": ["chunk-aot"],
+                "retry_query": "David Cyberpunk focused evidence",
+            }
+
+    chunks = [
+        {"id": "chunk-cp", "summary": "David in one context", "_snippets": ["David details"]},
+        {"id": "chunk-aot", "summary": "A different same-word context", "_snippets": ["Attack Titan details"]},
+    ]
+
+    result = await QueryVerifierChain(FakeVerifierJson()).run("compare David and Eren", chunks, "user-1")
+
+    assert result["status"] == "needs_retry"
+    assert result["on_topic_ids"] == ["chunk-cp"]
+    assert result["off_topic_ids"] == ["chunk-aot"]
+    assert result["retry_query"] == "David Cyberpunk focused evidence"
+
+
+async def test_query_verifier_keeps_partial_on_topic_evidence():
+    class PartialVerifierJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            assert "partial answer" in system
+            return {
+                "status": "insufficient",
+                "reason": "Only one requested part is present.",
+                "on_topic_ids": ["chunk-supported"],
+                "off_topic_ids": [],
+                "retry_query": "",
+            }
+
+    chunks = [
+        {"id": "chunk-supported", "summary": "One requested part", "_snippets": ["Supported detail"]},
+        {"id": "chunk-other", "summary": "Unrelated", "_snippets": ["Other detail"]},
+    ]
+
+    result = await QueryVerifierChain(PartialVerifierJson()).run("explain several related causes", chunks, "user-1")
+
+    assert result["status"] == "sufficient"
+    assert result["on_topic_ids"] == ["chunk-supported"]
 
 
 async def test_ingest_submits_durable_job(monkeypatch):
@@ -268,14 +318,158 @@ async def test_query_context_packer_ranks_and_falls_back(monkeypatch):
     assert trace["selected_snippet_counts"].keys() == {"vector", "lexical", "linked"}
     # lexical chunk has no query-term overlap so it falls back to its summary snippet
     lexical_chunk = next(c for c in chunks if c["id"] == "lexical")
-    assert lexical_chunk["_snippets"] == ["fallback summary"]
+    assert lexical_chunk["_snippets"][0] == "fallback summary"
     assert trace["context_chars_saved"] >= 0
+
+
+def test_query_snippets_expand_physical_terms():
+    text = "The subject likes quiet mornings.\n\nThey have two moles near the neck and a small scar."
+
+    assert "moles" in _snippets("physical stuff", text, "")[0]
+
+
+def test_query_snippets_keep_numbered_list_items_together():
+    text = "Intro sentence. Physical Details\nAmy has:\n1. Six moles on her face\n2. Three moles near her ears\n3. One mole on her neck\nSensitive Physical Notes\nAmy may feel insecure about hair."
+
+    snippet = _snippets("Amy physical infos", text, "")[0]
+
+    assert "Six moles on her face" in snippet
+    assert "Three moles near her ears" in snippet
+    assert "One mole on her neck" in snippet
+
+
+def test_source_chunk_lexical_search_expands_physical_terms(monkeypatch):
+    conn = _memory_db()
+    monkeypatch.setattr(source_chunks, "get_connection", lambda: conn)
+    conn.execute("INSERT INTO raw_inputs (id, job_id, content, user_id) VALUES ('raw-1', 'note-1', 'text', 'user-1')")
+    conn.execute(
+        "INSERT INTO source_chunks (id, raw_input_id, text, summary, spans, metadata, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("chunk-1", "raw-1", "She has two moles near her neck.", "summary", "[]", "{}", "user-1"),
+    )
+
+    rows = source_chunks.search("physical stuff", "user-1", limit=5)
+
+    assert [row["id"] for row in rows] == ["chunk-1"]
+
+
+def test_query_rank_chunks_uses_expanded_physical_terms():
+    generic = _source_chunk("generic", "Subject Alpha likes quiet mornings and old songs.")
+    mole_detail = _source_chunk("mole-detail", "Subject Alpha has two moles near the neck and a small scar.")
+
+    ranked, reasons = _rank_chunks("physical stuff about Subject Alpha", [generic, mole_detail])
+
+    assert ranked[0]["id"] == "mole-detail"
+    assert "query_terms:" in " ".join(reasons["mole-detail"])
+
+
+async def test_query_answer_accepts_inline_citation_markers():
+    class MarkerJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            return {"answer": "Subject Alpha has two moles. [[cite:chunk-1]]", "citation_ids": []}
+
+    result = await QueryAnswerChain(MarkerJson()).run(
+        "physical stuff about Subject Alpha",
+        [_source_chunk("chunk-1", "They have two moles near the neck.")],
+        user_id="user-1",
+    )
+
+    assert result["citation_ids"] == ["chunk-1"]
+
+
+async def test_query_answer_sanitizes_invalid_and_malformed_citation_markers():
+    class MarkerJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            return {
+                "answer": "Supported [[cite:chunk-1]], malformed [[cite:chunk-2], invalid [[cite:not-real]].",
+                "citation_ids": [],
+            }
+
+    result = await QueryAnswerChain(MarkerJson()).run(
+        "compare Subject Alpha and Subject Beta",
+        [
+            _source_chunk("chunk-1", "Subject Alpha has one detail."),
+            _source_chunk("chunk-2", "Subject Beta has another detail."),
+        ],
+        user_id="user-1",
+    )
+
+    assert result["citation_ids"] == ["chunk-1", "chunk-2"]
+    assert "[[cite:chunk-2]]" in result["answer"]
+    assert "not-real" not in result["answer"]
+
+
+async def test_query_answer_prompt_allows_cross_context_comparison():
+    class CaptureJson:
+        def __init__(self) -> None:
+            self.system = ""
+
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            self.system = system
+            return {"answer": "ok", "citation_ids": []}
+
+    json_client = CaptureJson()
+    await QueryAnswerChain(json_client).run(
+        "compare Subject Alpha and Subject Beta",
+        [
+            _source_chunk("chunk-1", "Subject Alpha has one detail."),
+            _source_chunk("chunk-2", "Subject Beta has another detail."),
+        ],
+        user_id="user-1",
+    )
+
+    assert "different contexts or sources" in json_client.system
+
+
+async def test_query_breakdown_expands_physical_attribute_queries_when_llm_underplans():
+    class OriginalOnlyJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            return {"sub_queries": ["Tell me physical stuff about Subject Alpha"]}
+
+    result = await _decompose(OriginalOnlyJson(), "Tell me physical stuff about Subject Alpha", "user-1")
+
+    assert result[0] == "Tell me physical stuff about Subject Alpha"
+    assert any("Subject Alpha appearance physical details" in query and "counts" in query for query in result)
+
+
+async def test_query_breakdown_expands_comparison_queries_when_llm_underplans():
+    class OriginalOnlyJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            return {"sub_queries": ["How similar are Subject Alpha and Subject Beta?"]}
+
+    result = await _decompose(OriginalOnlyJson(), "How similar are Subject Alpha and Subject Beta?", "user-1")
+
+    assert result[0] == "How similar are Subject Alpha and Subject Beta?"
+    assert any(query.startswith("Subject Alpha attributes context") for query in result)
+    assert any(query.startswith("Subject Beta attributes context") for query in result)
+    assert any("Subject Alpha Subject Beta similarities differences" in query and "attributes" in query for query in result)
+
+
+async def test_query_breakdown_expands_reasoning_queries_when_llm_underplans():
+    class OriginalOnlyJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            return {"sub_queries": ["Why did Subject Alpha change?"]}
+
+    result = await _decompose(OriginalOnlyJson(), "Why did Subject Alpha change?", "user-1")
+
+    assert result[0] == "Why did Subject Alpha change?"
+    assert any("Subject Alpha evidence context causes effects" in query for query in result)
+
+
+async def test_query_breakdown_splits_broad_multi_part_queries_when_llm_underplans():
+    class OriginalOnlyJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            return {"sub_queries": ["How did one factor, another factor, and a later result connect over time?"]}
+
+    query = "How did one factor, another factor, a third factor, and a later result connect over time?"
+    result = await _decompose(OriginalOnlyJson(), query, "user-1")
+
+    assert result[0] == query
+    assert any("another factor evidence context" == item for item in result)
+    assert any("a third factor evidence context" == item for item in result)
 
 
 async def test_query_breakdown_falls_back_to_original_query_on_llm_failure():
     """Breakdown must not block retrieval when the LLM call fails."""
-    from src.services.rag.private.chains.query._breakdown import _decompose
-
     class FailJson:
         async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
             raise RuntimeError("provider unavailable")
@@ -286,9 +480,7 @@ async def test_query_breakdown_falls_back_to_original_query_on_llm_failure():
 
 
 async def test_query_breakdown_caps_and_deduplicates_sub_queries():
-    """Breakdown must cap at 4, always lead with original, and dedup."""
-    from src.services.rag.private.chains.query._breakdown import _decompose
-
+    """Breakdown must cap at 6, always lead with original, and dedup."""
     class OverflowJson:
         async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
             return {"sub_queries": [
@@ -297,14 +489,17 @@ async def test_query_breakdown_caps_and_deduplicates_sub_queries():
                 "sub-query 2",
                 "sub-query 1",  # duplicate
                 "sub-query 3",
-                "sub-query 4",  # 6th — should be cut
+                "sub-query 4",
+                "sub-query 5",
+                "sub-query 6",  # 8th item, 7th unique — should be cut
             ]}
 
     result = await _decompose(OverflowJson(), "original", "user-1")
 
     assert result[0] == "original"
-    assert len(result) == 4
-    assert len(set(result)) == 4  # no duplicates
+    assert len(result) == 6
+    assert len(set(result)) == 6  # no duplicates
+    assert "sub-query 6" not in result
 
 
 async def test_normalizer_reuses_single_exact_name_or_alias_match(monkeypatch):

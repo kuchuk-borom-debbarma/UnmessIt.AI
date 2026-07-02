@@ -10,7 +10,10 @@ import chromadb
 from chromadb.utils import embedding_functions
 
 from src.infra.rate_limit import RateLimitedEmbeddingFunction, get_limiter
-from src.infra.settings import get_user_setting_candidates, get_user_settings
+from src.infra.settings import (
+    get_user_embedding_setting_candidates as get_user_setting_candidates,
+    get_user_embedding_settings as get_user_settings,
+)
 from src.infra.progress import report_progress_sync, set_last_embedding_rotation_snapshot, get_last_embedding_rotation_snapshot
 from src.infra.sqlite import DATA_DIR
 
@@ -139,7 +142,7 @@ class RotatingEmbeddingFunction(chromadb.EmbeddingFunction):
         errors = []
         for index, settings in enumerate(candidates, start=1):
             report_progress_sync(
-                f"Embedding rotation preset {index}/{len(candidates)} selected: {settings.preset_name}",
+                f"Embedding config {index}/{len(candidates)} selected: {settings.preset_name}",
                 {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "attempt": index, "total": len(candidates)},
             )
             try:
@@ -154,18 +157,18 @@ class RotatingEmbeddingFunction(chromadb.EmbeddingFunction):
                 result = _embedding_function_for_key(settings.embedding_cache_key())(input)
                 set_last_embedding_rotation_snapshot(settings.rotation_snapshot())
                 report_progress_sync(
-                    f"Embedding rotation preset succeeded: {settings.preset_name}",
+                    f"Embedding config succeeded: {settings.preset_name}",
                     {"preset_id": settings.preset_id, "preset_name": settings.preset_name},
                 )
                 return result
             except Exception as exc:
                 errors.append(f"{settings.preset_name}: {exc}")
                 report_progress_sync(
-                    f"Embedding rotation preset failed: {settings.preset_name}",
+                    f"Embedding config failed: {settings.preset_name}",
                     {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "error": str(exc)[:500]},
                 )
-        report_progress_sync("All embedding rotation presets failed.", {"errors": errors})
-        raise RuntimeError("All embedding rotation presets failed: " + "; ".join(errors))
+        report_progress_sync("All embedding configs failed.", {"errors": errors})
+        raise RuntimeError("All embedding configs failed: " + "; ".join(errors))
 
 
 @lru_cache(maxsize=100)

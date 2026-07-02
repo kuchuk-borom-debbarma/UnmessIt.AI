@@ -7,14 +7,15 @@ UnmessIt.AI splits per-user AI configuration into two parts:
 - **Processing settings**: stable ingest/retrieval behavior. These include embedding batch size, chunk size, chunk overlap, and ingest retry backoff.
 - **Config presets**: complete model/API setups. These include OpenAI-compatible API keys, base URLs, language model names, embedding model names, generation limits, retries, and rate limits.
 
-Rotation is per job/request only. The system does not persist a "last good" pointer. Each job/query starts at the first saved rotation lane and tries the next lane only if the current lane fails.
+LLM and embedding runtime selection are independent. Each lane can use one active preset or rotate across its own ordered preset list. Rotation is per job/request only. The system does not persist a "last good" pointer. Each job/query starts at the first saved lane item and tries the next item only if the current item fails.
 
 ## Resolution Flow
 
 1. `user_processing_settings` supplies stable processing settings.
-2. `user_rotation_config` supplies whether rotation is enabled and the ordered preset IDs.
-3. `user_config_presets` stores config presets. The `is_active` flag is the specific config used when rotation is disabled.
-4. `src.infra.settings.get_user_setting_candidates(user_id)` returns ordered `Settings` objects combining stable processing with either the active preset or rotation presets.
+2. `user_rotation_config` supplies LLM lane mode, embedding lane mode, active preset IDs, and ordered rotation IDs.
+3. `user_config_presets` stores config presets. The legacy `is_active` flag remains for compatibility, while lane active IDs decide the current LLM and embedding singles.
+4. `src.infra.settings.get_user_llm_setting_candidates(user_id)` returns ordered LLM `Settings` objects.
+5. `src.infra.settings.get_user_embedding_setting_candidates(user_id)` returns ordered embedding `Settings` objects.
 
 The LRU caches clear when processing settings, presets, or rotation order change.
 
@@ -22,6 +23,7 @@ The LRU caches clear when processing settings, presets, or rotation order change
 
 - Only the `openai` provider is supported.
 - Chunk size, chunk overlap, embedding batch size, and ingest retry backoff do not rotate mid-job.
+- LLM and embedding lanes can be single/rotation independently.
 - LLM and embedding model names belong to config presets and can differ between presets.
 - API keys are never returned by `/configs` responses and never stored in snapshots.
 - SSE progress is display-only. Durable checkpoints and saved artifact metadata are the persistent record.
@@ -38,12 +40,13 @@ Saved chunks, recall keys/links, and vector metadata include non-secret configur
 
 - `GET /configs/processing` - Fetch stable processing settings.
 - `PUT /configs/processing` - Save stable processing settings.
-- `GET /configs/rotation` - Fetch rotation enabled state and ordered lane IDs.
-- `PUT /configs/rotation` - Save rotation enabled state and ordered lane IDs.
+- `GET /configs/rotation` - Fetch LLM and embedding lane mode, active IDs, and ordered rotation IDs.
+- `PUT /configs/rotation` - Save LLM and embedding lane mode, active IDs, and ordered rotation IDs.
+- `POST /configs/test` - Test an unsaved or edit-mode LLM/embedding API config and return HTTP 200 on success. When `preset_id` is supplied, blank API key fields reuse the saved secret for that preset.
 - `GET /configs/presets` - List config presets without API keys.
 - `POST /configs/presets` - Create a config preset.
 - `PUT /configs/presets/{preset_id}` - Update a config preset while preserving omitted keys.
-- `PUT /configs/presets/{preset_id}/activate` - Switch to one specific config and disable rotation.
+- `PUT /configs/presets/{preset_id}/activate?lane=llm|embedding|both` - Switch one lane or both lanes to one specific config and disable that lane's rotation.
 - `DELETE /configs/presets/{preset_id}` - Delete a config preset.
 - `GET /configs/active` - Compatibility endpoint returning the first effective settings candidate.
 

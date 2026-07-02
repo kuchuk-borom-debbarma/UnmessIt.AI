@@ -7,6 +7,46 @@ from typing import Any
 from src.infra.sqlite import get_connection
 from src.services.rag.models import SourceChunk
 
+_ATTRIBUTE_TRIGGERS = {
+    "appearance", "appearances", "attribute", "attributes", "body", "build",
+    "characteristic", "characteristics", "count", "counts", "description",
+    "described", "detail", "details", "face", "feature", "features", "look",
+    "looks", "mark", "marks", "mole", "moles", "number", "numbers",
+    "physical", "property", "properties", "quality", "qualities", "spec",
+    "specs", "trait", "traits",
+}
+_ATTRIBUTE_EXPANSIONS = (
+    "attribute", "attributes", "detail", "details", "descriptor",
+    "descriptors", "label", "labels", "count", "counts", "number", "numbers",
+    "feature", "features", "property", "properties", "measurement",
+    "measurements", "appearance", "physical", "body", "face", "hair", "eyes",
+    "eye", "skin", "height", "build", "scar", "scars", "mole", "moles",
+    "mark", "marks", "birthmark", "birthmarks", "freckle", "freckles",
+    "complexion", "tattoo", "tattoos", "piercing", "piercings",
+)
+_COMPARISON_TRIGGERS = {
+    "compare", "comparison", "contrast", "contrasts", "different",
+    "difference", "differences", "dissimilar", "dissimilarities", "parallel",
+    "parallels", "same", "similar", "similarities", "similarity", "versus",
+    "vs",
+}
+_COMPARISON_EXPANSIONS = (
+    "attribute", "attributes", "context", "background", "behavior", "change",
+    "changes", "goal", "goals", "constraint", "constraints", "relationship",
+    "relationships", "decision", "decisions", "outcome", "outcomes",
+    "parallels", "contrast",
+)
+_REASONING_TRIGGERS = {
+    "cause", "causes", "changed", "changes", "developed", "development",
+    "effect", "effects", "evolved", "evolution", "impact", "impacts",
+    "reason", "reasons", "timeline", "why",
+}
+_REASONING_EXPANSIONS = (
+    "evidence", "context", "background", "cause", "causes", "effect",
+    "effects", "change", "changes", "outcome", "outcomes", "sequence",
+    "before", "after", "because",
+)
+
 
 def save_many(chunks: list[SourceChunk]) -> None:
     """Store citable chunks with JSON-encoded spans and metadata."""
@@ -99,10 +139,13 @@ def search(query: str, user_id: str, limit: int = 8, within_directories: list[st
         return []
         
     terms_clause = "(" + " OR ".join(["(sc.text LIKE ? OR sc.summary LIKE ?)"] * len(terms)) + ")"
+    score_sql = " + ".join(["CASE WHEN sc.text LIKE ? OR sc.summary LIKE ? THEN 1 ELSE 0 END"] * len(terms))
     where_clauses = [terms_clause, "sc.user_id = ?", "ri.deleted_at IS NULL"]
     
+    score_params = []
     params = []
     for term in terms:
+        score_params.extend([f"%{term}%", f"%{term}%"])
         params.extend([f"%{term}%", f"%{term}%"])
     params.append(user_id)
     
@@ -137,14 +180,15 @@ def search(query: str, user_id: str, limit: int = 8, within_directories: list[st
     
     rows = get_connection().execute(
         f"""
-        SELECT sc.id, sc.raw_input_id, ri.job_id as note_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at, sc.directory_path
+        SELECT sc.id, sc.raw_input_id, ri.job_id as note_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at, sc.directory_path,
+               ({score_sql}) as lexical_score
         FROM source_chunks sc
         JOIN raw_inputs ri ON ri.id = sc.raw_input_id
         WHERE {where_sql}
-        ORDER BY sc.created_at DESC
+        ORDER BY lexical_score DESC, sc.created_at DESC
         LIMIT ?
         """,
-        [*params, limit],
+        [*score_params, *params, limit],
     ).fetchall()
     return [_from_row(row) for row in rows]
 
@@ -270,4 +314,19 @@ def _terms(query: str) -> list[str]:
         if len(clean) >= 3 and lowered not in seen:
             seen.add(lowered)
             terms.append(clean)
-    return terms[:8]
+    if seen & _ATTRIBUTE_TRIGGERS:
+        for term in _ATTRIBUTE_EXPANSIONS:
+            if term not in seen:
+                seen.add(term)
+                terms.append(term)
+    if seen & _COMPARISON_TRIGGERS:
+        for term in _COMPARISON_EXPANSIONS:
+            if term not in seen:
+                seen.add(term)
+                terms.append(term)
+    if seen & _REASONING_TRIGGERS:
+        for term in _REASONING_EXPANSIONS:
+            if term not in seen:
+                seen.add(term)
+                terms.append(term)
+    return terms[:36]

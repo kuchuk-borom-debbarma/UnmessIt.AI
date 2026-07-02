@@ -5,9 +5,23 @@ import { Link } from 'react-router-dom'
 import { DirectorySearchSelect } from './DirectorySearchSelect'
 import { TagSearchSelect } from './TagSearchSelect'
 import { useAsk } from '../../contexts/useAsk'
-import { useEffect, useRef, memo } from 'react'
+import type { ProgressStep } from '../../contexts/AskContextCore'
+import { useEffect, useRef, memo, useState } from 'react'
 
 type Toast = { tone: 'success' | 'danger'; message: string }
+type Citation = {
+  source_chunk_id: string
+  source_input_id: string
+  exact_quote?: string
+  raw_text?: string
+  cleaned_text?: string
+  start_char?: number | null
+  end_char?: number | null
+}
+
+const CITE_MARKER_RE = /(\[\[cite:[^\]\s]+\]\]?)/g
+const CITE_MARKER_ONLY_RE = /^\[\[cite:([^\]\s]+)\]\]?$/
+const STRAY_CITE_MARKER_RE = /\[\[cite:[^\]\s]+(?:\]\])?/g
 
 function ToastMessage({ toast }: { toast: Toast }) {
   return (
@@ -31,7 +45,7 @@ function ToastMessage({ toast }: { toast: Toast }) {
 const MiniTerminal = memo(function MiniTerminal({
   steps, loading, open, onToggle
 }: {
-  steps: string[]
+  steps: ProgressStep[]
   loading: boolean
   open: boolean
   onToggle: () => void
@@ -71,7 +85,7 @@ const MiniTerminal = memo(function MiniTerminal({
         <span className={cn("text-xs font-mono font-medium flex-1 text-left truncate",
           loading ? "text-primary-600 dark:text-primary-300/80" : "text-muted-foreground/60"
         )}>
-          {loading ? lastStep.split('{')[0].trim() : `${steps.length} steps completed`}
+          {loading ? lastStep.message : `${steps.length} steps completed`}
         </span>
         {loading && <RefreshCw size={11} className="text-primary-400 animate-spin shrink-0" />}
         {open ? <ChevronUp size={14} className="text-muted-foreground/50 shrink-0" /> : <ChevronDown size={14} className="text-muted-foreground/50 shrink-0" />}
@@ -93,13 +107,15 @@ const MiniTerminal = memo(function MiniTerminal({
             >
               {steps.map((step, idx) => {
                 const isLast = idx === steps.length - 1
+                const details = formatProgressDetails(step.details)
                 return (
                   <div
-                    key={idx}
+                    key={`${step.ref}-${idx}`}
                     className={cn(
                       "flex items-start gap-2 leading-relaxed",
                       isLast && loading ? "text-primary-600 dark:text-primary-300" : "text-zinc-600 dark:text-zinc-500"
                     )}
+                    style={{ paddingLeft: `${Math.min(step.depth, 6) * 14}px` }}
                   >
                     <span className="shrink-0 mt-px">
                       {isLast && loading
@@ -107,7 +123,10 @@ const MiniTerminal = memo(function MiniTerminal({
                         : <span className="text-zinc-400 dark:text-zinc-700">›</span>
                       }
                     </span>
-                    <span className="break-all">{step}</span>
+                    <span className="min-w-0">
+                      <span className="break-words">{step.message}</span>
+                      {details && <span className="ml-2 text-zinc-400 dark:text-zinc-600">{details}</span>}
+                    </span>
                   </div>
                 )
               })}
@@ -118,6 +137,84 @@ const MiniTerminal = memo(function MiniTerminal({
     </div>
   )
 })
+
+function formatProgressDetails(details?: Record<string, unknown>) {
+  if (!details) return ''
+  const entries = Object.entries(details)
+    .filter(([key]) => !key.endsWith('_ids') && key !== 'recall_keys' && key !== 'sub_queries')
+    .slice(0, 3)
+  if (entries.length === 0) return ''
+  return entries.map(([key, value]) => `${key}:${compactValue(value)}`).join(' ')
+}
+
+function compactValue(value: unknown) {
+  if (Array.isArray(value)) return `[${value.length}]`
+  if (value && typeof value === 'object') return '{...}'
+  const text = String(value)
+  return text.length > 40 ? `${text.slice(0, 37)}...` : text
+}
+
+function citationHref(citation: Citation) {
+  return `/notes/${citation.source_input_id}?start=${citation.start_char ?? ''}&end=${citation.end_char ?? ''}`
+}
+
+function InlineAnswer({ answer, citations }: { answer: string; citations: Citation[] }) {
+  const [openId, setOpenId] = useState<string | null>(null)
+  const parts = answer.split(CITE_MARKER_RE)
+
+  return (
+    <div className="answer-text">
+      {parts.map((part, index) => {
+        const match = part.match(CITE_MARKER_ONLY_RE)
+        if (!match) {
+          const text = part.replace(STRAY_CITE_MARKER_RE, '')
+          return text ? <span key={index}>{text}</span> : null
+        }
+
+        const chunkId = match[1]
+        const citation = citations.find((item) => item.source_chunk_id === chunkId)
+        if (!citation) return null
+        const sourceNumber = citations.findIndex((item) => item.source_chunk_id === chunkId) + 1
+        const markerId = `${chunkId}-${index}`
+        const isOpen = openId === markerId
+
+        return (
+          <span key={markerId} className="inline-citation-wrap">
+            <button
+              type="button"
+              className="inline-citation-chip"
+              onClick={() => setOpenId(isOpen ? null : markerId)}
+            >
+              Source {sourceNumber}
+            </button>
+            <AnimatePresence>
+              {isOpen && (
+                <motion.span
+                  initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                  transition={{ duration: 0.16 }}
+                  className="inline-citation-popover"
+                >
+                  <span className="inline-citation-label">Cited lines</span>
+                  <span className="inline-citation-quote">
+                    "{citation.exact_quote || citation.raw_text}"
+                  </span>
+                  {citation.cleaned_text && (
+                    <span className="inline-citation-summary">{citation.cleaned_text}</span>
+                  )}
+                  <Link className="inline-citation-link" to={citationHref(citation)}>
+                    Open in note <ExternalLink size={13} />
+                  </Link>
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </span>
+        )
+      })}
+    </div>
+  )
+}
 
 export function AskView({ token }: { token: string }) {
   const {
@@ -311,10 +408,10 @@ export function AskView({ token }: { token: string }) {
             initial={{ opacity: 0, y: 40, filter: 'blur(10px)' }}
             animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
             transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1], delay: 0.1 }}
-            className="bento-card p-8 md:p-12"
+            className="bento-card relative z-20 p-8 md:p-12"
           >
-            <div className="prose prose-invert prose-lg max-w-none prose-headings:font-space prose-headings:font-bold prose-a:text-primary-400 prose-a:no-underline hover:prose-a:text-primary-300">
-              <div dangerouslySetInnerHTML={{ __html: result.answer }} />
+            <div className="text-lg leading-8 text-foreground/90">
+              <InlineAnswer answer={result.answer} citations={result.citations || []} />
             </div>
 
             {result.citations?.length > 0 && (

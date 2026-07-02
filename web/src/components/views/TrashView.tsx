@@ -113,15 +113,45 @@ export function TrashView({ token }: { token: string }) {
   const totalPages = Math.ceil(total / limit)
 
   return (
-    <div className="flex flex-col flex-1 h-full max-w-7xl mx-auto w-full pt-8">
-      
-      {/* Header & Controls */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
-        <div>
-          <h1 className="text-4xl font-extrabold tracking-tight mb-2 text-red-500">Trash</h1>
-          <p className="text-muted-foreground font-medium">Recover or permanently delete your notes.</p>
+    <div className="app-page max-w-7xl">
+      <section className="page-hero">
+        <div className="page-hero-inner">
+          <div className="page-hero-copy">
+            <div className="page-hero-icon border-red-500/25 bg-red-500/10 text-red-500">
+              <Trash2 size={24} />
+            </div>
+            <div>
+              <p className="page-hero-kicker text-red-500">Trash</p>
+              <h1 className="page-hero-title">Recover notes before they disappear.</h1>
+              <p className="page-hero-subtitle">
+                Deleted notes stay here so you can restore them or remove them permanently with a deliberate action.
+              </p>
+            </div>
+          </div>
         </div>
-      </div>
+        <div className="page-stat-grid">
+          <div className="page-stat-card">
+            <span>Deleted notes</span>
+            <strong>{total.toLocaleString()}</strong>
+            <small>recoverable items</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Loaded</span>
+            <strong>{notes.length}</strong>
+            <small>shown on this page</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Directories</span>
+            <strong>{directories.length}</strong>
+            <small>available for context</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Page</span>
+            <strong>{page}</strong>
+            <small>{totalPages || 1} total page{totalPages === 1 ? '' : 's'}</small>
+          </div>
+        </div>
+      </section>
 
       {/* Bento Grid */}
       <div className="columns-1 md:columns-2 xl:columns-3 gap-6 space-y-6">

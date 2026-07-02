@@ -36,14 +36,14 @@ class JsonLLMClient:
 
         for index, settings in enumerate(candidates, start=1):
             report_progress_sync(
-                f"Rotation preset {index}/{len(candidates)} selected: {settings.preset_name}",
+                f"LLM config {index}/{len(candidates)} selected: {settings.preset_name}",
                 {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "attempt": index, "total": len(candidates)},
             )
             try:
                 result = self._invoke_with_settings(_get_chat_llm(settings.llm_cache_key()), settings, system, human)
                 set_last_llm_rotation_snapshot(settings.rotation_snapshot())
                 report_progress_sync(
-                    f"Rotation preset succeeded: {settings.preset_name}",
+                    f"LLM config succeeded: {settings.preset_name}",
                     {"preset_id": settings.preset_id, "preset_name": settings.preset_name},
                 )
                 return result
@@ -51,11 +51,11 @@ class JsonLLMClient:
                 errors.append(f"{settings.preset_name}: {exc}")
                 logger.warning("llm_rotation_preset_failed preset=%s error=%s", settings.preset_name, exc)
                 report_progress_sync(
-                    f"Rotation preset failed: {settings.preset_name}",
+                    f"LLM config failed: {settings.preset_name}",
                     {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "error": str(exc)[:500]},
                 )
-        report_progress_sync("All rotation presets failed.", {"errors": errors})
-        raise ValueError("All rotation presets failed: " + "; ".join(errors))
+        report_progress_sync("All LLM configs failed.", {"errors": errors})
+        raise ValueError("All LLM configs failed: " + "; ".join(errors))
 
     def _invoke_with_settings(self, llm, settings: Settings, system: str, human: str) -> dict[str, Any]:
         messages = [SystemMessage(content=system), HumanMessage(content=human)]
@@ -89,14 +89,14 @@ class JsonLLMClient:
 
         for index, settings in enumerate(candidates, start=1):
             await report_progress(
-                f"Rotation preset {index}/{len(candidates)} selected: {settings.preset_name}",
+                f"LLM config {index}/{len(candidates)} selected: {settings.preset_name}",
                 {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "attempt": index, "total": len(candidates)},
             )
             try:
                 result = await self._async_invoke_with_settings(_get_chat_llm(settings.llm_cache_key()), settings, system, human)
                 set_last_llm_rotation_snapshot(settings.rotation_snapshot())
                 await report_progress(
-                    f"Rotation preset succeeded: {settings.preset_name}",
+                    f"LLM config succeeded: {settings.preset_name}",
                     {"preset_id": settings.preset_id, "preset_name": settings.preset_name},
                 )
                 return result
@@ -104,13 +104,13 @@ class JsonLLMClient:
                 errors.append(f"{settings.preset_name}: {exc}")
                 logger.warning("llm_rotation_preset_failed preset=%s error=%s", settings.preset_name, exc)
                 await report_progress(
-                    f"Rotation preset failed: {settings.preset_name}",
+                    f"LLM config failed: {settings.preset_name}",
                     {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "error": str(exc)[:500]},
                 )
                 if index < len(candidates):
-                    await report_progress(f"Trying next rotation preset after {settings.preset_name} failed.")
-        await report_progress("All rotation presets failed.", {"errors": errors})
-        raise ValueError("All rotation presets failed: " + "; ".join(errors))
+                    await report_progress(f"Trying next LLM config after {settings.preset_name} failed.")
+        await report_progress("All LLM configs failed.", {"errors": errors})
+        raise ValueError("All LLM configs failed: " + "; ".join(errors))
 
     async def _async_invoke_with_settings(self, llm, settings: Settings, system: str, human: str) -> dict[str, Any]:
         messages = [SystemMessage(content=system), HumanMessage(content=human)]

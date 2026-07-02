@@ -55,6 +55,8 @@ def init_db() -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_source_chunks_user_id ON source_chunks(user_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_recall_keys_user_id ON recall_keys(user_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_recall_links_user_id ON recall_links(user_id)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_event_outbox_idempotency ON event_outbox(idempotency_key) WHERE idempotency_key IS NOT NULL")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_event_outbox_status_created ON event_outbox(status, created_at)")
     _add_column_if_missing(conn, "user_config_presets", "llm_rate_limit_per_minute", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(conn, "user_config_presets", "embedding_rate_limit_per_minute", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(conn, "user_config_presets", "embedding_batch_size", "INTEGER NOT NULL DEFAULT 100")
@@ -85,6 +87,12 @@ def init_db() -> None:
         );
         """
     )
+    _add_column_if_missing(conn, "user_rotation_config", "llm_enabled", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(conn, "user_rotation_config", "llm_preset_ids", "JSON NOT NULL DEFAULT '[]'")
+    _add_column_if_missing(conn, "user_rotation_config", "llm_active_preset_id", "TEXT")
+    _add_column_if_missing(conn, "user_rotation_config", "embedding_enabled", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(conn, "user_rotation_config", "embedding_preset_ids", "JSON NOT NULL DEFAULT '[]'")
+    _add_column_if_missing(conn, "user_rotation_config", "embedding_active_preset_id", "TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_directories_user_name ON directories(user_id, name)")
     conn.commit()
 

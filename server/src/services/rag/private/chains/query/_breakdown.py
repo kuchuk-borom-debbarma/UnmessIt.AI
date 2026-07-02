@@ -1,13 +1,38 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from ._state import QueryState
 
 logger = logging.getLogger(__name__)
 
-_MAX_SUB_QUERIES = 4
+_MAX_SUB_QUERIES = 6
+
+_ATTRIBUTE_TERMS = {
+    "appearance", "appearances", "attribute", "attributes", "body", "build",
+    "characteristic", "characteristics", "count", "counts", "description",
+    "described", "detail", "details", "face", "feature", "features", "look",
+    "looks", "mark", "marks", "mole", "moles", "number", "numbers",
+    "physical", "property", "properties", "quality", "qualities", "spec",
+    "specs", "trait", "traits",
+}
+_COMPARISON_TERMS = {
+    "compare", "comparison", "contrast", "contrasts", "different",
+    "difference", "differences", "dissimilar", "dissimilarities", "parallel",
+    "parallels", "same", "similar", "similarities", "similarity", "versus",
+    "vs",
+}
+_REASONING_TERMS = {
+    "cause", "causes", "changed", "changes", "developed", "development",
+    "effect", "effects", "evolved", "evolution", "impact", "impacts",
+    "reason", "reasons", "timeline", "why",
+}
+_QUESTION_STOPWORDS = {
+    "about", "and", "are", "compare", "different", "does", "for", "how", "is",
+    "me", "similar", "tell", "the", "to", "versus", "vs", "what", "who", "why",
+}
 
 
 def breakdown_node(json_client) -> callable:
@@ -25,12 +50,15 @@ def breakdown_node(json_client) -> callable:
         user_id = state.get("user_id")
         
         if reporter:
-            await reporter.report("Planning retrieval sub-queries...", {"query_chars": len(query)})
+            await reporter.report("Planning retrieval sub-queries...", {"depth": 1, "ref": "retrieval:plan", "query_chars": len(query)})
         sub_queries = await _decompose(json_client, query, user_id)
         logger.info("query_breakdown query_len=%s sub_queries=%s", len(query), len(sub_queries))
         
         if reporter:
-            await reporter.report(f"Using {len(sub_queries)} retrieval pass(es): {', '.join(sub_queries)}", {"sub_queries": sub_queries})
+            await reporter.report(
+                f"Using {len(sub_queries)} retrieval pass(es).",
+                {"depth": 1, "ref": "retrieval:plan:subqueries", "sub_queries": sub_queries},
+            )
             
         return {"sub_queries": sub_queries}
 
@@ -47,6 +75,9 @@ async def _decompose(json_client, query: str, user_id: str) -> list[str]:
                 "Each sub-query must be self-contained and searchable on its own. "
                 "Include the original query as the first item. "
                 f"Return at most {_MAX_SUB_QUERIES} sub-queries. "
+                "For multi-part questions, include focused searches for each requested subject, scope, and comparison or reasoning dimension. "
+                "For attribute questions, include specific detail searches for the requested subject and attribute family. "
+                "Preserve query qualifiers such as source, time, place, folder, product, work, or domain so same-word matches from another context do not dominate. "
                 "If the query is already simple and focused, return only the original query."
             ),
             (
@@ -59,14 +90,101 @@ async def _decompose(json_client, query: str, user_id: str) -> list[str]:
         if not isinstance(sub_queries, list) or not sub_queries:
             return [query]
         cleaned = [str(q).strip() for q in sub_queries if str(q).strip()]
+        deterministic = _deterministic_expansions(query)
         seen: set[str] = set()
         result = []
-        for q in [query, *cleaned]:
+        for q in [query, *deterministic, *cleaned]:
             if q not in seen:
                 seen.add(q)
                 result.append(q)
         return result[:_MAX_SUB_QUERIES]
     except Exception as exc:
-        # ponytail: silent fallback keeps retrieval alive when breakdown LLM fails.
         logger.warning("query_breakdown_failed error=%s", exc)
         return [query]
+
+
+def _deterministic_expansions(query: str) -> list[str]:
+    """Add cheap intent-aware searches when the LLM under-plans broad questions."""
+    terms = {term.lower() for term in re.findall(r"[A-Za-z0-9][A-Za-z0-9'_-]*", query)}
+    subjects = _named_subjects(query)
+    expansions: list[str] = []
+
+    expansions.extend(_multipart_expansions(query))
+
+    if terms & _ATTRIBUTE_TERMS:
+        if subjects:
+            for subject in subjects[:3]:
+                expansions.append(
+                    f"{subject} appearance physical details visible features marks counts measurements"
+                )
+        else:
+            expansions.append("appearance physical details visible features marks counts measurements")
+
+    if terms & _COMPARISON_TERMS:
+        for subject in subjects[:3]:
+            expansions.append(
+                f"{subject} attributes context behavior goals constraints changes outcomes relationships"
+            )
+        if len(subjects) >= 2:
+            expansions.append(
+                f"{subjects[0]} {subjects[1]} similarities differences parallels contrast attributes context changes goals outcomes"
+            )
+        else:
+            expansions.append("similarities differences parallels contrast attributes context changes goals outcomes")
+
+    if terms & _REASONING_TERMS:
+        if subjects:
+            for subject in subjects[:3]:
+                expansions.append(
+                    f"{subject} evidence context causes effects changes outcomes sequence"
+                )
+        else:
+            expansions.append("evidence context causes effects changes outcomes sequence")
+
+    return _dedupe(expansions)[: _MAX_SUB_QUERIES - 1]
+
+
+def _multipart_expansions(query: str) -> list[str]:
+    """Split broad enumerations into direct searches without knowing the domain."""
+    if len(query) < 80:
+        return []
+    normalized = " ".join(query.split())
+    pieces = [
+        piece.strip(" .?!")
+        for piece in re.split(r"\s*(?:,|;|\band\b|\bor\b)\s*", normalized, flags=re.IGNORECASE)
+    ]
+    pieces = [piece for piece in pieces if 12 <= len(piece) <= 160 and len(piece.split()) >= 2]
+    if len(pieces) < 3:
+        return []
+    return [f"{piece} evidence context" for piece in pieces[: _MAX_SUB_QUERIES - 1]]
+
+
+def _named_subjects(query: str) -> list[str]:
+    """Pull obvious named subjects from the query without an LLM round trip."""
+    subjects: list[str] = []
+    for match in re.finditer(r"\b[A-Z][A-Za-z0-9'_-]*(?:\s+[A-Z][A-Za-z0-9'_-]*)*\b", query):
+        subject = _clean_subject(match.group(0))
+        if subject and subject.lower() not in _QUESTION_STOPWORDS:
+            subjects.append(subject)
+    return _dedupe(subjects)[:4]
+
+
+def _clean_subject(subject: str) -> str:
+    words = subject.strip().split()
+    while words and words[0].lower().removesuffix("'s") in _QUESTION_STOPWORDS:
+        words.pop(0)
+    while words and words[-1].lower().removesuffix("'s") in _QUESTION_STOPWORDS:
+        words.pop()
+    cleaned = " ".join(words).strip().removesuffix("'s").removesuffix("'")
+    return cleaned if len(cleaned) >= 3 else ""
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        key = item.lower()
+        if key and key not in seen:
+            seen.add(key)
+            result.append(item)
+    return result

@@ -89,46 +89,142 @@ def save_processing(settings: dict[str, Any], user_id: str) -> None:
 
 
 def get_rotation_config(user_id: str) -> dict[str, Any]:
-    """Return the ordered rotation config for a user."""
+    """Return independent LLM and embedding rotation config for a user."""
     conn = get_connection()
     row = conn.execute(
         "SELECT * FROM user_rotation_config WHERE user_id = ?",
         (user_id,),
     ).fetchone()
+    active = get_active(user_id) or {}
+    active_id = active.get("id")
     if not row:
-        return {"user_id": user_id, "enabled": 0, "preset_ids": []}
+        return _rotation_config_response(user_id, {}, active_id)
     config = dict(row)
-    config["preset_ids"] = _json_list(config.get("preset_ids"))
-    return config
+    return _rotation_config_response(user_id, config, active_id)
 
 
 def save_rotation_config(user_id: str, enabled: bool, preset_ids: list[str]) -> dict[str, Any]:
-    """Save per-job rotation order without a persistent pointer."""
+    """Save legacy rotation order to both LLM and embedding lanes."""
     clean_ids = _owned_ordered_ids(user_id, preset_ids)
     if enabled and len(clean_ids) < 2:
         raise ValueError("Rotation needs at least two presets.")
+    active_id = (get_active(user_id) or {}).get("id")
+    return save_split_rotation_config(
+        user_id,
+        llm_enabled=enabled,
+        llm_preset_ids=clean_ids,
+        embedding_enabled=enabled,
+        embedding_preset_ids=clean_ids,
+        llm_active_preset_id=active_id,
+        embedding_active_preset_id=active_id,
+    )
+
+
+def save_split_rotation_config(
+    user_id: str,
+    *,
+    llm_enabled: bool,
+    llm_preset_ids: list[str],
+    embedding_enabled: bool,
+    embedding_preset_ids: list[str],
+    llm_active_preset_id: str | None = None,
+    embedding_active_preset_id: str | None = None,
+) -> dict[str, Any]:
+    """Save independent LLM and embedding lane modes."""
+    llm_ids = _owned_ordered_ids(user_id, llm_preset_ids)
+    embedding_ids = _owned_ordered_ids(user_id, embedding_preset_ids)
+    if llm_enabled and len(llm_ids) < 2:
+        raise ValueError("LLM rotation needs at least two presets.")
+    if embedding_enabled and len(embedding_ids) < 2:
+        raise ValueError("Embedding rotation needs at least two presets.")
+
+    active_id = (get_active(user_id) or {}).get("id")
+    llm_active = _owned_active_id(user_id, llm_active_preset_id) or active_id
+    embedding_active = _owned_active_id(user_id, embedding_active_preset_id) or active_id
+    legacy_enabled = bool(llm_enabled and embedding_enabled and llm_ids == embedding_ids)
+    legacy_ids = llm_ids if legacy_enabled else []
     conn = get_connection()
     conn.execute(
         """
-        INSERT INTO user_rotation_config (user_id, enabled, preset_ids)
-        VALUES (?, ?, ?)
+        INSERT INTO user_rotation_config (
+            user_id, enabled, preset_ids,
+            llm_enabled, llm_preset_ids, llm_active_preset_id,
+            embedding_enabled, embedding_preset_ids, embedding_active_preset_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
             enabled=excluded.enabled,
             preset_ids=excluded.preset_ids,
+            llm_enabled=excluded.llm_enabled,
+            llm_preset_ids=excluded.llm_preset_ids,
+            llm_active_preset_id=excluded.llm_active_preset_id,
+            embedding_enabled=excluded.embedding_enabled,
+            embedding_preset_ids=excluded.embedding_preset_ids,
+            embedding_active_preset_id=excluded.embedding_active_preset_id,
             updated_at=CURRENT_TIMESTAMP
         """,
-        (user_id, 1 if enabled else 0, json.dumps(clean_ids, ensure_ascii=False)),
+        (
+            user_id,
+            1 if legacy_enabled else 0,
+            json.dumps(legacy_ids, ensure_ascii=False),
+            1 if llm_enabled else 0,
+            json.dumps(llm_ids, ensure_ascii=False),
+            llm_active,
+            1 if embedding_enabled else 0,
+            json.dumps(embedding_ids, ensure_ascii=False),
+            embedding_active,
+        ),
     )
     conn.commit()
     _clear_settings_cache()
     return get_rotation_config(user_id)
 
 
-def rotation_candidates(user_id: str) -> list[dict[str, Any]]:
-    """Return the preset lanes to try for one job/request."""
+def save_lane_rotation_config(user_id: str, lane: str, enabled: bool, preset_ids: list[str], active_preset_id: str | None = None) -> dict[str, Any]:
+    """Save one lane while preserving the other lane."""
     config = get_rotation_config(user_id)
-    if config.get("enabled"):
-        return [preset for preset in _presets_by_order(user_id, config.get("preset_ids", [])) if preset]
+    llm = config["llm"]
+    embedding = config["embedding"]
+    if lane == "llm":
+        llm = {"enabled": enabled, "preset_ids": preset_ids, "active_preset_id": active_preset_id or llm.get("active_preset_id")}
+    elif lane == "embedding":
+        embedding = {"enabled": enabled, "preset_ids": preset_ids, "active_preset_id": active_preset_id or embedding.get("active_preset_id")}
+    else:
+        raise ValueError("Lane must be llm or embedding.")
+    return save_split_rotation_config(
+        user_id,
+        llm_enabled=bool(llm.get("enabled")),
+        llm_preset_ids=llm.get("preset_ids", []),
+        embedding_enabled=bool(embedding.get("enabled")),
+        embedding_preset_ids=embedding.get("preset_ids", []),
+        llm_active_preset_id=llm.get("active_preset_id"),
+        embedding_active_preset_id=embedding.get("active_preset_id"),
+    )
+
+
+def rotation_candidates(user_id: str) -> list[dict[str, Any]]:
+    """Return LLM preset lanes to try for one job/request."""
+    return llm_rotation_candidates(user_id)
+
+
+def llm_rotation_candidates(user_id: str) -> list[dict[str, Any]]:
+    """Return LLM preset lanes to try for one job/request."""
+    return _lane_candidates(user_id, "llm")
+
+
+def embedding_rotation_candidates(user_id: str) -> list[dict[str, Any]]:
+    """Return embedding preset lanes to try for one job/request."""
+    return _lane_candidates(user_id, "embedding")
+
+
+def _lane_candidates(user_id: str, lane: str) -> list[dict[str, Any]]:
+    config = get_rotation_config(user_id)
+    lane_config = config[lane]
+    if lane_config.get("enabled"):
+        return [preset for preset in _presets_by_order(user_id, lane_config.get("preset_ids", [])) if preset]
+    preset = get_by_id(str(lane_config.get("active_preset_id") or ""), user_id)
+    if preset:
+        return [preset]
     active = get_active(user_id)
     return [active] if active else []
 
@@ -220,7 +316,7 @@ def save(preset: dict[str, Any], user_id: str) -> str:
 
 
 def set_active(preset_id: str, user_id: str) -> bool:
-    """Set a preset as active, deactivating others for this user."""
+    """Set a preset as active for both lanes, deactivating rotations."""
     conn = get_connection()
     row = conn.execute("SELECT id FROM user_config_presets WHERE id = ? AND user_id = ?", (preset_id, user_id)).fetchone()
     if not row:
@@ -230,16 +326,52 @@ def set_active(preset_id: str, user_id: str) -> bool:
     conn.execute("UPDATE user_config_presets SET is_active = 1 WHERE id = ?", (preset_id,))
     conn.execute(
         """
-        INSERT INTO user_rotation_config (user_id, enabled, preset_ids)
-        VALUES (?, 0, COALESCE((SELECT preset_ids FROM user_rotation_config WHERE user_id = ?), '[]'))
+        INSERT INTO user_rotation_config (
+            user_id, enabled, preset_ids,
+            llm_enabled, llm_preset_ids, llm_active_preset_id,
+            embedding_enabled, embedding_preset_ids, embedding_active_preset_id
+        )
+        VALUES (
+            ?, 0, COALESCE((SELECT preset_ids FROM user_rotation_config WHERE user_id = ?), '[]'),
+            0, COALESCE((SELECT llm_preset_ids FROM user_rotation_config WHERE user_id = ?), '[]'), ?,
+            0, COALESCE((SELECT embedding_preset_ids FROM user_rotation_config WHERE user_id = ?), '[]'), ?
+        )
         ON CONFLICT(user_id) DO UPDATE SET
             enabled=0,
+            llm_enabled=0,
+            llm_active_preset_id=excluded.llm_active_preset_id,
+            embedding_enabled=0,
+            embedding_active_preset_id=excluded.embedding_active_preset_id,
             updated_at=CURRENT_TIMESTAMP
         """,
-        (user_id, user_id),
+        (user_id, user_id, user_id, preset_id, user_id, preset_id),
     )
     conn.commit()
     _clear_settings_cache()
+    return True
+
+
+def set_active_lane(preset_id: str, user_id: str, lane: str) -> bool:
+    """Set a preset as active for one lane and disable that lane's rotation."""
+    if lane not in {"llm", "embedding"}:
+        raise ValueError("Lane must be llm or embedding.")
+    conn = get_connection()
+    row = conn.execute("SELECT id FROM user_config_presets WHERE id = ? AND user_id = ?", (preset_id, user_id)).fetchone()
+    if not row:
+        return False
+    config = get_rotation_config(user_id)
+    other = "embedding" if lane == "llm" else "llm"
+    lane_config = {"enabled": False, "preset_ids": config[lane].get("preset_ids", []), "active_preset_id": preset_id}
+    other_config = config[other]
+    save_split_rotation_config(
+        user_id,
+        llm_enabled=bool(lane_config["enabled"] if lane == "llm" else other_config.get("enabled")),
+        llm_preset_ids=lane_config["preset_ids"] if lane == "llm" else other_config.get("preset_ids", []),
+        embedding_enabled=bool(lane_config["enabled"] if lane == "embedding" else other_config.get("enabled")),
+        embedding_preset_ids=lane_config["preset_ids"] if lane == "embedding" else other_config.get("preset_ids", []),
+        llm_active_preset_id=lane_config["active_preset_id"] if lane == "llm" else other_config.get("active_preset_id"),
+        embedding_active_preset_id=lane_config["active_preset_id"] if lane == "embedding" else other_config.get("active_preset_id"),
+    )
     return True
 
 
@@ -252,26 +384,22 @@ def delete(preset_id: str, user_id: str) -> bool:
         
     conn.execute("DELETE FROM user_config_presets WHERE id = ?", (preset_id,))
     config = get_rotation_config(user_id)
-    if preset_id in config.get("preset_ids", []):
-        remaining = [item for item in config["preset_ids"] if item != preset_id]
-        conn.execute(
-            """
-            INSERT INTO user_rotation_config (user_id, enabled, preset_ids)
-            VALUES (?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                enabled=excluded.enabled,
-                preset_ids=excluded.preset_ids,
-                updated_at=CURRENT_TIMESTAMP
-            """,
-            (user_id, 1 if config.get("enabled") and len(remaining) >= 2 else 0, json.dumps(remaining, ensure_ascii=False)),
-        )
-    
     if row["is_active"]:
         next_preset = conn.execute("SELECT id FROM user_config_presets WHERE user_id = ? ORDER BY created_at DESC LIMIT 1", (user_id,)).fetchone()
         if next_preset:
             conn.execute("UPDATE user_config_presets SET is_active = 1 WHERE id = ?", (next_preset["id"],))
-            
     conn.commit()
+
+    config = get_rotation_config(user_id)
+    fallback_id = (get_active(user_id) or {}).get("id")
+    for lane in ("llm", "embedding"):
+        lane_config = config[lane]
+        ids = [item for item in lane_config.get("preset_ids", []) if item != preset_id]
+        active_id = lane_config.get("active_preset_id")
+        if active_id == preset_id:
+            active_id = fallback_id
+        save_lane_rotation_config(user_id, lane, bool(lane_config.get("enabled")) and len(ids) >= 2, ids, active_id)
+
     _clear_settings_cache()
     return True
 
@@ -292,6 +420,40 @@ def _owned_ordered_ids(user_id: str, preset_ids: list[str]) -> list[str]:
     return clean
 
 
+def _owned_active_id(user_id: str, preset_id: str | None) -> str | None:
+    if not preset_id:
+        return None
+    return preset_id if get_by_id(preset_id, user_id) else None
+
+
+def _rotation_config_response(user_id: str, row: dict[str, Any], active_id: str | None) -> dict[str, Any]:
+    legacy_ids = _json_list(row.get("preset_ids"))
+    legacy_enabled = bool(row.get("enabled"))
+    raw_llm_ids = _json_list(row.get("llm_preset_ids"))
+    raw_embedding_ids = _json_list(row.get("embedding_preset_ids"))
+    llm_ids = raw_llm_ids or (legacy_ids if legacy_enabled else [])
+    embedding_ids = raw_embedding_ids or (legacy_ids if legacy_enabled else [])
+    llm_enabled = bool(row.get("llm_enabled") or (legacy_enabled and not raw_llm_ids))
+    embedding_enabled = bool(row.get("embedding_enabled") or (legacy_enabled and not raw_embedding_ids))
+    llm_active = _owned_active_id(user_id, row.get("llm_active_preset_id")) or active_id
+    embedding_active = _owned_active_id(user_id, row.get("embedding_active_preset_id")) or active_id
+    return {
+        "user_id": user_id,
+        "enabled": 1 if llm_enabled and embedding_enabled and llm_ids == embedding_ids else 0,
+        "preset_ids": llm_ids if llm_ids == embedding_ids else [],
+        "llm": {
+            "enabled": llm_enabled,
+            "preset_ids": llm_ids,
+            "active_preset_id": llm_active,
+        },
+        "embedding": {
+            "enabled": embedding_enabled,
+            "preset_ids": embedding_ids,
+            "active_preset_id": embedding_active,
+        },
+    }
+
+
 def _json_list(value: Any) -> list[str]:
     try:
         items = json.loads(value) if isinstance(value, str) else value
@@ -301,7 +463,18 @@ def _json_list(value: Any) -> list[str]:
 
 
 def _clear_settings_cache() -> None:
-    from src.infra.settings import get_user_settings, get_user_setting_candidates
+    from src.infra.settings import (
+        get_user_embedding_setting_candidates,
+        get_user_embedding_settings,
+        get_user_llm_setting_candidates,
+        get_user_llm_settings,
+        get_user_setting_candidates,
+        get_user_settings,
+    )
 
     get_user_settings.cache_clear()
     get_user_setting_candidates.cache_clear()
+    get_user_llm_settings.cache_clear()
+    get_user_llm_setting_candidates.cache_clear()
+    get_user_embedding_settings.cache_clear()
+    get_user_embedding_setting_candidates.cache_clear()

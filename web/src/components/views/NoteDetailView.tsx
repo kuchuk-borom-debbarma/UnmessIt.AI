@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Tag, RefreshCw, Trash2, FolderOpen, BrainCircuit, Edit2, Save, X, ChevronDown, ChevronUp } from 'lucide-react'
+import { ArrowLeft, Tag, RefreshCw, Trash2, FolderOpen, BrainCircuit, Edit2, Save, X, ChevronDown, ChevronUp, FileText } from 'lucide-react'
 import { api, type Note, type Directory } from '../../lib/api'
 import { motion } from 'framer-motion'
 import ReactMarkdown from 'react-markdown'
@@ -37,13 +37,14 @@ export function NoteDetailView({ token }: { token: string }) {
     return () => observer.disconnect()
   }, [note, isEditing])
 
-  const CHUNK_HEIGHT = 200
+  const CHUNK_HEIGHT = 400
   const currentMaxHeight = (expandLevel + 1) * CHUNK_HEIGHT
 
   const [editTagsVal, setEditTagsVal] = useState('')
 
   const highlightStart = parseInt(searchParams.get('start') || '-1', 10)
   const highlightEnd = parseInt(searchParams.get('end') || '-1', 10)
+  const hasCitationTarget = highlightStart >= 0 && highlightEnd > highlightStart
 
   const load = useCallback(async () => {
     if (!id) return
@@ -69,7 +70,8 @@ export function NoteDetailView({ token }: { token: string }) {
   }, [load])
 
   useEffect(() => {
-    if (note && highlightStart >= 0) {
+    if (note && hasCitationTarget) {
+      setExpandLevel((level) => Math.max(level, 1))
       setTimeout(() => {
         const el = document.getElementById('citation-highlight')
         if (el) {
@@ -79,7 +81,14 @@ export function NoteDetailView({ token }: { token: string }) {
         }
       }, 100)
     }
-  }, [note, highlightStart])
+  }, [note, hasCitationTarget, highlightStart, highlightEnd])
+
+  const handleExpand = () => {
+    setExpandLevel(prev => prev + 1)
+    window.setTimeout(() => {
+      window.scrollBy({ top: Math.min(300, window.innerHeight * 0.3), behavior: 'smooth' })
+    }, 120)
+  }
 
   const renderNoteText = () => {
     if (!note) return null
@@ -173,16 +182,53 @@ export function NoteDetailView({ token }: { token: string }) {
   }
 
   return (
-    <div className="flex flex-col flex-1 h-full max-w-4xl mx-auto w-full pt-8 pb-32">
-      
-      <div className="mb-8">
-        <button 
-          onClick={() => navigate('/notes')}
-          className="flex items-center gap-2 text-sm font-bold text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ArrowLeft size={16} /> Back to Notes
-        </button>
-      </div>
+    <div className="app-page max-w-4xl">
+      <section className="page-hero">
+        <div className="page-hero-inner">
+          <div className="page-hero-copy">
+            <div className="page-hero-icon">
+              <FileText size={24} />
+            </div>
+            <div>
+              <p className="page-hero-kicker">{directory?.name || 'Root'}</p>
+              <h1 className="page-hero-title">Source note</h1>
+              <p className="page-hero-subtitle">
+                Read, edit, and inspect the exact text Ask AI can cite.
+              </p>
+            </div>
+          </div>
+          <div className="page-hero-actions">
+            <button
+              onClick={() => navigate('/notes')}
+              className="premium-btn premium-btn-secondary h-11 gap-2 px-4"
+            >
+              <ArrowLeft size={16} /> Back to Notes
+            </button>
+          </div>
+        </div>
+        <div className="page-stat-grid">
+          <div className="page-stat-card">
+            <span>Characters</span>
+            <strong>{note.text.length.toLocaleString()}</strong>
+            <small>source text size</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Tags</span>
+            <strong>{note.tags.length}</strong>
+            <small>attached labels</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Folder</span>
+            <strong>{directory?.name || 'Root'}</strong>
+            <small>organization context</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Citation</span>
+            <strong>{hasCitationTarget ? 'Open' : 'None'}</strong>
+            <small>{hasCitationTarget ? 'highlighted source span' : 'normal reading mode'}</small>
+          </div>
+        </div>
+      </section>
 
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
@@ -271,9 +317,9 @@ export function NoteDetailView({ token }: { token: string }) {
             <div className="bg-card/40 backdrop-blur-sm border border-border/50 rounded-xl shadow-sm overflow-hidden flex flex-col">
               <div 
                 ref={contentRef}
-                className="relative w-full overflow-hidden"
+                className={`relative w-full ${hasCitationTarget ? 'overflow-y-auto custom-scrollbar' : 'overflow-hidden'}`}
                 style={{ 
-                  maxHeight: currentMaxHeight,
+                  maxHeight: hasCitationTarget ? `min(72vh, ${Math.max(currentMaxHeight, 760)}px)` : currentMaxHeight,
                   transition: 'max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1)',
                   willChange: 'max-height'
                 }}
@@ -300,7 +346,7 @@ export function NoteDetailView({ token }: { token: string }) {
                   {isOverflowing && (
                     <button 
                       className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-500/10 text-primary-500 hover:bg-primary-500 hover:text-white transition-all shadow-[0_0_15px_rgba(var(--primary-500),0.1)]"
-                      onClick={() => setExpandLevel(prev => prev + 1)}
+                      onClick={handleExpand}
                       title="Expand"
                     >
                       <ChevronDown size={20} />

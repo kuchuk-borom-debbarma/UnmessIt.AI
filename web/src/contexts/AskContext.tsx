@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { api, API_BASE } from '../lib/api'
 import { AskContext } from './AskContextCore'
-import type { QueryResult, Toast } from './AskContextCore'
+import type { ProgressStep, QueryResult, Toast } from './AskContextCore'
 
 const MAX_PROGRESS_STEPS = 200
 
@@ -24,15 +24,16 @@ export function AskProvider({ children }: { children: ReactNode }) {
     } catch { return null }
   })
   const [toast, setToast] = useState<Toast | null>(null)
-  const [progressSteps, setProgressSteps] = useState<string[]>(() => {
+  const [progressSteps, setProgressSteps] = useState<ProgressStep[]>(() => {
     try {
       const saved = sessionStorage.getItem('ask_progress')
-      return saved ? JSON.parse(saved) : []
+      const parsed = saved ? JSON.parse(saved) : []
+      return Array.isArray(parsed) ? parsed.map(normalizeProgressStep) : []
     } catch { return [] }
   })
 
   // Buffer for batching SSE events — avoids one setState per SSE message
-  const pendingStepsRef = useRef<string[]>([])
+  const pendingStepsRef = useRef<ProgressStep[]>([])
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const flushPending = useCallback(() => {
@@ -99,10 +100,7 @@ export function AskProvider({ children }: { children: ReactNode }) {
     evtSource.addEventListener('progress', (e) => {
       try {
         const evData = JSON.parse(e.data)
-        const details = evData.details && Object.keys(evData.details).length > 0
-          ? ` ${JSON.stringify(evData.details)}`
-          : ''
-        pendingStepsRef.current.push(`${evData.message}${details}`)
+        pendingStepsRef.current.push(normalizeProgressStep(evData, pendingStepsRef.current.length))
         // Debounce: flush at most every 120ms to batch rapid events into one render
         if (!flushTimerRef.current) {
           flushTimerRef.current = setTimeout(() => {
@@ -173,4 +171,21 @@ export function AskProvider({ children }: { children: ReactNode }) {
 
 function tagIds(value: string) {
   return value.split(',').map(item => item.trim().split('|')[0]).filter(Boolean)
+}
+
+function normalizeProgressStep(value: unknown, index = 0): ProgressStep {
+  if (typeof value === 'string') {
+    return { message: value, depth: 0, ref: `legacy:${index}` }
+  }
+  const item = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  const details = item.details && typeof item.details === 'object' && !Array.isArray(item.details)
+    ? item.details as Record<string, unknown>
+    : undefined
+  return {
+    message: typeof item.message === 'string' ? item.message : 'Progress update',
+    depth: Math.max(Number(item.depth) || 0, 0),
+    ref: typeof item.ref === 'string' ? item.ref : `progress:${Date.now()}:${index}`,
+    parent_ref: typeof item.parent_ref === 'string' ? item.parent_ref : undefined,
+    details: details && Object.keys(details).length > 0 ? details : undefined,
+  }
 }

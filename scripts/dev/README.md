@@ -1,38 +1,65 @@
 # Development Scripts
 
-This folder contains scripts intended for use by developers working on UnmessIt.AI.
+This folder contains developer-only scripts for running UnmessIt.AI from the
+working tree. They are not the user installer; use `scripts/install.*` for that.
 
-## Quick Start (Run Bare-Metal)
+## Scripts
 
-If you have already installed the dependencies for the web client (Node.js) and the server (Python), you can start both the web client and the server simultaneously using the bare-metal run scripts. This is the fastest way to develop because you get immediate hot-reloading for both the frontend and the backend.
+- `run.sh` / `run.ps1`: run the frontend and backend directly on your machine.
+- `run-local.sh` / `run-local.ps1`: build and run the full Docker Compose stack from local source.
+
+## Bare-Metal Development
+
+Use this when you want fast frontend/backend reloads while editing code.
+
+Prerequisites:
+- Node.js dependencies installed in `web`.
+- Python dependencies installed in `server`.
+- Docker available if you want Redis-backed events/SSE locally.
 
 **Mac/Linux:**
+
 ```bash
 ./scripts/dev/run.sh
 ```
 
 **Windows:**
+
 ```powershell
 .\scripts\dev\run.ps1
 ```
+
 These scripts will:
-- Start the Vite web client in the background.
-- Start the Uvicorn Python backend in the foreground.
+- Start the Vite web client on `http://localhost:2831`.
+- Start the Uvicorn backend on `http://localhost:2317`.
+- Start a local Redis container for Redis Streams/SSE when Docker is available.
 - Display all backend logs directly in your terminal.
+- Write frontend logs to `.dev-logs/web.log`.
 - Stop both services cleanly when you press `Ctrl+C`.
 
----
+If `REDIS_URL` is already set, the scripts use it. Otherwise Redis starts on
+`redis://localhost:6381/0`. Override the port with `UNMESSIT_DEV_REDIS_PORT`.
+If Docker is unavailable, the backend falls back to in-memory events/SSE.
+
+Example:
+
+```bash
+UNMESSIT_DEV_REDIS_PORT=6382 ./scripts/dev/run.sh
+```
 
 ## Local Docker Development
 
-If you prefer to run the application within Docker (to ensure your environment matches production exactly) without relying on published images, you can use the `run-local` scripts. These scripts build the Docker images directly from your local source code.
+Use this when you want the local app to behave like the published Docker
+install, but with images built from your current checkout.
 
 **Mac/Linux:**
+
 ```bash
 ./scripts/dev/run-local.sh
 ```
 
 **Windows:**
+
 ```powershell
 .\scripts\dev\run-local.ps1
 ```
@@ -40,9 +67,16 @@ If you prefer to run the application within Docker (to ensure your environment m
 These scripts will:
 - Automatically detect any existing `.env` files and use them.
 - Build the `unmessit-ai` images from your local `Dockerfile`s.
-- Start the containers in the background using `docker compose`.
+- Start the web, server, and Redis containers in the background using Docker Compose.
 
 To stop the local Docker containers, run:
+
 ```bash
 docker compose down
 ```
+
+## Which One Should I Use?
+
+Use `run.sh` / `run.ps1` for normal development. Use `run-local.sh` /
+`run-local.ps1` when you are testing Dockerfiles, compose wiring, installer
+behavior, or production-like networking.

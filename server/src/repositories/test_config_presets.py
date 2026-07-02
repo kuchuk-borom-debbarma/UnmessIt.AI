@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from src.infra.settings import get_user_setting_candidates
+from src.infra.settings import get_user_embedding_setting_candidates, get_user_llm_setting_candidates, get_user_setting_candidates
 from src.repositories import config_presets
 
 
@@ -15,6 +15,8 @@ def _db(monkeypatch):
     conn.execute("INSERT INTO users (id, identifier, password_hash) VALUES ('user-1', 'u', 'h')")
     monkeypatch.setattr(config_presets, "get_connection", lambda: conn)
     get_user_setting_candidates.cache_clear()
+    get_user_llm_setting_candidates.cache_clear()
+    get_user_embedding_setting_candidates.cache_clear()
     return conn
 
 
@@ -58,6 +60,27 @@ def test_rotation_candidates_keep_saved_order_without_persisted_pointer(monkeypa
     assert before == after
 
 
+def test_llm_and_embedding_rotation_are_independent(monkeypatch):
+    _db(monkeypatch)
+    first = config_presets.save({"name": "first", "llm_model": "gpt-first", "embedding_model": "embed-first"}, "user-1")
+    second = config_presets.save({"name": "second", "llm_model": "gpt-second", "embedding_model": "embed-second"}, "user-1")
+
+    config_presets.save_split_rotation_config(
+        "user-1",
+        llm_enabled=True,
+        llm_preset_ids=[second, first],
+        embedding_enabled=False,
+        embedding_preset_ids=[first, second],
+        llm_active_preset_id=first,
+        embedding_active_preset_id=first,
+    )
+
+    assert [item.preset_name for item in get_user_llm_setting_candidates("user-1")] == ["second", "first"]
+    embedding = get_user_embedding_setting_candidates("user-1")[0]
+    assert embedding.preset_name == "first"
+    assert embedding.embedding_model == "embed-first"
+
+
 def test_activating_specific_config_disables_rotation(monkeypatch):
     _db(monkeypatch)
     first = config_presets.save({"name": "first"}, "user-1")
@@ -67,4 +90,6 @@ def test_activating_specific_config_disables_rotation(monkeypatch):
     assert config_presets.set_active(second, "user-1")
 
     assert config_presets.get_rotation_config("user-1")["enabled"] == 0
+    assert config_presets.get_rotation_config("user-1")["llm"]["enabled"] is False
+    assert config_presets.get_rotation_config("user-1")["embedding"]["enabled"] is False
     assert get_user_setting_candidates("user-1")[0].preset_name == "second"

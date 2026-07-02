@@ -5,7 +5,9 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from src.infra.redis import redis_enabled
 from src.infra.sqlite import get_connection
+from src.repositories import event_outbox
 from .models import (
     BACKOFF_SECONDS,
     CHECKPOINT_COMPLETE,
@@ -50,14 +52,14 @@ def create_or_reuse_job(job_id: str, content_hash: str, raw_input_id: str) -> In
         """,
         (job_id, content_hash, raw_input_id, STATUS_QUEUED, STAGE_RAW_INPUT, "{}"),
     )
-    conn.commit()
-    _publish_changed(job_id)
+    _commit_with_changed(conn, job_id)
     return get(job_id)
 
 
 def _requeue_aborted(job_id: str, raw_input_id: str) -> None:
     """Allow a fresh user submit to rerun an exact input that was aborted."""
-    get_connection().execute(
+    conn = get_connection()
+    conn.execute(
         """
         UPDATE ingest_jobs
         SET raw_input_id = ?, status = ?, stage = ?, attempt_count = 0,
@@ -66,8 +68,7 @@ def _requeue_aborted(job_id: str, raw_input_id: str) -> None:
         """,
         (raw_input_id, STATUS_QUEUED, STAGE_RAW_INPUT, job_id),
     )
-    get_connection().commit()
-    _publish_changed(job_id)
+    _commit_with_changed(conn, job_id)
 
 
 def get(job_id: str) -> IngestJob | None:
@@ -83,9 +84,21 @@ def get_by_hash(content_hash: str) -> IngestJob | None:
 
 
 def list_jobs(user_id: str | None = None, page: int = 1, limit: int = 20) -> dict[str, Any]:
-    """Return paginated jobs newest first for dev inspection."""
+    """Return paginated jobs grouped by actionability."""
     conn = get_connection()
     offset = max(0, (page - 1) * limit)
+    order_sql = """
+            ORDER BY CASE j.status
+                WHEN 'running' THEN 0
+                WHEN 'queued' THEN 1
+                WHEN 'waiting_retry' THEN 2
+                WHEN 'failed' THEN 3
+                WHEN 'paused' THEN 4
+                WHEN 'aborted' THEN 5
+                WHEN 'complete' THEN 6
+                ELSE 7
+            END, j.updated_at DESC
+            """
     
     if user_id:
         count_row = conn.execute(
@@ -105,7 +118,7 @@ def list_jobs(user_id: str | None = None, page: int = 1, limit: int = 20) -> dic
             JOIN raw_inputs r ON r.id = j.raw_input_id
             LEFT JOIN notes n ON n.id = j.id
             WHERE r.user_id = ?
-            ORDER BY j.created_at DESC
+            """ + order_sql + """
             LIMIT ? OFFSET ?
             """,
             (user_id, limit, offset),
@@ -118,7 +131,7 @@ def list_jobs(user_id: str | None = None, page: int = 1, limit: int = 20) -> dic
             SELECT j.*, n.text as note_text 
             FROM ingest_jobs j
             LEFT JOIN notes n ON n.id = j.id
-            ORDER BY j.created_at DESC 
+            """ + order_sql + """
             LIMIT ? OFFSET ?
             """,
             (limit, offset)
@@ -152,7 +165,8 @@ def start_stage(job_id: str, stage: str) -> None:
     job = get(job_id)
     if not job or job["status"] == STATUS_PAUSED:
         raise IngestPaused(job_id)
-    get_connection().execute(
+    conn = get_connection()
+    conn.execute(
         """
         UPDATE ingest_jobs
         SET status = ?, stage = ?, error = NULL, next_run_at = NULL, updated_at = CURRENT_TIMESTAMP
@@ -160,18 +174,17 @@ def start_stage(job_id: str, stage: str) -> None:
         """,
         (STATUS_RUNNING, stage, job_id),
     )
-    get_connection().commit()
-    _publish_changed(job_id)
+    _commit_with_changed(conn, job_id)
 
 
 def set_raw_input(job_id: str, raw_input_id: str) -> None:
     """Attach the durable raw input row to the job."""
-    get_connection().execute(
+    conn = get_connection()
+    conn.execute(
         "UPDATE ingest_jobs SET raw_input_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         (raw_input_id, job_id),
     )
-    get_connection().commit()
-    _publish_changed(job_id)
+    _commit_with_changed(conn, job_id)
 
 
 def reset_attempts(job_id: str) -> None:
@@ -179,7 +192,8 @@ def reset_attempts(job_id: str) -> None:
     job = get(job_id)
     metadata = {**((job or {}).get("metadata") or {})}
     metadata.pop("failed_unit_key", None)
-    get_connection().execute(
+    conn = get_connection()
+    conn.execute(
         """
         UPDATE ingest_jobs
         SET attempt_count = 0, error = NULL, next_run_at = NULL,
@@ -188,8 +202,7 @@ def reset_attempts(job_id: str) -> None:
         """,
         (json.dumps(metadata, ensure_ascii=False), job_id),
     )
-    get_connection().commit()
-    _publish_changed(job_id)
+    _commit_with_changed(conn, job_id)
 
 
 def update_metadata(job_id: str, updates: dict[str, Any]) -> None:
@@ -206,12 +219,12 @@ def update_metadata(job_id: str, updates: dict[str, Any]) -> None:
         return
     metadata = {**(job.get("metadata") or {})}
     metadata.update(updates)
-    get_connection().execute(
+    conn = get_connection()
+    conn.execute(
         "UPDATE ingest_jobs SET metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
         (json.dumps(metadata, ensure_ascii=False), job_id),
     )
-    get_connection().commit()
-    _publish_changed(job_id)
+    _commit_with_changed(conn, job_id)
 
 
 def complete(job_id: str, metadata: dict[str, Any]) -> None:
@@ -224,7 +237,8 @@ def complete(job_id: str, metadata: dict[str, Any]) -> None:
     merged_metadata.pop("progress_message", None)
     merged_metadata.pop("progress_logs", None)
     merged_metadata.pop("failed_unit_key", None)
-    get_connection().execute(
+    conn = get_connection()
+    conn.execute(
         """
         UPDATE ingest_jobs
         SET status = ?, stage = ?, attempt_count = 0, error = NULL, next_run_at = NULL,
@@ -233,8 +247,7 @@ def complete(job_id: str, metadata: dict[str, Any]) -> None:
         """,
         (STATUS_COMPLETE, STATUS_COMPLETE, json.dumps(merged_metadata, ensure_ascii=False), job_id),
     )
-    get_connection().commit()
-    _publish_changed(job_id)
+    _commit_with_changed(conn, job_id)
 
 
 def abort(job_id: str, error: str, metadata: dict[str, Any] | None = None) -> None:
@@ -252,8 +265,7 @@ def abort(job_id: str, error: str, metadata: dict[str, Any] | None = None) -> No
         """,
         (STATUS_ABORTED, STAGE_ABORTED, error[:500], json.dumps(merged_metadata, ensure_ascii=False), job_id),
     )
-    conn.commit()
-    _publish_changed(job_id)
+    _commit_with_changed(conn, job_id)
 
 
 def schedule_retry(job_id: str, stage: str, unit_key: str, error: str, backoff_seconds: list[int] | None = None) -> IngestJob:
@@ -271,7 +283,8 @@ def schedule_retry(job_id: str, stage: str, unit_key: str, error: str, backoff_s
     delay = backoff[min(attempt - 1, len(backoff) - 1)]
     next_run_at = None if status == STATUS_FAILED else _after(delay)
     metadata = {**((job or {}).get("metadata") or {}), "failed_unit_key": unit_key}
-    get_connection().execute(
+    conn = get_connection()
+    conn.execute(
         """
         UPDATE ingest_jobs
         SET status = ?, stage = ?, attempt_count = ?, next_run_at = ?, error = ?,
@@ -280,14 +293,14 @@ def schedule_retry(job_id: str, stage: str, unit_key: str, error: str, backoff_s
         """,
         (status, stage, attempt, next_run_at, error[:500], json.dumps(metadata, ensure_ascii=False), job_id),
     )
-    get_connection().commit()
-    _publish_changed(job_id)
+    _commit_with_changed(conn, job_id)
     return get(job_id)
 
 
 def resume(job_id: str) -> None:
     """Reset a waiting/failed/paused job without deleting completed checkpoints."""
-    get_connection().execute(
+    conn = get_connection()
+    conn.execute(
         """
         UPDATE ingest_jobs
         SET status = ?, attempt_count = 0, next_run_at = NULL, error = NULL, updated_at = CURRENT_TIMESTAMP
@@ -295,13 +308,13 @@ def resume(job_id: str) -> None:
         """,
         (STATUS_QUEUED, job_id),
     )
-    get_connection().commit()
-    _publish_changed(job_id)
+    _commit_with_changed(conn, job_id)
 
 
 def pause(job_id: str) -> None:
     """Manually pause an active job. It will remain paused until resumed."""
-    get_connection().execute(
+    conn = get_connection()
+    conn.execute(
         """
         UPDATE ingest_jobs
         SET status = ?, next_run_at = NULL, updated_at = CURRENT_TIMESTAMP
@@ -309,8 +322,7 @@ def pause(job_id: str) -> None:
         """,
         (STATUS_PAUSED, job_id, STATUS_QUEUED, STATUS_RUNNING, STATUS_WAITING_RETRY),
     )
-    get_connection().commit()
-    _publish_changed(job_id)
+    _commit_with_changed(conn, job_id)
 
 
 def start_checkpoint(job_id: str, stage: str, unit_key: str) -> None:
@@ -403,9 +415,10 @@ def delete_job(job_id: str) -> bool:
     conn = get_connection()
     conn.execute("DELETE FROM ingest_checkpoints WHERE job_id = ?", (job_id,))
     cursor = conn.execute("DELETE FROM ingest_jobs WHERE id = ?", (job_id,))
-    conn.commit()
     if cursor.rowcount > 0:
-        _publish_changed(job_id)
+        _commit_with_changed(conn, job_id)
+    else:
+        conn.commit()
     return cursor.rowcount > 0
 
 
@@ -434,6 +447,19 @@ def _now() -> str:
 
 def _after(seconds: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+
+def _commit_with_changed(conn, job_id: str) -> None:
+    try:
+        if redis_enabled():
+            event_outbox.enqueue("ingest_job.changed", "ingest_job.changed", {"job_id": job_id}, conn=conn)
+            conn.commit()
+            return
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    _publish_changed(job_id)
 
 
 def _publish_changed(job_id: str) -> None:

@@ -5,10 +5,8 @@ import hashlib
 import logging
 from typing import Any
 
-from src.repositories import raw_inputs, source_chunk_vectors, source_chunks
+from src.repositories import raw_inputs
 from . import repository
-from .runner import DurableIngestRunner
-from .scheduler import DurableScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +19,9 @@ class DurableIngest:
     """
 
     def __init__(self, preprocessor, source_windows, source_chunk_drafts, source_chunk_assembler, recall_index) -> None:
+        from .runner import DurableIngestRunner
+        from .scheduler import DurableScheduler
+
         self.preprocessor = preprocessor
         self.runner = DurableIngestRunner(source_windows, source_chunk_drafts, source_chunk_assembler, recall_index)
         self.scheduler = DurableScheduler(self.runner)
@@ -63,6 +64,8 @@ class DurableIngest:
 
 def _delete_changed_job(job_id: str, user_id: str, content_hash: str) -> None:
     """Replace stale derived data when a note is edited with new text."""
+    from src.repositories import source_chunk_vectors, source_chunks
+
     job = repository.get(job_id)
     if not job or job["content_hash"] == content_hash:
         return

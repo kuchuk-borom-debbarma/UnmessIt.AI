@@ -7,10 +7,13 @@ import pytest
 from fastapi import HTTPException
 
 from src.routes import advanced as advanced_route
+from src.routes import auth as auth_route
+from src.routes import config as config_route
 from src.routes import dev as dev_route
 from src.routes import directories as directories_route
 from src.routes import notes as notes_route
 from src.routes import retrieval as retrieval_route
+from src.infra.sqlite import get_connection
 
 
 def test_notes_route_creates_note_and_triggers_event(monkeypatch):
@@ -27,6 +30,17 @@ def test_notes_route_creates_note_and_triggers_event(monkeypatch):
 
     assert response["status"] == "created"
     assert response["note_id"] == "note-1"
+
+
+def test_auth_me_returns_identifier():
+    conn = get_connection()
+    conn.execute("DELETE FROM users")
+    conn.execute("INSERT INTO users (id, identifier, password_hash) VALUES ('user-1', 'alice', 'hash')")
+    conn.commit()
+
+    response = asyncio.run(auth_route.me("user-1"))
+
+    assert response == {"id": "user-1", "identifier": "alice"}
 
 
 def test_notes_route_lists_notes_with_tags(monkeypatch):
@@ -82,10 +96,51 @@ def test_retrieval_route_returns_current_query_shape(monkeypatch):
     assert calls == [("hello", "user-1", None, ["dir-1/"], ["dir-2/"], ["tag-1"], ["tag-2"], "all")]
 
 
+def test_retrieval_progress_payload_uses_nested_shape():
+    payload = retrieval_route._progress_payload("Step", {"depth": 2, "ref": "query:step", "parent_ref": "query", "count": 3})
+
+    assert payload == {
+        "message": "Step",
+        "depth": 2,
+        "ref": "query:step",
+        "parent_ref": "query",
+        "details": {"count": 3},
+    }
+
+
 def test_retrieval_route_accepts_legacy_tag_names(monkeypatch):
     monkeypatch.setattr(retrieval_route.tags, "get_by_name", lambda value, user_id: {"id": "tag-id-1"} if value == "Tag One" else None)
 
     assert retrieval_route._tag_ids(["Tag One", "tag-id-2"], "user-1") == ["tag-id-1", "tag-id-2"]
+
+
+def test_config_test_reuses_saved_key_when_editing(monkeypatch):
+    used = {}
+
+    class FakeLLM:
+        def invoke(self, messages):
+            return SimpleNamespace(content="ok")
+
+    def fake_chat_llm(cache_key):
+        used["key"] = cache_key[4]
+        return FakeLLM()
+
+    monkeypatch.setattr(config_route.config_presets, "get_by_id", lambda preset_id, user_id: {"llm_api_key": "saved-key", "embedding_api_key": "saved-embed-key"})
+    monkeypatch.setattr(config_route, "_get_chat_llm", fake_chat_llm)
+
+    response = config_route.test_config(config_route.ConfigTestPayload(
+        kind="llm",
+        preset_id="preset-1",
+        config=config_route.PresetCreate(
+            name="nvidia",
+            llm_model="meta/llama-3.3-70b-instruct",
+            llm_base_url="https://integrate.api.nvidia.com/v1",
+            llm_api_key=None,
+        ),
+    ), "user-1")
+
+    assert response["status"] == "ok"
+    assert used["key"] == "saved-key"
 
 
 def test_dev_routes_read_repositories(monkeypatch):
