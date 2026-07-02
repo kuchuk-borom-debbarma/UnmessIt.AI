@@ -139,24 +139,59 @@ def get_settings() -> Settings:
 
 @lru_cache(maxsize=128)
 def get_user_settings(user_id: str) -> Settings:
-    """Return the first effective settings candidate for compatibility callers."""
-    candidates = get_user_setting_candidates(user_id)
+    """Return the first effective LLM settings candidate for compatibility callers."""
+    return get_user_llm_settings(user_id)
+
+
+@lru_cache(maxsize=128)
+def get_user_llm_settings(user_id: str) -> Settings:
+    """Return the first effective LLM settings candidate."""
+    candidates = get_user_llm_setting_candidates(user_id)
     if not candidates:
-        raise NoActivePresetError("No AI rotation preset configured. Please add a rotation preset in Settings.")
+        raise NoActivePresetError("No LLM config configured. Please add one in Settings.")
+    return candidates[0]
+
+
+@lru_cache(maxsize=128)
+def get_user_embedding_settings(user_id: str) -> Settings:
+    """Return the first effective embedding settings candidate."""
+    candidates = get_user_embedding_setting_candidates(user_id)
+    if not candidates:
+        raise NoActivePresetError("No embedding config configured. Please add one in Settings.")
     return candidates[0]
 
 
 @lru_cache(maxsize=128)
 def get_user_setting_candidates(user_id: str) -> tuple[Settings, ...]:
-    """Return ordered per-job/request rotation candidates."""
-    from src.repositories.config_presets import get_processing, rotation_candidates
-    
+    """Return ordered LLM candidates for compatibility callers."""
+    return get_user_llm_setting_candidates(user_id)
+
+
+@lru_cache(maxsize=128)
+def get_user_llm_setting_candidates(user_id: str) -> tuple[Settings, ...]:
+    """Return ordered per-job/request LLM candidates."""
+    from src.repositories.config_presets import llm_rotation_candidates
+
+    return _setting_candidates(user_id, llm_rotation_candidates, "LLM")
+
+
+@lru_cache(maxsize=128)
+def get_user_embedding_setting_candidates(user_id: str) -> tuple[Settings, ...]:
+    """Return ordered per-job/request embedding candidates."""
+    from src.repositories.config_presets import embedding_rotation_candidates
+
+    return _setting_candidates(user_id, embedding_rotation_candidates, "embedding")
+
+
+def _setting_candidates(user_id: str, loader, label: str) -> tuple[Settings, ...]:
+    from src.repositories.config_presets import get_processing
+
     # Non-user runtime paths get server defaults, never provider secrets.
     if not user_id:
         return (get_settings(),)
-        
+
     processing = get_processing(user_id)
-    presets = rotation_candidates(user_id)
+    presets = loader(user_id)
     if not presets:
-        raise NoActivePresetError("No AI rotation preset configured. Please add a rotation preset in Settings.")
+        raise NoActivePresetError(f"No {label} config configured. Please add one in Settings.")
     return tuple(Settings(preset, processing) for preset in presets)

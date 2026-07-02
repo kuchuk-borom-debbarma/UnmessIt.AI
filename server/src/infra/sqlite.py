@@ -87,6 +87,12 @@ def init_db() -> None:
         );
         """
     )
+    _add_column_if_missing(conn, "user_rotation_config", "llm_enabled", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(conn, "user_rotation_config", "llm_preset_ids", "JSON NOT NULL DEFAULT '[]'")
+    _add_column_if_missing(conn, "user_rotation_config", "llm_active_preset_id", "TEXT")
+    _add_column_if_missing(conn, "user_rotation_config", "embedding_enabled", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(conn, "user_rotation_config", "embedding_preset_ids", "JSON NOT NULL DEFAULT '[]'")
+    _add_column_if_missing(conn, "user_rotation_config", "embedding_active_preset_id", "TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_directories_user_name ON directories(user_id, name)")
     conn.commit()
 

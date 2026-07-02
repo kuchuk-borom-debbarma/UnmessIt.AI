@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { api } from '../../lib/api'
-import type { Preset, ProcessingSettings, RotationConfig } from '../../lib/api'
+import type { ConfigTestResult, Preset, ProcessingSettings, RotationConfig, RotationLane } from '../../lib/api'
 import { useConfig } from '../../lib/context/useConfig'
 import { cn } from '../../lib/utils'
 import { useVersionCheck } from '../../lib/useVersionCheck'
@@ -41,6 +41,7 @@ type ConfigDraft = {
 }
 
 type Toast = { tone: 'success' | 'danger'; message: string }
+type LaneName = 'llm' | 'embedding'
 
 const defaultProcessing: ProcessingSettings = {
   embedding_batch_size: 100,
@@ -66,6 +67,14 @@ const defaultConfig: ConfigDraft = {
   embedding_rate_limit_per_minute: 0,
 }
 
+const defaultRotation: RotationConfig = {
+  enabled: false,
+  preset_ids: [],
+  presets: [],
+  llm: { enabled: false, preset_ids: [], active_preset_id: null, presets: [] },
+  embedding: { enabled: false, preset_ids: [], active_preset_id: null, presets: [] },
+}
+
 function ToastMessage({ toast }: { toast: Toast }) {
   return (
     <motion.div
@@ -88,8 +97,7 @@ export function SettingsView({ token }: { token: string }) {
   const { checkConfig } = useConfig()
   const [presets, setPresets] = useState<Preset[]>([])
   const [processing, setProcessing] = useState<ProcessingSettings>(defaultProcessing)
-  const [rotationEnabled, setRotationEnabled] = useState(false)
-  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [rotation, setRotation] = useState<RotationConfig>(defaultRotation)
   const [draft, setDraft] = useState<ConfigDraft>(defaultConfig)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
@@ -104,12 +112,11 @@ export function SettingsView({ token }: { token: string }) {
     return () => clearTimeout(timer)
   }, [])
 
-  const activePreset = presets.find((preset) => preset.is_active === 1)
-  const selectedPresets = useMemo(
-    () => selectedIds.map((id) => presets.find((preset) => preset.id === id)).filter(Boolean) as Preset[],
-    [presets, selectedIds],
-  )
-  const rotationInvalid = rotationEnabled && selectedIds.length < 2
+  const llmActivePreset = activePresetFor(rotation.llm, presets, 'llm')
+  const embeddingActivePreset = activePresetFor(rotation.embedding, presets, 'embedding')
+  const llmSelectedPresets = useMemo(() => presetsByIds(presets, rotation.llm.preset_ids), [presets, rotation.llm.preset_ids])
+  const embeddingSelectedPresets = useMemo(() => presetsByIds(presets, rotation.embedding.preset_ids), [presets, rotation.embedding.preset_ids])
+  const rotationInvalid = (rotation.llm.enabled && rotation.llm.preset_ids.length < 2) || (rotation.embedding.enabled && rotation.embedding.preset_ids.length < 2)
 
   const load = useCallback(async () => {
     try {
@@ -120,8 +127,7 @@ export function SettingsView({ token }: { token: string }) {
       ])
       setPresets(presetData)
       setProcessing(processingData)
-      setRotationEnabled(rotationData.enabled)
-      setSelectedIds(rotationData.preset_ids)
+      setRotation(normalizeRotation(rotationData))
     } catch (err) {
       setToast({ tone: 'danger', message: err instanceof Error ? err.message : 'Settings load failed' })
     } finally {
@@ -163,7 +169,7 @@ export function SettingsView({ token }: { token: string }) {
   const saveConfig = async () => {
     setToast(null)
     const payload = {
-      ...draft,
+      ...configPayload(draft),
       embedding_batch_size: processing.embedding_batch_size,
       chunk_size: processing.chunk_size,
       chunk_overlap: processing.chunk_overlap,
@@ -185,12 +191,16 @@ export function SettingsView({ token }: { token: string }) {
     }
   }
 
-  const setActive = async (presetId: string) => {
-    await api(`/api/v1/configs/presets/${presetId}/activate`, { method: 'PUT', token })
-    setRotationEnabled(false)
-    await api('/api/v1/configs/rotation', { method: 'PUT', token, body: JSON.stringify({ enabled: false, preset_ids: selectedIds }) })
-    await load()
-    await checkConfig()
+  const setActive = async (presetId: string, lane: LaneName) => {
+    setToast(null)
+    try {
+      await api(`/api/v1/configs/presets/${presetId}/activate?lane=${lane}`, { method: 'PUT', token })
+      await load()
+      await checkConfig()
+      setToast({ tone: 'success', message: lane === 'llm' ? 'LLM config selected.' : 'Embedding config selected.' })
+    } catch (err) {
+      setToast({ tone: 'danger', message: err instanceof Error ? err.message : 'Config activation failed' })
+    }
   }
 
   const saveRotation = async () => {
@@ -199,9 +209,12 @@ export function SettingsView({ token }: { token: string }) {
       await api('/api/v1/configs/rotation', {
         method: 'PUT',
         token,
-        body: JSON.stringify({ enabled: rotationEnabled, preset_ids: selectedIds }),
+        body: JSON.stringify({
+          llm: rotation.llm,
+          embedding: rotation.embedding,
+        }),
       })
-      setToast({ tone: 'success', message: rotationEnabled ? 'Rotation enabled.' : 'Rotation disabled.' })
+      setToast({ tone: 'success', message: 'Runtime config saved.' })
       await load()
       await checkConfig()
     } catch (err) {
@@ -219,16 +232,40 @@ export function SettingsView({ token }: { token: string }) {
     }
   }
 
-  const moveSelected = (id: string, delta: -1 | 1) => {
-    setSelectedIds((ids) => {
-      const index = ids.indexOf(id)
+  const updateLane = (lane: LaneName, updater: (current: RotationLane) => RotationLane) => {
+    setRotation((current) => ({ ...current, [lane]: updater(current[lane]) }))
+  }
+
+  const toggleRotationId = (lane: LaneName, id: string, checked: boolean) => {
+    updateLane(lane, (current) => ({
+      ...current,
+      preset_ids: checked ? [...current.preset_ids, id].filter(unique) : current.preset_ids.filter((item) => item !== id),
+    }))
+  }
+
+  const moveSelected = (lane: LaneName, id: string, delta: -1 | 1) => {
+    updateLane(lane, (current) => {
+      const index = current.preset_ids.indexOf(id)
       const nextIndex = index + delta
-      if (index < 0 || nextIndex < 0 || nextIndex >= ids.length) return ids
-      const next = [...ids]
-      const [item] = next.splice(index, 1)
-      next.splice(nextIndex, 0, item)
-      return next
+      if (index < 0 || nextIndex < 0 || nextIndex >= current.preset_ids.length) return current
+      const preset_ids = [...current.preset_ids]
+      const [item] = preset_ids.splice(index, 1)
+      preset_ids.splice(nextIndex, 0, item)
+      return { ...current, preset_ids }
     })
+  }
+
+  const deletePreset = async (presetId: string) => {
+    if (!confirm('Delete config preset?')) return
+    setToast(null)
+    try {
+      await api(`/api/v1/configs/presets/${presetId}`, { method: 'DELETE', token })
+      await load()
+      await checkConfig()
+      setToast({ tone: 'success', message: 'Config deleted.' })
+    } catch (err) {
+      setToast({ tone: 'danger', message: err instanceof Error ? err.message : 'Config delete failed' })
+    }
   }
 
   if (loading) {
@@ -254,7 +291,7 @@ export function SettingsView({ token }: { token: string }) {
               <p className="page-hero-kicker">AI Settings</p>
               <h1 className="page-hero-title">Tune models without losing reliability.</h1>
               <p className="page-hero-subtitle">
-                Keep one focused config for normal work, or enable rotation when you want fallback across providers.
+                Keep LLM and embedding credentials independent. Rotate either lane only when you want provider fallback.
               </p>
             </div>
           </div>
@@ -266,19 +303,19 @@ export function SettingsView({ token }: { token: string }) {
         </div>
         <div className="page-stat-grid">
           <div className="page-stat-card">
-            <span>Mode</span>
-            <strong>{rotationEnabled ? 'Rotation' : 'Single'}</strong>
-            <small>{rotationEnabled ? `${selectedIds.length} configs selected` : activePreset?.name || 'no active config'}</small>
+            <span>LLM</span>
+            <strong>{rotation.llm.enabled ? 'Rotation' : 'Single'}</strong>
+            <small>{rotation.llm.enabled ? `${rotation.llm.preset_ids.length} configs selected` : llmActivePreset?.name || 'no config'}</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Embedding</span>
+            <strong>{rotation.embedding.enabled ? 'Rotation' : 'Single'}</strong>
+            <small>{rotation.embedding.enabled ? `${rotation.embedding.preset_ids.length} configs selected` : embeddingActivePreset?.name || 'no config'}</small>
           </div>
           <div className="page-stat-card">
             <span>Presets</span>
             <strong>{presets.length}</strong>
             <small>saved model setups</small>
-          </div>
-          <div className="page-stat-card">
-            <span>Chunking</span>
-            <strong>{processing.chunk_size}</strong>
-            <small>{processing.chunk_overlap} overlap chars</small>
           </div>
           <div className="page-stat-card">
             <span>Version</span>
@@ -291,50 +328,30 @@ export function SettingsView({ token }: { token: string }) {
       <section className="bento-card p-6 md:p-8">
         <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
-            <h2 className="text-2xl font-bold text-foreground">How AI Should Run</h2>
+            <h2 className="text-2xl font-bold text-foreground">Runtime Lanes</h2>
             <p className="mt-1 text-sm font-medium text-muted-foreground">
-              Use one specific config for normal use. Turn on rotation only when you have multiple fallback configs.
+              LLM answers and embedding/indexing can use different configs and different rotation modes.
             </p>
           </div>
-          <ModeBadge rotationEnabled={rotationEnabled} activePreset={activePreset} />
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
-          <button
-            className={cn(
-              'rounded-lg border p-5 text-left transition-colors',
-              !rotationEnabled ? 'border-primary-500/60 bg-primary-500/10' : 'border-border bg-input/40 hover:bg-input',
-            )}
-            onClick={() => setRotationEnabled(false)}
-          >
-            <div className="mb-2 flex items-center gap-2 text-lg font-bold text-foreground">
-              <CheckCircle2 size={20} /> Use One Config
-            </div>
-            <p className="text-sm leading-6 text-muted-foreground">
-              Best for most people. Pick one config and UnmessIt will use it for LLM and embedding calls.
-            </p>
-            <div className="mt-4 text-sm font-bold text-foreground">
-              Current: {activePreset?.name || 'No config selected'}
-            </div>
-          </button>
-
-          <button
-            className={cn(
-              'rounded-lg border p-5 text-left transition-colors',
-              rotationEnabled ? 'border-primary-500/60 bg-primary-500/10' : 'border-border bg-input/40 hover:bg-input',
-            )}
-            onClick={() => setRotationEnabled(true)}
-          >
-            <div className="mb-2 flex items-center gap-2 text-lg font-bold text-foreground">
-              <RotateCw size={20} /> Use Rotation
-            </div>
-            <p className="text-sm leading-6 text-muted-foreground">
-              Optional. Choose two or more configs. If the first fails during a job/query, the next one is tried.
-            </p>
-            <div className="mt-4 text-sm font-bold text-foreground">
-              Selected: {selectedIds.length} config{selectedIds.length === 1 ? '' : 's'}
-            </div>
-          </button>
+          <LaneModeCard
+            lane="llm"
+            title="LLM"
+            activePreset={llmActivePreset}
+            selectedCount={rotation.llm.preset_ids.length}
+            enabled={rotation.llm.enabled}
+            onEnabledChange={(enabled) => updateLane('llm', (current) => ({ ...current, enabled }))}
+          />
+          <LaneModeCard
+            lane="embedding"
+            title="Embedding"
+            activePreset={embeddingActivePreset}
+            selectedCount={rotation.embedding.preset_ids.length}
+            enabled={rotation.embedding.enabled}
+            onEnabledChange={(enabled) => updateLane('embedding', (current) => ({ ...current, enabled }))}
+          />
         </div>
 
         <div className="mt-5 flex justify-end">
@@ -345,7 +362,7 @@ export function SettingsView({ token }: { token: string }) {
 
         {rotationInvalid && (
           <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm font-semibold text-red-300">
-            Rotation needs at least two selected configs. Choose more configs below or switch back to one config.
+            Rotation needs at least two selected configs in each enabled lane. Choose more configs below or switch that lane back to single.
           </div>
         )}
       </section>
@@ -365,49 +382,56 @@ export function SettingsView({ token }: { token: string }) {
 
         <div className="grid grid-cols-1 gap-4">
           {presets.map((preset) => {
-            const selected = selectedIds.includes(preset.id)
+            const llmSelected = rotation.llm.preset_ids.includes(preset.id)
+            const embeddingSelected = rotation.embedding.preset_ids.includes(preset.id)
             return (
               <motion.div
                 key={preset.id}
                 layout
                 className={cn(
                   'rounded-lg border p-4 transition-colors',
-                  preset.is_active === 1 && !rotationEnabled ? 'border-primary-500/60 bg-primary-500/10' : 'border-border/60 bg-input/30',
+                  preset.llm_is_active || preset.embedding_is_active ? 'border-primary-500/60 bg-primary-500/10' : 'border-border/60 bg-input/30',
                 )}
               >
                 <div className="flex flex-col gap-4 md:flex-row md:items-center">
-                  <label className="flex min-w-0 flex-1 items-start gap-4">
-                    <input
-                      className="mt-1"
-                      type="checkbox"
-                      checked={selected}
-                      onChange={(e) => setSelectedIds((ids) => e.target.checked ? [...ids, preset.id] : ids.filter((id) => id !== preset.id))}
-                      aria-label={`Use ${preset.name} in rotation`}
-                    />
+                  <div className="flex min-w-0 flex-1 items-start gap-4">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="truncate text-lg font-bold text-foreground">{preset.name}</h3>
-                        {preset.is_active === 1 && <span className="rounded-full bg-primary-500/15 px-2 py-0.5 text-xs font-bold text-primary-400">Specific config</span>}
-                        {selected && <span className="rounded-full bg-accent-500/15 px-2 py-0.5 text-xs font-bold text-accent-400">Rotation</span>}
+                        {preset.llm_is_active === 1 && <span className="rounded-full bg-primary-500/15 px-2 py-0.5 text-xs font-bold text-primary-400">LLM single</span>}
+                        {preset.embedding_is_active === 1 && <span className="rounded-full bg-primary-500/15 px-2 py-0.5 text-xs font-bold text-primary-400">Embedding single</span>}
+                        {llmSelected && <span className="rounded-full bg-accent-500/15 px-2 py-0.5 text-xs font-bold text-accent-400">LLM rotation</span>}
+                        {embeddingSelected && <span className="rounded-full bg-accent-500/15 px-2 py-0.5 text-xs font-bold text-accent-400">Embedding rotation</span>}
                       </div>
                       <div className="mt-1 text-xs font-mono text-muted-foreground">
                         LLM {preset.llm_model} · Embedding {preset.embedding_model}
                       </div>
+                      <div className="mt-3 flex flex-wrap gap-3 text-xs font-bold text-muted-foreground">
+                        <label className="inline-flex items-center gap-2">
+                          <input type="checkbox" checked={llmSelected} onChange={(event) => toggleRotationId('llm', preset.id, event.target.checked)} />
+                          LLM rotation
+                        </label>
+                        <label className="inline-flex items-center gap-2">
+                          <input type="checkbox" checked={embeddingSelected} onChange={(event) => toggleRotationId('embedding', preset.id, event.target.checked)} />
+                          Embedding rotation
+                        </label>
+                      </div>
                     </div>
-                  </label>
+                  </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    <button className="premium-btn premium-btn-secondary h-10 px-3" onClick={() => void setActive(preset.id)}>
-                      Use this
+                    <button className="premium-btn premium-btn-secondary h-10 px-3" onClick={() => void setActive(preset.id, 'llm')}>
+                      Use LLM
+                    </button>
+                    <button className="premium-btn premium-btn-secondary h-10 px-3" onClick={() => void setActive(preset.id, 'embedding')}>
+                      Use Embed
                     </button>
                     <button className="icon-btn text-amber-400" onClick={() => openEditConfig(preset)} aria-label="Edit config">
                       <Pencil size={18} />
                     </button>
                     <button
                       className="icon-btn text-red-400 hover:bg-red-500/10"
-                      onClick={() => {
-                        if (confirm('Delete config preset?')) void api(`/api/v1/configs/presets/${preset.id}`, { method: 'DELETE', token }).then(load).then(checkConfig)
-                      }}
+                      onClick={() => void deletePreset(preset.id)}
                       aria-label="Delete config"
                     >
                       <Trash2 size={18} />
@@ -427,27 +451,21 @@ export function SettingsView({ token }: { token: string }) {
         )}
       </section>
 
-      {rotationEnabled && selectedPresets.length > 0 && (
+      {(rotation.llm.enabled || rotation.embedding.enabled) && (
         <section className="bento-card p-6 md:p-8">
           <h2 className="mb-1 flex items-center gap-2 text-2xl font-bold text-foreground">
             <RotateCw size={22} /> Rotation Order
           </h2>
           <p className="mb-5 text-sm font-medium text-muted-foreground">
-            Each job/query starts at 1. If that config fails, the next one is tried. This order is not a queue and no last-good state is saved.
+            Each lane starts at 1. If that lane's first config fails, the next one in that lane is tried.
           </p>
-          <div className="space-y-2">
-            {selectedPresets.map((preset, index) => (
-              <div key={preset.id} className="flex items-center gap-3 rounded-lg border border-border/60 bg-input/40 p-3">
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary-500/15 text-sm font-black text-primary-400">{index + 1}</div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-bold">{preset.name}</div>
-                  <div className="truncate text-xs font-mono text-muted-foreground">{preset.llm_model} · {preset.embedding_model}</div>
-                </div>
-                <button className="icon-btn" onClick={() => moveSelected(preset.id, -1)} aria-label="Move config up"><ArrowUp size={17} /></button>
-                <button className="icon-btn" onClick={() => moveSelected(preset.id, 1)} aria-label="Move config down"><ArrowDown size={17} /></button>
-                <button className="icon-btn text-red-400 hover:bg-red-500/10" onClick={() => setSelectedIds((ids) => ids.filter((id) => id !== preset.id))} aria-label="Remove config from rotation"><X size={17} /></button>
-              </div>
-            ))}
+          <div className="grid gap-4 md:grid-cols-2">
+            {rotation.llm.enabled && (
+              <RotationOrder lane="llm" title="LLM" presets={llmSelectedPresets} onMove={moveSelected} onRemove={(id) => toggleRotationId('llm', id, false)} />
+            )}
+            {rotation.embedding.enabled && (
+              <RotationOrder lane="embedding" title="Embedding" presets={embeddingSelectedPresets} onMove={moveSelected} onRemove={(id) => toggleRotationId('embedding', id, false)} />
+            )}
           </div>
         </section>
       )}
@@ -495,6 +513,8 @@ export function SettingsView({ token }: { token: string }) {
           <ConfigModal
             draft={draft}
             editing={Boolean(editingId)}
+            editingId={editingId}
+            token={token}
             onClose={() => setModalOpen(false)}
             onSave={saveConfig}
             onChange={setDraft}
@@ -509,10 +529,81 @@ export function SettingsView({ token }: { token: string }) {
   )
 }
 
-function ModeBadge({ rotationEnabled, activePreset }: { rotationEnabled: boolean; activePreset?: Preset }) {
+function LaneModeCard({
+  title,
+  activePreset,
+  selectedCount,
+  enabled,
+  onEnabledChange,
+}: {
+  lane: LaneName
+  title: string
+  activePreset?: Preset
+  selectedCount: number
+  enabled: boolean
+  onEnabledChange: (enabled: boolean) => void
+}) {
   return (
-    <div className="rounded-lg border border-border bg-input px-4 py-3 text-sm font-semibold text-muted-foreground">
-      {rotationEnabled ? 'Rotation mode' : `Specific config: ${activePreset?.name || 'none'}`}
+    <div className="rounded-lg border border-border/60 bg-input/30 p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-lg font-bold text-foreground">{title}</h3>
+          <p className="text-xs font-semibold text-muted-foreground">{enabled ? `${selectedCount} rotation configs` : activePreset?.name || 'No single config selected'}</p>
+        </div>
+        <span className="rounded-full border border-primary-500/25 bg-primary-500/10 px-2.5 py-1 text-xs font-extrabold text-primary-400">
+          {enabled ? 'Rotation' : 'Single'}
+        </span>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <button
+          className={cn('rounded-lg border p-3 text-left transition-colors', !enabled ? 'border-primary-500/60 bg-primary-500/10' : 'border-border/60 bg-background/25 hover:bg-input/70')}
+          onClick={() => onEnabledChange(false)}
+        >
+          <div className="flex items-center gap-2 text-sm font-bold text-foreground"><CheckCircle2 size={16} /> Single</div>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">Use one selected preset.</p>
+        </button>
+        <button
+          className={cn('rounded-lg border p-3 text-left transition-colors', enabled ? 'border-primary-500/60 bg-primary-500/10' : 'border-border/60 bg-background/25 hover:bg-input/70')}
+          onClick={() => onEnabledChange(true)}
+        >
+          <div className="flex items-center gap-2 text-sm font-bold text-foreground"><RotateCw size={16} /> Rotation</div>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">Try selected presets in order.</p>
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function RotationOrder({
+  lane,
+  title,
+  presets,
+  onMove,
+  onRemove,
+}: {
+  lane: LaneName
+  title: string
+  presets: Preset[]
+  onMove: (lane: LaneName, id: string, delta: -1 | 1) => void
+  onRemove: (id: string) => void
+}) {
+  return (
+    <div className="rounded-lg border border-border/60 bg-input/25 p-3">
+      <h3 className="mb-3 text-sm font-extrabold uppercase tracking-[0.14em] text-muted-foreground">{title}</h3>
+      <div className="space-y-2">
+        {presets.map((preset, index) => (
+          <div key={preset.id} className="flex items-center gap-2 rounded-lg border border-border/60 bg-background/30 p-2">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary-500/15 text-xs font-black text-primary-400">{index + 1}</div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-bold">{preset.name}</div>
+              <div className="truncate text-[11px] font-mono text-muted-foreground">{lane === 'llm' ? preset.llm_model : preset.embedding_model}</div>
+            </div>
+            <button className="icon-btn h-9 w-9" onClick={() => onMove(lane, preset.id, -1)} aria-label="Move config up"><ArrowUp size={15} /></button>
+            <button className="icon-btn h-9 w-9" onClick={() => onMove(lane, preset.id, 1)} aria-label="Move config down"><ArrowDown size={15} /></button>
+            <button className="icon-btn h-9 w-9 text-red-400 hover:bg-red-500/10" onClick={() => onRemove(preset.id)} aria-label="Remove config from rotation"><X size={15} /></button>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -520,16 +611,40 @@ function ModeBadge({ rotationEnabled, activePreset }: { rotationEnabled: boolean
 function ConfigModal({
   draft,
   editing,
+  editingId,
+  token,
   onClose,
   onSave,
   onChange,
 }: {
   draft: ConfigDraft
   editing: boolean
+  editingId: string | null
+  token: string
   onClose: () => void
   onSave: () => void
   onChange: (draft: ConfigDraft) => void
 }) {
+  const [testing, setTesting] = useState<LaneName | null>(null)
+  const [testResult, setTestResult] = useState<Record<LaneName, { tone: 'success' | 'danger'; message: string } | null>>({ llm: null, embedding: null })
+
+  const testConfig = async (kind: LaneName) => {
+    setTesting(kind)
+    setTestResult((current) => ({ ...current, [kind]: null }))
+    try {
+      const result = await api<ConfigTestResult>('/api/v1/configs/test', {
+        method: 'POST',
+        token,
+        body: JSON.stringify({ kind, preset_id: editingId, config: configPayload(draft) }),
+      })
+      setTestResult((current) => ({ ...current, [kind]: { tone: 'success', message: result.message } }))
+    } catch (err) {
+      setTestResult((current) => ({ ...current, [kind]: { tone: 'danger', message: err instanceof Error ? err.message : 'API test failed' } }))
+    } finally {
+      setTesting(null)
+    }
+  }
+
   return (
     <motion.div
       className="fixed inset-0 z-[80] flex items-center justify-center bg-background/80 p-4 backdrop-blur-md"
@@ -563,7 +678,13 @@ function ConfigModal({
 
           <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
             <section className="rounded-lg border border-border/70 bg-input/25 p-4">
-              <h3 className="mb-4 font-bold">Answer Model</h3>
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h3 className="font-bold">Answer Model</h3>
+                <button className="premium-btn premium-btn-secondary h-9 gap-2 px-3 text-xs" onClick={() => void testConfig('llm')} disabled={testing === 'llm'}>
+                  {testing === 'llm' ? <RefreshCw className="animate-spin" size={14} /> : <CheckCircle2 size={14} />} Test LLM
+                </button>
+              </div>
+              {testResult.llm && <TestResultLine result={testResult.llm} />}
               <div className="space-y-4">
                 <Field label="LLM model">
                   <input className="premium-input bg-transparent" value={draft.llm_model} onChange={(e) => onChange({ ...draft, llm_model: e.target.value })} placeholder="gpt-4o" />
@@ -581,7 +702,13 @@ function ConfigModal({
             </section>
 
             <section className="rounded-lg border border-border/70 bg-input/25 p-4">
-              <h3 className="mb-4 font-bold">Embedding Model</h3>
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h3 className="font-bold">Embedding Model</h3>
+                <button className="premium-btn premium-btn-secondary h-9 gap-2 px-3 text-xs" onClick={() => void testConfig('embedding')} disabled={testing === 'embedding'}>
+                  {testing === 'embedding' ? <RefreshCw className="animate-spin" size={14} /> : <CheckCircle2 size={14} />} Test Embed
+                </button>
+              </div>
+              {testResult.embedding && <TestResultLine result={testResult.embedding} />}
               <div className="space-y-4">
                 <Field label="Embedding model">
                   <input className="premium-input bg-transparent" value={draft.embedding_model} onChange={(e) => onChange({ ...draft, embedding_model: e.target.value })} placeholder="text-embedding-3-small" />
@@ -646,6 +773,19 @@ function Field({ label, helpText, children }: { label: string; helpText?: string
   )
 }
 
+function TestResultLine({ result }: { result: { tone: 'success' | 'danger'; message: string } }) {
+  return (
+    <div className={cn(
+      'mb-4 rounded-md border px-3 py-2 text-xs font-semibold leading-5',
+      result.tone === 'success'
+        ? 'border-primary-500/30 bg-primary-500/10 text-primary-400'
+        : 'border-red-500/30 bg-red-500/10 text-red-300',
+    )}>
+      {result.message}
+    </div>
+  )
+}
+
 function SecretInput({ value, placeholder, onChange }: { value: string; placeholder: string; onChange: (value: string) => void }) {
   return (
     <div className="relative">
@@ -653,4 +793,38 @@ function SecretInput({ value, placeholder, onChange }: { value: string; placehol
       <input type="password" className="premium-input bg-transparent pl-10" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
     </div>
   )
+}
+
+function configPayload(draft: ConfigDraft) {
+  return {
+    ...draft,
+    llm_base_url: draft.llm_base_url || null,
+    llm_api_key: draft.llm_api_key || null,
+    llm_max_tokens: draft.llm_max_tokens || null,
+    embedding_base_url: draft.embedding_base_url || null,
+    embedding_api_key: draft.embedding_api_key || null,
+  }
+}
+
+function normalizeRotation(value: RotationConfig): RotationConfig {
+  return {
+    ...defaultRotation,
+    ...value,
+    llm: { ...defaultRotation.llm, ...(value.llm || {}), preset_ids: value.llm?.preset_ids || value.preset_ids || [] },
+    embedding: { ...defaultRotation.embedding, ...(value.embedding || {}), preset_ids: value.embedding?.preset_ids || value.preset_ids || [] },
+  }
+}
+
+function activePresetFor(lane: RotationLane, presets: Preset[], key: LaneName) {
+  return presets.find((preset) => preset.id === lane.active_preset_id)
+    || presets.find((preset) => key === 'llm' ? preset.llm_is_active === 1 : preset.embedding_is_active === 1)
+    || presets.find((preset) => preset.is_active === 1)
+}
+
+function presetsByIds(presets: Preset[], ids: string[]) {
+  return ids.map((id) => presets.find((preset) => preset.id === id)).filter(Boolean) as Preset[]
+}
+
+function unique(value: string, index: number, array: string[]) {
+  return array.indexOf(value) === index
 }

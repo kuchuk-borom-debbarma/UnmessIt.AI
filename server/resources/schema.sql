@@ -276,6 +276,12 @@ CREATE TABLE IF NOT EXISTS user_rotation_config (
     user_id TEXT PRIMARY KEY,
     enabled INTEGER NOT NULL DEFAULT 0,
     preset_ids JSON NOT NULL DEFAULT '[]',
+    llm_enabled INTEGER NOT NULL DEFAULT 0,
+    llm_preset_ids JSON NOT NULL DEFAULT '[]',
+    llm_active_preset_id TEXT,
+    embedding_enabled INTEGER NOT NULL DEFAULT 0,
+    embedding_preset_ids JSON NOT NULL DEFAULT '[]',
+    embedding_active_preset_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
