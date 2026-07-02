@@ -308,7 +308,7 @@ def _pack_context(
 
 def _snippets(query: str, text: str, summary: str) -> list[str]:
     """Pick small passages with query-term overlap; fall back to the start."""
-    terms = {term.lower() for term in _terms(query)}
+    terms = {term.lower() for term in _expanded_terms(query)}
     passages = _passages(text)
     scored = []
     for index, passage in enumerate(passages):
@@ -317,10 +317,31 @@ def _snippets(query: str, text: str, summary: str) -> list[str]:
         if score:
             scored.append((score, index, passage))
     if not scored:
-        fallback = summary or text
-        return [fallback[:MAX_SNIPPET_CHARS]] if fallback else []
+        fallback_passages = []
+        if summary:
+            fallback_passages.append(summary[:MAX_SNIPPET_CHARS])
+        fallback_passages.extend(p[:MAX_SNIPPET_CHARS] for p in passages[:MAX_SNIPPETS_PER_CHUNK])
+        return list(dict.fromkeys(item for item in fallback_passages if item))[:MAX_SNIPPETS_PER_CHUNK]
     scored.sort(key=lambda item: (-item[0], item[1]))
-    return [passage[:MAX_SNIPPET_CHARS] for _, _, passage in scored[:MAX_SNIPPETS_PER_CHUNK]]
+    return [_focused_snippet(passage, terms) for _, _, passage in scored[:MAX_SNIPPETS_PER_CHUNK]]
+
+
+def _focused_snippet(passage: str, terms: set[str]) -> str:
+    if len(passage) <= MAX_SNIPPET_CHARS:
+        return passage
+    lowered = passage.lower()
+    indexes = [lowered.find(term) for term in terms if term and lowered.find(term) >= 0]
+    if not indexes:
+        return passage[:MAX_SNIPPET_CHARS]
+    center = min(indexes)
+    start = max(0, center - MAX_SNIPPET_CHARS // 3)
+    end = start + MAX_SNIPPET_CHARS
+    if end > len(passage):
+        end = len(passage)
+        start = max(0, end - MAX_SNIPPET_CHARS)
+    prefix = "..." if start else ""
+    suffix = "..." if end < len(passage) else ""
+    return f"{prefix}{passage[start:end]}{suffix}"
 
 
 def _passages(text: str) -> list[str]:
@@ -350,3 +371,29 @@ def _terms(query: str) -> list[str]:
             seen.add(lowered)
             terms.append(word)
     return terms[:10]
+
+
+def _expanded_terms(query: str) -> list[str]:
+    """Add small, deterministic synonym sets for common underspecified asks."""
+    terms = _terms(query)
+    lowered = {term.lower() for term in terms}
+    expansions: list[str] = []
+
+    if lowered & {"physical", "appearance", "appearances", "look", "looks", "body", "face"}:
+        expansions.extend([
+            "appearance", "physical", "body", "face", "hair", "eyes", "skin",
+            "height", "build", "scar", "scars", "mole", "moles", "mark", "marks",
+        ])
+
+    if lowered & {"similar", "similarities", "dissimilar", "dissimilarities", "compare", "comparison", "different", "differences"}:
+        expansions.extend([
+            "motivation", "trauma", "change", "transformation", "arc", "personality",
+            "belief", "goal", "conflict", "choice", "violence", "identity",
+        ])
+
+    seen = {term.lower() for term in terms}
+    for term in expansions:
+        if term.lower() not in seen:
+            seen.add(term.lower())
+            terms.append(term)
+    return terms[:28]

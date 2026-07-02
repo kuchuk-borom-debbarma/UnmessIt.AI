@@ -241,20 +241,52 @@ export function SettingsView({ token }: { token: string }) {
   }
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-6xl flex-1 flex-col gap-8 px-4 pb-32 pt-8 md:px-0">
+    <div className="app-page max-w-6xl">
       <AnimatePresence>{toast && <ToastMessage toast={toast} />}</AnimatePresence>
 
-      <header className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h1 className="mb-2 text-4xl font-extrabold tracking-tight">AI Settings</h1>
-          <p className="max-w-2xl font-medium text-muted-foreground">
-            Start with one config preset. Rotation is optional and only helps when you want automatic fallback.
-          </p>
+      <section className="page-hero">
+        <div className="page-hero-inner">
+          <div className="page-hero-copy">
+            <div className="page-hero-icon">
+              <Settings size={24} />
+            </div>
+            <div>
+              <p className="page-hero-kicker">AI Settings</p>
+              <h1 className="page-hero-title">Tune models without losing reliability.</h1>
+              <p className="page-hero-subtitle">
+                Keep one focused config for normal work, or enable rotation when you want fallback across providers.
+              </p>
+            </div>
+          </div>
+          <div className="page-hero-actions">
+            <button className="premium-btn premium-btn-primary h-12 gap-2 px-5" onClick={openNewConfig}>
+              <Plus size={18} /> Create New Config
+            </button>
+          </div>
         </div>
-        <button className="premium-btn premium-btn-primary h-12 gap-2 px-5" onClick={openNewConfig}>
-          <Plus size={18} /> Create New Config
-        </button>
-      </header>
+        <div className="page-stat-grid">
+          <div className="page-stat-card">
+            <span>Mode</span>
+            <strong>{rotationEnabled ? 'Rotation' : 'Single'}</strong>
+            <small>{rotationEnabled ? `${selectedIds.length} configs selected` : activePreset?.name || 'no active config'}</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Presets</span>
+            <strong>{presets.length}</strong>
+            <small>saved model setups</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Chunking</span>
+            <strong>{processing.chunk_size}</strong>
+            <small>{processing.chunk_overlap} overlap chars</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Version</span>
+            <strong>{currentVersion}</strong>
+            <small>current local build</small>
+          </div>
+        </div>
+      </section>
 
       <section className="bento-card p-6 md:p-8">
         <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">

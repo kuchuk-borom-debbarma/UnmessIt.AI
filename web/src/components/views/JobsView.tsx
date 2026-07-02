@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useState, useRef } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import { Play, RefreshCw, AlertCircle, CheckCircle2, Clock3, Pause, Square, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react'
 import { api } from '../../lib/api'
 import { cn } from '../../lib/utils'
@@ -175,6 +175,13 @@ export function JobsView({ token }: { token: string }) {
     onProgress: handleProgress,
   })
 
+  const jobCounts = useMemo(() => ({
+    active: jobs.filter(job => ['running', 'queued', 'waiting_retry'].includes(job.status)).length,
+    failed: jobs.filter(job => ['failed', 'aborted'].includes(job.status)).length,
+    paused: jobs.filter(job => job.status === 'paused').length,
+    complete: jobs.filter(job => job.status === 'complete').length,
+  }), [jobs])
+
   const runJobAction = async (jobId: string, action: () => Promise<void>, success: string, failure: string) => {
     if (busyJobId) return
     setBusyJobId(jobId)
@@ -220,20 +227,54 @@ export function JobsView({ token }: { token: string }) {
   }
 
   return (
-    <div className="flex flex-col flex-1 h-full max-w-6xl mx-auto w-full pt-8">
+    <div className="app-page max-w-6xl">
       <AnimatePresence>
         {toast && <ToastMessage toast={toast} />}
       </AnimatePresence>
 
-      <div className="flex flex-col gap-4 mb-8 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h1 className="text-4xl font-extrabold tracking-tight mb-2 text-foreground">Ingestion Pipeline</h1>
-          <p className="text-muted-foreground font-medium">Running jobs appear first, then queued/retry, failed or paused work, and completed history last.</p>
+      <section className="page-hero">
+        <div className="page-hero-inner">
+          <div className="page-hero-copy">
+            <div className="page-hero-icon">
+              <RefreshCw size={24} />
+            </div>
+            <div>
+              <p className="page-hero-kicker">Ingestion Pipeline</p>
+              <h1 className="page-hero-title">Watch memory become searchable.</h1>
+              <p className="page-hero-subtitle">
+                Durable jobs chunk notes, generate recall links, embed vectors, and resume safely after rate limits or API failures.
+              </p>
+            </div>
+          </div>
+          <div className="page-hero-actions">
+            <button className="premium-btn premium-btn-secondary h-11 gap-2 px-4" onClick={() => void load()}>
+              <RefreshCw size={16} /> Refresh
+            </button>
+          </div>
         </div>
-        <button className="premium-btn premium-btn-secondary h-11 gap-2 px-4" onClick={() => void load()}>
-          <RefreshCw size={16} /> Refresh
-        </button>
-      </div>
+        <div className="page-stat-grid">
+          <div className="page-stat-card">
+            <span>Active</span>
+            <strong>{jobCounts.active}</strong>
+            <small>running, queued, or retrying</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Paused</span>
+            <strong>{jobCounts.paused}</strong>
+            <small>manual resume available</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Failed</span>
+            <strong>{jobCounts.failed}</strong>
+            <small>needs attention</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Complete</span>
+            <strong>{jobCounts.complete}</strong>
+            <small>indexed history loaded</small>
+          </div>
+        </div>
+      </section>
 
       <div className="bento-card bg-white dark:bg-[#0a0a0a] border-border/50 dark:border-[#222] p-2">
         {/* Terminal Header */}
@@ -295,7 +336,7 @@ export function JobsView({ token }: { token: string }) {
                             <>
                               <span className="text-zinc-300 line-clamp-1 italic max-w-md">"{job.note_text}"</span>
                               <Link
-                                to={`/notes/${job.id}`}
+                                to={`/notes/${job.note_id}`}
                                 className="inline-flex items-center gap-1 hover:text-primary-400 transition-colors bg-primary-500/10 text-primary-500 px-2 py-0.5 rounded-md"
                                 title="View Note"
                               >

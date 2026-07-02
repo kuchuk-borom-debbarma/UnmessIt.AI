@@ -99,10 +99,13 @@ def search(query: str, user_id: str, limit: int = 8, within_directories: list[st
         return []
         
     terms_clause = "(" + " OR ".join(["(sc.text LIKE ? OR sc.summary LIKE ?)"] * len(terms)) + ")"
+    score_sql = " + ".join(["CASE WHEN sc.text LIKE ? OR sc.summary LIKE ? THEN 1 ELSE 0 END"] * len(terms))
     where_clauses = [terms_clause, "sc.user_id = ?", "ri.deleted_at IS NULL"]
     
+    score_params = []
     params = []
     for term in terms:
+        score_params.extend([f"%{term}%", f"%{term}%"])
         params.extend([f"%{term}%", f"%{term}%"])
     params.append(user_id)
     
@@ -137,14 +140,15 @@ def search(query: str, user_id: str, limit: int = 8, within_directories: list[st
     
     rows = get_connection().execute(
         f"""
-        SELECT sc.id, sc.raw_input_id, ri.job_id as note_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at, sc.directory_path
+        SELECT sc.id, sc.raw_input_id, ri.job_id as note_id, sc.text, sc.summary, sc.spans, sc.source_time, sc.user_id, sc.metadata, sc.created_at, sc.directory_path,
+               ({score_sql}) as lexical_score
         FROM source_chunks sc
         JOIN raw_inputs ri ON ri.id = sc.raw_input_id
         WHERE {where_sql}
-        ORDER BY sc.created_at DESC
+        ORDER BY lexical_score DESC, sc.created_at DESC
         LIMIT ?
         """,
-        [*params, limit],
+        [*score_params, *params, limit],
     ).fetchall()
     return [_from_row(row) for row in rows]
 
@@ -270,4 +274,14 @@ def _terms(query: str) -> list[str]:
         if len(clean) >= 3 and lowered not in seen:
             seen.add(lowered)
             terms.append(clean)
-    return terms[:8]
+    if seen & {"physical", "appearance", "appearances", "look", "looks", "body", "face"}:
+        for term in ("appearance", "physical", "body", "face", "hair", "eyes", "skin", "height", "build", "scar", "scars", "mole", "moles", "mark", "marks"):
+            if term not in seen:
+                seen.add(term)
+                terms.append(term)
+    if seen & {"similar", "similarities", "dissimilar", "dissimilarities", "compare", "comparison", "different", "differences"}:
+        for term in ("motivation", "trauma", "change", "transformation", "arc", "personality", "belief", "goal", "conflict", "choice", "violence", "identity"):
+            if term not in seen:
+                seen.add(term)
+                terms.append(term)
+    return terms[:24]

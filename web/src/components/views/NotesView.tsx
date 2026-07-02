@@ -671,36 +671,66 @@ export function NotesView({ token }: { token: string }) {
   const dirTotalPages = Math.ceil(dirTotal / dirLimit)
 
   return (
-    <div className="flex flex-col flex-1 h-full max-w-7xl mx-auto w-full pt-8 pb-20 relative">
-      
-      {/* Header & Controls */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8">
-        <div>
-          <h1 className="text-4xl font-extrabold tracking-tight mb-2">Knowledge Base</h1>
-          <p className="text-muted-foreground font-medium">Capture, organize, and search your raw thoughts.</p>
-        </div>
+    <div className="app-page max-w-7xl">
+      <section className="page-hero">
+        <div className="page-hero-inner">
+          <div className="page-hero-copy">
+            <div className="page-hero-icon">
+              <FileText size={24} />
+            </div>
+            <div>
+              <p className="page-hero-kicker">Knowledge Base</p>
+              <h1 className="page-hero-title">Capture, append, and organize memory.</h1>
+              <p className="page-hero-subtitle">
+                Notes are indexed as source chunks, vectors, folder paths, and recall links so fresh edits stay searchable.
+              </p>
+            </div>
+          </div>
 
-        <div className="flex items-center gap-3">
-          <button 
-            className="w-12 h-12 flex items-center justify-center rounded-xl liquid-glass text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors"
-            onClick={() => navigate('/trash')}
-            title="View Trash"
-          >
-            <Trash2 size={20} />
-          </button>
-          <button 
-            className="premium-btn premium-btn-primary h-12 px-6 gap-2"
-            onClick={() => {
-              setIsSelectingType(true)
-            }}
-          >
-            <Plus size={18} /> New Note
-          </button>
+          <div className="page-hero-actions">
+            <button 
+              className="icon-btn h-12 w-12 text-muted-foreground hover:bg-red-500/10 hover:text-red-500"
+              onClick={() => navigate('/trash')}
+              title="View Trash"
+            >
+              <Trash2 size={20} />
+            </button>
+            <button 
+              className="premium-btn premium-btn-primary h-12 px-6 gap-2"
+              onClick={() => {
+                setIsSelectingType(true)
+              }}
+            >
+              <Plus size={18} /> New Note
+            </button>
+          </div>
         </div>
-      </div>
+        <div className="page-stat-grid">
+          <div className="page-stat-card">
+            <span>Notes</span>
+            <strong>{noteTotal.toLocaleString()}</strong>
+            <small>current folder scope</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Folders</span>
+            <strong>{dirTotal.toLocaleString()}</strong>
+            <small>visible at this level</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Indexed</span>
+            <strong>{notes.filter(note => note.job_status === 'complete').length.toLocaleString()}</strong>
+            <small>loaded notes ready for Ask</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Filter</span>
+            <strong>{filterTagVal ? 'On' : 'Off'}</strong>
+            <small>tag-aware note browsing</small>
+          </div>
+        </div>
+      </section>
 
       {/* Breadcrumbs & Folder Actions */}
-      <div className="flex items-center justify-between mb-8 p-4 liquid-glass rounded-2xl">
+      <div className="app-toolbar flex items-center justify-between">
         <div className="flex items-center gap-2 overflow-x-auto whitespace-nowrap">
           <button 
             className="flex items-center gap-2 font-bold text-muted-foreground hover:text-foreground transition-colors"
@@ -766,7 +796,7 @@ export function NotesView({ token }: { token: string }) {
       </div>
 
       
-      <div className="mb-6 z-20 relative max-w-sm">
+      <div className="z-20 relative max-w-sm">
         <TagSearchSelect
           label="Filter by Tag"
           mode="include"

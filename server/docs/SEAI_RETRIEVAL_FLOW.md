@@ -13,17 +13,21 @@ query
 -> merge and dedupe evidence
 -> rerank against original query
 -> pack focused snippets
--> answer from selected source chunks
+-> answer from selected source chunks with optional inline citation markers
 ```
 
 The breakdown step passes simple queries through unchanged and fans out only for compound questions.
 
 Each chunk is reduced to its summary plus the most query-relevant passages before answer generation. This keeps token use low for local and cloud models.
 
+Attribute and comparison-style queries get a small deterministic query-term expansion before lexical search and snippet packing. For example, "physical stuff" also searches appearance terms such as scars, marks, and moles; comparison questions also look for arc, motivation, identity, and conflict language.
+
 ## Rules
 
 - Source chunks are the only citable evidence for semantic facts.
 - Recall keys and recall links are navigation hints, not factual authority.
+- The answer model may synthesize comparisons from sourced facts; the source does not need to contain an explicit comparison.
+- Inline answer references use `[[cite:source_chunk_id]]` markers. The UI renders these as source popups and links to the cited note span.
 - Evidence is capped before returning to the answer step.
 - If search finds no source chunks, the answer says no relevant source chunks were found.
 - The current retrieval path does not run a tool-calling note-browsing agent.
@@ -48,7 +52,7 @@ Each chunk is reduced to its summary plus the most query-relevant passages befor
 }
 ```
 
-`citations` point to raw input ids and source chunk spans. `directories` and `notes` point to organizational UUIDs for UI links.
+`citations` point to raw input ids and source chunk spans. `answer` may also contain inline citation markers that reference those source chunk ids. `directories` and `notes` point to organizational UUIDs for UI links.
 
 ## Directory Filtering
 

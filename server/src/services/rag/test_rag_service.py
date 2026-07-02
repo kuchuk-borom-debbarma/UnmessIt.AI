@@ -11,7 +11,8 @@ from src.repositories import config_presets, dev, raw_inputs, recall, recall_key
 from src.services.rag.private.chains.recall.candidates import RecallCandidateChain
 from src.services.rag.private.chains.recall.index import RecallIndexChain
 from src.services.rag.private.chains.recall.normalizer import RecallNormalizerChain
-from src.services.rag.private.chains.query import QueryEvidenceChain
+from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain
+from src.services.rag.private.chains.query._search import _snippets
 from src.services.rag.private.chains.source_chunk_assembler import SourceChunkAssemblerChain
 from src.services.rag.private.chains.source_chunk_drafts import SourceChunkDraftChain
 from src.services.rag.private.chains.source_windows import SourceWindowChain
@@ -268,8 +269,42 @@ async def test_query_context_packer_ranks_and_falls_back(monkeypatch):
     assert trace["selected_snippet_counts"].keys() == {"vector", "lexical", "linked"}
     # lexical chunk has no query-term overlap so it falls back to its summary snippet
     lexical_chunk = next(c for c in chunks if c["id"] == "lexical")
-    assert lexical_chunk["_snippets"] == ["fallback summary"]
+    assert lexical_chunk["_snippets"][0] == "fallback summary"
     assert trace["context_chars_saved"] >= 0
+
+
+def test_query_snippets_expand_physical_terms():
+    text = "Amy likes quiet mornings.\n\nShe has two moles near her neck and a small scar."
+
+    assert "moles" in _snippets("physical stuff", text, "")[0]
+
+
+def test_source_chunk_lexical_search_expands_physical_terms(monkeypatch):
+    conn = _memory_db()
+    monkeypatch.setattr(source_chunks, "get_connection", lambda: conn)
+    conn.execute("INSERT INTO raw_inputs (id, job_id, content, user_id) VALUES ('raw-1', 'note-1', 'text', 'user-1')")
+    conn.execute(
+        "INSERT INTO source_chunks (id, raw_input_id, text, summary, spans, metadata, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("chunk-1", "raw-1", "She has two moles near her neck.", "summary", "[]", "{}", "user-1"),
+    )
+
+    rows = source_chunks.search("physical stuff", "user-1", limit=5)
+
+    assert [row["id"] for row in rows] == ["chunk-1"]
+
+
+async def test_query_answer_accepts_inline_citation_markers():
+    class MarkerJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            return {"answer": "Amy has two moles. [[cite:chunk-1]]", "citation_ids": []}
+
+    result = await QueryAnswerChain(MarkerJson()).run(
+        "physical stuff about Amy",
+        [_source_chunk("chunk-1", "She has two moles near her neck.")],
+        user_id="user-1",
+    )
+
+    assert result["citation_ids"] == ["chunk-1"]
 
 
 async def test_query_breakdown_falls_back_to_original_query_on_llm_failure():

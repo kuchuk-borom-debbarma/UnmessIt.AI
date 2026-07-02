@@ -57,7 +57,7 @@ export function NoteInsightsView({ token }: { token: string }) {
   const totalPages = data ? Math.ceil(data.total / data.limit) : 1
 
   return (
-    <div className="flex flex-col flex-1 h-full max-w-5xl mx-auto w-full pt-8 pb-32">
+    <div className="app-page max-w-5xl">
       <div className="mb-8">
         <button 
           onClick={() => navigate(`/notes/${id}`)}
@@ -67,34 +67,61 @@ export function NoteInsightsView({ token }: { token: string }) {
         </button>
       </div>
 
-      <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-[1.2rem] bg-accent-500/10 text-accent-500 flex items-center justify-center shadow-inner">
-            <BrainCircuit size={28} />
-          </div>
-          <div>
-            <h1 className="text-3xl font-extrabold tracking-tight">Note Insights</h1>
-            <p className="text-muted-foreground font-medium">Explore the semantic data extracted from this note.</p>
+      <section className="page-hero">
+        <div className="page-hero-inner">
+          <div className="page-hero-copy">
+            <div className="page-hero-icon text-accent-500">
+              <BrainCircuit size={24} />
+            </div>
+            <div>
+              <p className="page-hero-kicker">Note Insights</p>
+              <h1 className="page-hero-title">Inspect the retrieval anatomy.</h1>
+              <p className="page-hero-subtitle">
+                See the chunks, recall keys, and links that make this note available to Ask AI.
+              </p>
+            </div>
           </div>
         </div>
-      </div>
+        <div className="page-stat-grid">
+          <div className="page-stat-card">
+            <span>Viewing</span>
+            <strong>{activeTab}</strong>
+            <small>current semantic layer</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Total</span>
+            <strong>{data?.total ?? 0}</strong>
+            <small>items in this layer</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Loaded</span>
+            <strong>{items.length}</strong>
+            <small>shown on this page</small>
+          </div>
+          <div className="page-stat-card">
+            <span>Page</span>
+            <strong>{page}</strong>
+            <small>{totalPages || 1} total page{totalPages === 1 ? '' : 's'}</small>
+          </div>
+        </div>
+      </section>
 
-      <div className="flex items-center gap-2 mb-8 border-b border-border/50 pb-px">
+      <div className="segmented-tabs">
         <button 
           onClick={() => handleTabChange('chunks')}
-          className={cn("px-4 py-3 font-bold text-sm border-b-2 transition-colors flex items-center gap-2", activeTab === 'chunks' ? "border-accent-500 text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
+          className={cn(activeTab === 'chunks' && "active")}
         >
           <Hash size={16} /> Semantic Chunks
         </button>
         <button 
           onClick={() => handleTabChange('keys')}
-          className={cn("px-4 py-3 font-bold text-sm border-b-2 transition-colors flex items-center gap-2", activeTab === 'keys' ? "border-accent-500 text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
+          className={cn(activeTab === 'keys' && "active")}
         >
           <BrainCircuit size={16} /> Recall Keys
         </button>
         <button 
           onClick={() => handleTabChange('links')}
-          className={cn("px-4 py-3 font-bold text-sm border-b-2 transition-colors flex items-center gap-2", activeTab === 'links' ? "border-accent-500 text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
+          className={cn(activeTab === 'links' && "active")}
         >
           <Network size={16} /> Recall Links
         </button>

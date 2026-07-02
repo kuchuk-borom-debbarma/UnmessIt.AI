@@ -8,7 +8,9 @@ import {
   FolderTree,
   GitBranch,
   Link2,
+  MousePointerClick,
   Network,
+  PlusCircle,
   Quote,
   RefreshCw,
   Search,
@@ -20,14 +22,19 @@ import { useEffect, useState } from 'react'
 /* ─── Feature Cards ───────────────────────────────────────────────── */
 const featureCards = [
   {
+    icon: PlusCircle,
+    label: 'Append-Aware Memory',
+    body: 'Add or edit notes without babysitting the index. New chunks, vectors, tags, and folder paths sync into retrieval.',
+  },
+  {
     icon: Network,
     label: 'Multi-Hop Reasoning',
     body: 'By traversing your cross-linked notes, the engine pieces together facts scattered across multiple documents.',
   },
   {
-    icon: CheckCircle2,
-    label: 'Verifiable Truth',
-    body: 'No hallucinations. Every answer includes the exact source chunks and a full retrieval trace.',
+    icon: Quote,
+    label: 'Inline Citations',
+    body: 'Answers can carry source chips in the paragraph itself, with cited text available before you leave the answer.',
   },
   {
     icon: FolderTree,
@@ -54,8 +61,8 @@ const heroSteps = [
 ]
 
 const heroSources = [
-  { file: 'wife_preferences.md', detail: 'lines 12–18', icon: FileText },
-  { file: 'coffee_shop_chat.txt', detail: 'quote: grinder upgrade', icon: Quote },
+  { file: 'wife_preferences.md', detail: 'lines 12-18', icon: FileText },
+  { file: 'coffee_shop_chat.txt', detail: 'lines 41-44', icon: Quote },
   { file: '#gift_task', detail: 'recall link', icon: Link2 },
 ]
 
@@ -63,6 +70,24 @@ const heroMetrics = [
   { label: 'tokens saved', value: '42%', icon: Zap },
   { label: 'recall links', value: '7', icon: Link2 },
   { label: 'source chunks', value: '3', icon: Database },
+]
+
+const flowCards = [
+  {
+    icon: PlusCircle,
+    label: 'Append data',
+    body: 'Drop in new notes or edits. Source chunks and metadata update without a full rebuild.',
+  },
+  {
+    icon: Brain,
+    label: 'Ask a reasoning question',
+    body: 'Hybrid search gathers exact terms, semantic matches, and recall-linked context.',
+  },
+  {
+    icon: MousePointerClick,
+    label: 'Open the cited line',
+    body: 'Inline source chips preview the quote, then jump straight into the note highlight.',
+  },
 ]
 
 /* ─── Component ───────────────────────────────────────────────────── */
@@ -106,8 +131,13 @@ export function LandingView() {
             Messy notes become answers you can <span>trust.</span>
           </h1>
           <p className="hero-subcopy">
-            Stop digging through folders for forgotten ideas. Ask any question and get instantly synthesized answers, backed by exact citations from your own knowledge base.
+            Stop digging through folders for forgotten ideas. Append messy data, ask a reasoning question, and get a synthesized answer with cited lines you can open instantly.
           </p>
+          <div className="hero-pills">
+            <span><PlusCircle size={14} /> Append-friendly indexing</span>
+            <span><Brain size={14} /> Source-grounded reasoning</span>
+            <span><Quote size={14} /> Inline cited lines</span>
+          </div>
         </div>
 
         <div className="answer-demo product-demo" aria-label="Animated retrieval answer demo">
@@ -146,6 +176,10 @@ export function LandingView() {
               <span>grounded</span>
             </div>
             <p>{typedAnswer || 'Reading notes, recall links, and exact source spans…'}</p>
+            <div className={`demo-inline-cites ${showSources ? 'show' : ''}`} aria-label="Inline citation preview">
+              <button type="button">Source 1: lines 12-18</button>
+              <button type="button">Source 2: lines 41-44</button>
+            </div>
           </div>
 
           <div className={`evidence-row source-strip ${showSources ? 'show' : ''}`}>
@@ -170,6 +204,16 @@ export function LandingView() {
         </div>
       </section>
 
+      <section className="rag-flow-strip" aria-label="RAG demo flow">
+        {flowCards.map((item) => (
+          <article key={item.label}>
+            <div><item.icon size={18} /></div>
+            <strong>{item.label}</strong>
+            <span>{item.body}</span>
+          </article>
+        ))}
+      </section>
+
       {/* ── Highlight 1: Engine ── */}
       <section className="showcase-split">
         <div className="showcase-text">
@@ -177,21 +221,21 @@ export function LandingView() {
             <Network size={16} />
             Data & Retrieval Engine
           </div>
-          <h2>Volatile data meets multi-hop logic.</h2>
+          <h2>Changing notes still retrieve cleanly.</h2>
           <p className="showcase-sub">
-            Static RAG breaks when your notes constantly change. We built an engine that embraces volatility, indexing continuously while expanding queries through recall links.
+            Static RAG gets stale when notes are appended, edited, moved, or tagged. This engine keeps chunks, vectors, lexical search, and recall links aligned as your knowledge base changes.
           </p>
           
           <div className="showcase-features">
             <div className="sc-feat-card">
               <Database size={18} className="text-sky-400" />
               <strong>Continuous Indexing</strong>
-              <span>Raw text flows in; chunks and vectors are managed separately. No stale states or full rebuilds.</span>
+              <span>Raw text flows in; chunks, vectors, and folder metadata are managed separately. No stale states or full rebuilds.</span>
             </div>
             <div className="sc-feat-card">
               <GitBranch size={18} className="text-sky-400" />
-              <strong>Broad Link Search</strong>
-              <span>Lexical + Vector search casts a wide net, then recall links pull in the scattered context needed for reasoning.</span>
+              <strong>Hybrid Recall Search</strong>
+              <span>Lexical + vector search casts a wide net, then recall links pull in scattered context for synthesis.</span>
             </div>
           </div>
         </div>

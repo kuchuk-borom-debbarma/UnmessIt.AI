@@ -5,9 +5,18 @@ import { Link } from 'react-router-dom'
 import { DirectorySearchSelect } from './DirectorySearchSelect'
 import { TagSearchSelect } from './TagSearchSelect'
 import { useAsk } from '../../contexts/useAsk'
-import { useEffect, useRef, memo } from 'react'
+import { useEffect, useRef, memo, useState } from 'react'
 
 type Toast = { tone: 'success' | 'danger'; message: string }
+type Citation = {
+  source_chunk_id: string
+  source_input_id: string
+  exact_quote?: string
+  raw_text?: string
+  cleaned_text?: string
+  start_char?: number | null
+  end_char?: number | null
+}
 
 function ToastMessage({ toast }: { toast: Toast }) {
   return (
@@ -118,6 +127,66 @@ const MiniTerminal = memo(function MiniTerminal({
     </div>
   )
 })
+
+function citationHref(citation: Citation) {
+  return `/notes/${citation.source_input_id}?start=${citation.start_char ?? ''}&end=${citation.end_char ?? ''}`
+}
+
+function InlineAnswer({ answer, citations }: { answer: string; citations: Citation[] }) {
+  const [openId, setOpenId] = useState<string | null>(null)
+  const parts = answer.split(/(\[\[cite:[^\]]+\]\])/g)
+
+  return (
+    <div className="answer-text">
+      {parts.map((part, index) => {
+        const match = part.match(/^\[\[cite:([^\]]+)\]\]$/)
+        if (!match) {
+          return <span key={index}>{part}</span>
+        }
+
+        const chunkId = match[1]
+        const citation = citations.find((item) => item.source_chunk_id === chunkId)
+        if (!citation) return null
+        const sourceNumber = citations.findIndex((item) => item.source_chunk_id === chunkId) + 1
+        const isOpen = openId === chunkId
+
+        return (
+          <span key={`${chunkId}-${index}`} className="inline-citation-wrap">
+            <button
+              type="button"
+              className="inline-citation-chip"
+              onClick={() => setOpenId(isOpen ? null : chunkId)}
+            >
+              Source {sourceNumber}
+            </button>
+            <AnimatePresence>
+              {isOpen && (
+                <motion.span
+                  initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                  transition={{ duration: 0.16 }}
+                  className="inline-citation-popover"
+                >
+                  <span className="inline-citation-label">Cited lines</span>
+                  <span className="inline-citation-quote">
+                    "{citation.exact_quote || citation.raw_text}"
+                  </span>
+                  {citation.cleaned_text && (
+                    <span className="inline-citation-summary">{citation.cleaned_text}</span>
+                  )}
+                  <Link className="inline-citation-link" to={citationHref(citation)}>
+                    Open in note <ExternalLink size={13} />
+                  </Link>
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </span>
+        )
+      })}
+    </div>
+  )
+}
 
 export function AskView({ token }: { token: string }) {
   const {
@@ -313,8 +382,8 @@ export function AskView({ token }: { token: string }) {
             transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1], delay: 0.1 }}
             className="bento-card p-8 md:p-12"
           >
-            <div className="prose prose-invert prose-lg max-w-none prose-headings:font-space prose-headings:font-bold prose-a:text-primary-400 prose-a:no-underline hover:prose-a:text-primary-300">
-              <div dangerouslySetInnerHTML={{ __html: result.answer }} />
+            <div className="text-lg leading-8 text-foreground/90">
+              <InlineAnswer answer={result.answer} citations={result.citations || []} />
             </div>
 
             {result.citations?.length > 0 && (

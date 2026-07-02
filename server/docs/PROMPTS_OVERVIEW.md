@@ -111,13 +111,15 @@ Purpose:
 
 - answer from selected source chunks only
 - cite source chunk ids only
+- synthesize comparisons or similarities when the selected chunks contain facts for each side
+- embed inline `[[cite:source_chunk_id]]` markers when useful for verification
 - say what is missing when evidence is incomplete
 
 Contract:
 
 ```json
 {
-  "answer": "string",
+  "answer": "string with optional [[cite:source_chunk_id]] markers",
   "citation_ids": ["source_chunk_id"]
 }
 ```
