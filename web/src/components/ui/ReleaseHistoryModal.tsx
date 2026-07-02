@@ -66,7 +66,7 @@ export function ReleaseHistoryModal({ isOpen, onClose, versionInfo, currentVersi
             <div className="space-y-8">
               {history.map((release) => (
                 <section key={release.version} className="border-b border-border/50 pb-6 last:border-b-0 last:pb-0">
-                  <div className="prose prose-invert prose-p:leading-relaxed prose-pre:bg-zinc-900 max-w-none">
+                  <div className="prose prose-slate dark:prose-invert prose-p:leading-relaxed prose-pre:bg-input prose-pre:text-foreground max-w-none">
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
                       rehypePlugins={[rehypeRaw]}

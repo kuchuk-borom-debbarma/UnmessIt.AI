@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Refreshed Notes, Jobs, Settings, Trash, Note Detail, and Note Insights with the same polished visual system as Ask AI while keeping layouts dense and operational.
 - Rebalanced internal pages into compact glassmorphism surfaces with the Ask AI-style soft blurred background and less visual noise.
+- Simplified internal page headers into compact glass toolbars and removed the bulky stat-strip treatment.
+- Clarified Settings presets so answer-model and embedding/indexing choices appear as separate lane controls.
 - Changed the retrieval flow to plan focused sub-queries, gather packed context, verify the context against the original query, optionally retry once, then answer from verified evidence.
 - Changed broad multi-part retrieval to add generic clause-level sub-queries and preserve partial on-topic evidence instead of refusing the whole question.
 - Changed Settings so LLM answer calls and embedding/indexing calls can use different active presets or different rotation orders.
@@ -50,6 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings API tests now reuse the saved secret when an edit-mode API key field is left blank.
 - Ask AI now strips invalid or unavailable inline citation markers instead of showing raw `[[cite:...]]` text in answers.
 - Inline citation popovers now layer above the answer area cleanly instead of hiding behind the Ask input or progress UI.
+- Repeated inline citations now open one popover at a time instead of opening every matching source chip.
+- Release history and job previews now keep readable text contrast in both light and dark mode.
 - Attribute-style questions now retrieve small exact details such as counts, labels, descriptors, and qualifiers more reliably.
 - Focused snippets now keep numbered list evidence together so cited lines do not stop at markers such as `1.`.
 - Cited note links now expand the source note enough to reveal the highlighted span and scroll gently for smaller screens.

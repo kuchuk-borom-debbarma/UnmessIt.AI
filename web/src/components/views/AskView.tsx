@@ -175,14 +175,15 @@ function InlineAnswer({ answer, citations }: { answer: string; citations: Citati
         const citation = citations.find((item) => item.source_chunk_id === chunkId)
         if (!citation) return null
         const sourceNumber = citations.findIndex((item) => item.source_chunk_id === chunkId) + 1
-        const isOpen = openId === chunkId
+        const markerId = `${chunkId}-${index}`
+        const isOpen = openId === markerId
 
         return (
-          <span key={`${chunkId}-${index}`} className="inline-citation-wrap">
+          <span key={markerId} className="inline-citation-wrap">
             <button
               type="button"
               className="inline-citation-chip"
-              onClick={() => setOpenId(isOpen ? null : chunkId)}
+              onClick={() => setOpenId(isOpen ? null : markerId)}
             >
               Source {sourceNumber}
             </button>

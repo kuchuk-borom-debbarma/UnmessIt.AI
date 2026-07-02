@@ -337,16 +337,14 @@ export function SettingsView({ token }: { token: string }) {
 
         <div className="grid gap-4 md:grid-cols-2">
           <LaneModeCard
-            lane="llm"
-            title="LLM"
+            title="Answers"
             activePreset={llmActivePreset}
             selectedCount={rotation.llm.preset_ids.length}
             enabled={rotation.llm.enabled}
             onEnabledChange={(enabled) => updateLane('llm', (current) => ({ ...current, enabled }))}
           />
           <LaneModeCard
-            lane="embedding"
-            title="Embedding"
+            title="Embeddings"
             activePreset={embeddingActivePreset}
             selectedCount={rotation.embedding.preset_ids.length}
             enabled={rotation.embedding.enabled}
@@ -361,7 +359,7 @@ export function SettingsView({ token }: { token: string }) {
         </div>
 
         {rotationInvalid && (
-          <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm font-semibold text-red-300">
+          <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm font-semibold text-red-700 dark:text-red-300">
             Rotation needs at least two selected configs in each enabled lane. Choose more configs below or switch that lane back to single.
           </div>
         )}
@@ -372,7 +370,7 @@ export function SettingsView({ token }: { token: string }) {
           <div>
             <h2 className="text-2xl font-bold text-foreground">Config Presets</h2>
             <p className="mt-1 text-sm font-medium text-muted-foreground">
-              A config stores model names, API keys, base URLs, and rate limits. Embedding model lives here too.
+              Use a saved config for answers, embeddings, or either rotation list.
             </p>
           </div>
           <button className="premium-btn premium-btn-secondary h-11 gap-2 px-4" onClick={openNewConfig}>
@@ -389,43 +387,16 @@ export function SettingsView({ token }: { token: string }) {
                 key={preset.id}
                 layout
                 className={cn(
-                  'rounded-lg border p-4 transition-colors',
-                  preset.llm_is_active || preset.embedding_is_active ? 'border-primary-500/60 bg-primary-500/10' : 'border-border/60 bg-input/30',
+                  'rounded-lg border p-4 transition-colors backdrop-blur-xl',
+                  preset.llm_is_active || preset.embedding_is_active ? 'border-primary-500/35 bg-primary-500/[0.06]' : 'border-border/60 bg-card/35',
                 )}
               >
-                <div className="flex flex-col gap-4 md:flex-row md:items-center">
-                  <div className="flex min-w-0 flex-1 items-start gap-4">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="truncate text-lg font-bold text-foreground">{preset.name}</h3>
-                        {preset.llm_is_active === 1 && <span className="rounded-full bg-primary-500/15 px-2 py-0.5 text-xs font-bold text-primary-400">LLM single</span>}
-                        {preset.embedding_is_active === 1 && <span className="rounded-full bg-primary-500/15 px-2 py-0.5 text-xs font-bold text-primary-400">Embedding single</span>}
-                        {llmSelected && <span className="rounded-full bg-accent-500/15 px-2 py-0.5 text-xs font-bold text-accent-400">LLM rotation</span>}
-                        {embeddingSelected && <span className="rounded-full bg-accent-500/15 px-2 py-0.5 text-xs font-bold text-accent-400">Embedding rotation</span>}
-                      </div>
-                      <div className="mt-1 text-xs font-mono text-muted-foreground">
-                        LLM {preset.llm_model} · Embedding {preset.embedding_model}
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-3 text-xs font-bold text-muted-foreground">
-                        <label className="inline-flex items-center gap-2">
-                          <input type="checkbox" checked={llmSelected} onChange={(event) => toggleRotationId('llm', preset.id, event.target.checked)} />
-                          LLM rotation
-                        </label>
-                        <label className="inline-flex items-center gap-2">
-                          <input type="checkbox" checked={embeddingSelected} onChange={(event) => toggleRotationId('embedding', preset.id, event.target.checked)} />
-                          Embedding rotation
-                        </label>
-                      </div>
-                    </div>
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <h3 className="truncate text-lg font-bold text-foreground">{preset.name}</h3>
+                    <p className="mt-1 text-xs font-semibold text-muted-foreground">One saved provider setup, usable by either runtime lane.</p>
                   </div>
-
                   <div className="flex flex-wrap items-center gap-2">
-                    <button className="premium-btn premium-btn-secondary h-10 px-3" onClick={() => void setActive(preset.id, 'llm')}>
-                      Use LLM
-                    </button>
-                    <button className="premium-btn premium-btn-secondary h-10 px-3" onClick={() => void setActive(preset.id, 'embedding')}>
-                      Use Embed
-                    </button>
                     <button className="icon-btn text-amber-400" onClick={() => openEditConfig(preset)} aria-label="Edit config">
                       <Pencil size={18} />
                     </button>
@@ -437,6 +408,28 @@ export function SettingsView({ token }: { token: string }) {
                       <Trash2 size={18} />
                     </button>
                   </div>
+                </div>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <PresetLaneControl
+                    title="Answers"
+                    model={preset.llm_model}
+                    active={preset.llm_is_active === 1}
+                    selected={llmSelected}
+                    useLabel="Use for answers"
+                    rotationLabel="Answer rotation"
+                    onUse={() => void setActive(preset.id, 'llm')}
+                    onRotationChange={(checked) => toggleRotationId('llm', preset.id, checked)}
+                  />
+                  <PresetLaneControl
+                    title="Embeddings"
+                    model={preset.embedding_model}
+                    active={preset.embedding_is_active === 1}
+                    selected={embeddingSelected}
+                    useLabel="Use for indexing"
+                    rotationLabel="Embedding rotation"
+                    onUse={() => void setActive(preset.id, 'embedding')}
+                    onRotationChange={(checked) => toggleRotationId('embedding', preset.id, checked)}
+                  />
                 </div>
               </motion.div>
             )
@@ -476,7 +469,7 @@ export function SettingsView({ token }: { token: string }) {
             <h2 className="text-2xl font-bold text-foreground">Advanced Processing</h2>
             <p className="mt-1 text-sm font-medium text-muted-foreground">Usually safe to leave alone. These settings do not rotate mid-job.</p>
           </div>
-          <span className="text-sm font-bold text-primary-400">{advancedOpen ? 'Hide' : 'Show'}</span>
+          <span className="text-sm font-bold text-primary-600 dark:text-primary-400">{advancedOpen ? 'Hide' : 'Show'}</span>
         </button>
 
         {advancedOpen && (
@@ -493,8 +486,8 @@ export function SettingsView({ token }: { token: string }) {
             <Field label="Retry backoff" helpText="Comma-separated seconds to wait between retries. High: better for strict rate limits. Low: faster recovery for transient errors.">
               <input className="premium-input bg-transparent" value={processing.ingest_retry_backoff_seconds} onChange={(e) => setProcessing({ ...processing, ingest_retry_backoff_seconds: e.target.value })} />
             </Field>
-            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200 lg:col-span-3">
-              <div className="mb-1 flex items-center gap-2 font-bold text-amber-300">
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-800 dark:text-amber-200 lg:col-span-3">
+              <div className="mb-1 flex items-center gap-2 font-bold text-amber-700 dark:text-amber-300">
                 <AlertTriangle size={16} /> Fixed during a job
               </div>
               Chunking, batch size, and retry backoff are job settings. Config presets can change LLM and embedding models; these processing knobs stay stable.
@@ -536,7 +529,6 @@ function LaneModeCard({
   enabled,
   onEnabledChange,
 }: {
-  lane: LaneName
   title: string
   activePreset?: Preset
   selectedCount: number
@@ -544,13 +536,13 @@ function LaneModeCard({
   onEnabledChange: (enabled: boolean) => void
 }) {
   return (
-    <div className="rounded-lg border border-border/60 bg-input/30 p-4">
+    <div className="rounded-lg border border-border/60 bg-card/35 p-4 backdrop-blur-xl">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-lg font-bold text-foreground">{title}</h3>
           <p className="text-xs font-semibold text-muted-foreground">{enabled ? `${selectedCount} rotation configs` : activePreset?.name || 'No single config selected'}</p>
         </div>
-        <span className="rounded-full border border-primary-500/25 bg-primary-500/10 px-2.5 py-1 text-xs font-extrabold text-primary-400">
+        <span className="rounded-full border border-primary-500/25 bg-primary-500/10 px-2.5 py-1 text-xs font-extrabold text-primary-600 dark:text-primary-400">
           {enabled ? 'Rotation' : 'Single'}
         </span>
       </div>
@@ -560,16 +552,61 @@ function LaneModeCard({
           onClick={() => onEnabledChange(false)}
         >
           <div className="flex items-center gap-2 text-sm font-bold text-foreground"><CheckCircle2 size={16} /> Single</div>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">Use one selected preset.</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">Use the current preset.</p>
         </button>
         <button
           className={cn('rounded-lg border p-3 text-left transition-colors', enabled ? 'border-primary-500/60 bg-primary-500/10' : 'border-border/60 bg-background/25 hover:bg-input/70')}
           onClick={() => onEnabledChange(true)}
         >
           <div className="flex items-center gap-2 text-sm font-bold text-foreground"><RotateCw size={16} /> Rotation</div>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">Try selected presets in order.</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">Try checked presets in order.</p>
         </button>
       </div>
+    </div>
+  )
+}
+
+function PresetLaneControl({
+  title,
+  model,
+  active,
+  selected,
+  useLabel,
+  rotationLabel,
+  onUse,
+  onRotationChange,
+}: {
+  title: string
+  model: string
+  active: boolean
+  selected: boolean
+  useLabel: string
+  rotationLabel: string
+  onUse: () => void
+  onRotationChange: (checked: boolean) => void
+}) {
+  return (
+    <div className={cn(
+      'rounded-lg border p-3 transition-colors',
+      active || selected ? 'border-primary-500/30 bg-primary-500/[0.06]' : 'border-border/60 bg-background/30',
+    )}>
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-muted-foreground">{title}</span>
+            {active && <span className="rounded-full bg-primary-500/15 px-2 py-0.5 text-[11px] font-bold text-primary-600 dark:text-primary-400">single</span>}
+            {selected && <span className="rounded-full bg-accent-500/15 px-2 py-0.5 text-[11px] font-bold text-accent-600 dark:text-accent-400">rotation</span>}
+          </div>
+          <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{model}</div>
+        </div>
+        <button className="premium-btn premium-btn-secondary h-9 shrink-0 px-3 text-xs" onClick={onUse} disabled={active}>
+          {active ? 'Current' : useLabel}
+        </button>
+      </div>
+      <label className="mt-3 flex items-center gap-2 rounded-md border border-border/50 bg-background/35 px-3 py-2 text-xs font-bold text-muted-foreground">
+        <input type="checkbox" checked={selected} onChange={(event) => onRotationChange(event.target.checked)} />
+        {rotationLabel}
+      </label>
     </div>
   )
 }
@@ -593,7 +630,7 @@ function RotationOrder({
       <div className="space-y-2">
         {presets.map((preset, index) => (
           <div key={preset.id} className="flex items-center gap-2 rounded-lg border border-border/60 bg-background/30 p-2">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary-500/15 text-xs font-black text-primary-400">{index + 1}</div>
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary-500/15 text-xs font-black text-primary-600 dark:text-primary-400">{index + 1}</div>
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-bold">{preset.name}</div>
               <div className="truncate text-[11px] font-mono text-muted-foreground">{lane === 'llm' ? preset.llm_model : preset.embedding_model}</div>
@@ -778,8 +815,8 @@ function TestResultLine({ result }: { result: { tone: 'success' | 'danger'; mess
     <div className={cn(
       'mb-4 rounded-md border px-3 py-2 text-xs font-semibold leading-5',
       result.tone === 'success'
-        ? 'border-primary-500/30 bg-primary-500/10 text-primary-400'
-        : 'border-red-500/30 bg-red-500/10 text-red-300',
+        ? 'border-primary-500/30 bg-primary-500/10 text-primary-600 dark:text-primary-400'
+        : 'border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300',
     )}>
       {result.message}
     </div>

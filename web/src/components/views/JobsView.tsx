@@ -334,7 +334,7 @@ export function JobsView({ token }: { token: string }) {
                         <div className="flex items-center gap-2">
                           {job.note_text ? (
                             <>
-                              <span className="text-zinc-300 line-clamp-1 italic max-w-md">"{job.note_text}"</span>
+                              <span className="text-zinc-700 dark:text-zinc-300 line-clamp-1 italic max-w-md">"{job.note_text}"</span>
                               <Link
                                 to={`/notes/${job.note_id}`}
                                 className="inline-flex items-center gap-1 hover:text-primary-400 transition-colors bg-primary-500/10 text-primary-500 px-2 py-0.5 rounded-md"
