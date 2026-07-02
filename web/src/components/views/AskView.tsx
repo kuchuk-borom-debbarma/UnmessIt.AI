@@ -18,6 +18,10 @@ type Citation = {
   end_char?: number | null
 }
 
+const CITE_MARKER_RE = /(\[\[cite:[^\]\s]+\]\]?)/g
+const CITE_MARKER_ONLY_RE = /^\[\[cite:([^\]\s]+)\]\]?$/
+const STRAY_CITE_MARKER_RE = /\[\[cite:[^\]\s]+(?:\]\])?/g
+
 function ToastMessage({ toast }: { toast: Toast }) {
   return (
     <motion.div
@@ -134,14 +138,15 @@ function citationHref(citation: Citation) {
 
 function InlineAnswer({ answer, citations }: { answer: string; citations: Citation[] }) {
   const [openId, setOpenId] = useState<string | null>(null)
-  const parts = answer.split(/(\[\[cite:[^\]]+\]\])/g)
+  const parts = answer.split(CITE_MARKER_RE)
 
   return (
     <div className="answer-text">
       {parts.map((part, index) => {
-        const match = part.match(/^\[\[cite:([^\]]+)\]\]$/)
+        const match = part.match(CITE_MARKER_ONLY_RE)
         if (!match) {
-          return <span key={index}>{part}</span>
+          const text = part.replace(STRAY_CITE_MARKER_RE, '')
+          return text ? <span key={index}>{text}</span> : null
         }
 
         const chunkId = match[1]
@@ -380,7 +385,7 @@ export function AskView({ token }: { token: string }) {
             initial={{ opacity: 0, y: 40, filter: 'blur(10px)' }}
             animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
             transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1], delay: 0.1 }}
-            className="bento-card p-8 md:p-12"
+            className="bento-card relative z-20 p-8 md:p-12"
           >
             <div className="text-lg leading-8 text-foreground/90">
               <InlineAnswer answer={result.answer} citations={result.citations || []} />

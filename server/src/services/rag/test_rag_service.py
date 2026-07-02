@@ -318,6 +318,50 @@ async def test_query_answer_accepts_inline_citation_markers():
     assert result["citation_ids"] == ["chunk-1"]
 
 
+async def test_query_answer_sanitizes_invalid_and_malformed_citation_markers():
+    class MarkerJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            return {
+                "answer": "Supported [[cite:chunk-1]], malformed [[cite:chunk-2], invalid [[cite:not-real]].",
+                "citation_ids": [],
+            }
+
+    result = await QueryAnswerChain(MarkerJson()).run(
+        "compare Subject Alpha and Subject Beta",
+        [
+            _source_chunk("chunk-1", "Subject Alpha has one detail."),
+            _source_chunk("chunk-2", "Subject Beta has another detail."),
+        ],
+        user_id="user-1",
+    )
+
+    assert result["citation_ids"] == ["chunk-1", "chunk-2"]
+    assert "[[cite:chunk-2]]" in result["answer"]
+    assert "not-real" not in result["answer"]
+
+
+async def test_query_answer_prompt_allows_cross_context_comparison():
+    class CaptureJson:
+        def __init__(self) -> None:
+            self.system = ""
+
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            self.system = system
+            return {"answer": "ok", "citation_ids": []}
+
+    json_client = CaptureJson()
+    await QueryAnswerChain(json_client).run(
+        "compare Subject Alpha and Subject Beta",
+        [
+            _source_chunk("chunk-1", "Subject Alpha has one detail."),
+            _source_chunk("chunk-2", "Subject Beta has another detail."),
+        ],
+        user_id="user-1",
+    )
+
+    assert "different contexts or sources" in json_client.system
+
+
 async def test_query_breakdown_expands_physical_attribute_queries_when_llm_underplans():
     class OriginalOnlyJson:
         async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:

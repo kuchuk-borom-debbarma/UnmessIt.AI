@@ -5,7 +5,7 @@ Retrieval is source-backed. It selects source chunks, expands through recall lin
 ```txt
 query
 -> breakdown into at most 6 focused sub-queries
-   -> deterministic fan-out for appearance, attribute, and comparison questions
+   -> deterministic fan-out for attribute, comparison, and reasoning questions
 -> per-sub-query search:
    -> source chunk vector search
    -> source chunk lexical search
@@ -27,7 +27,7 @@ Attribute, comparison, and reasoning-style queries get deterministic query-term 
 
 - Source chunks are the only citable evidence for semantic facts.
 - Recall keys and recall links are navigation hints, not factual authority.
-- The answer model may synthesize comparisons from sourced facts; the source does not need to contain an explicit comparison.
+- The answer model may synthesize user-requested comparisons from sourced facts; the source does not need to contain an explicit comparison or a shared context.
 - Inline answer references use `[[cite:source_chunk_id]]` markers. The UI renders these as source popups and links to the cited note span.
 - Evidence is capped before returning to the answer step.
 - If search finds no source chunks, the answer says no relevant source chunks were found.

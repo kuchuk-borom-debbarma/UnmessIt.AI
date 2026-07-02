@@ -11,6 +11,7 @@ from ._graph import build_retrieval_graph
 from ._search import finalize_chunks
 
 logger = logging.getLogger(__name__)
+_CITE_MARKER_RE = re.compile(r"\[\[cite:([^\]\s]+)\]\]?")
 
 
 class QueryEvidenceChain:
@@ -104,6 +105,7 @@ class QueryAnswerChain:
                     "If the evidence is incomplete, say what is missing. "
                     "For broad, timeline, comparison, similarity, or reasoning questions, synthesize across chunks when the facts for each side are present. "
                     "Do not require a source to explicitly perform the comparison; compare the sourced facts yourself. "
+                    "When the user explicitly asks to compare or relate subjects, do not reject the comparison only because the subjects come from different contexts or sources. "
                     "If chunks describe subject A and separate chunks describe subject B, infer similarities and differences from those facts instead of saying direct comparative analysis is unavailable. "
                     "For attribute questions, collect small details from all relevant snippets before deciding the answer is missing. "
                     "For attribute answers, preserve exact counts, labels, descriptors, and qualifiers when the snippets contain them. "
@@ -129,12 +131,13 @@ class QueryAnswerChain:
 
         answer = str(data.get("answer") or "").strip()
         valid_ids = {chunk["id"] for chunk in chunks}
-        marker_ids = [match for match in re.findall(r"\[\[cite:([^\]]+)\]\]", answer) if match in valid_ids]
+        marker_ids = [match.group(1) for match in _CITE_MARKER_RE.finditer(answer) if match.group(1) in valid_ids]
         citation_ids = [str(item) for item in data.get("citation_ids", []) if str(item) in valid_ids]
-        citation_ids = list(dict.fromkeys([*citation_ids, *marker_ids]))
+        citation_ids = list(dict.fromkeys([*citation_ids, *marker_ids]))[:6]
+        answer = _sanitize_answer_citations(answer, set(citation_ids))
         if reporter:
-            await reporter.report(f"Selected {len(citation_ids[:6])} citation(s)", {"citation_ids": citation_ids[:6]})
-        return {"answer": answer or "I found relevant source chunks, but no answer was generated.", "citation_ids": citation_ids[:6]}
+            await reporter.report(f"Selected {len(citation_ids)} citation(s)", {"citation_ids": citation_ids})
+        return {"answer": answer or "I found relevant source chunks, but no answer was generated.", "citation_ids": citation_ids}
 
 
 def build_query_result(query: str, chunks: list[dict[str, Any]], answer: dict[str, Any], trace: dict[str, Any]) -> dict[str, Any]:
@@ -163,6 +166,18 @@ def _chunk_payload(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         }
         for chunk in chunks
     ]
+
+
+def _sanitize_answer_citations(answer: str, citation_ids: set[str]) -> str:
+    def replace(match: re.Match[str]) -> str:
+        chunk_id = match.group(1)
+        return f"[[cite:{chunk_id}]]" if chunk_id in citation_ids else ""
+
+    cleaned = _CITE_MARKER_RE.sub(replace, answer)
+    cleaned = re.sub(r"[ \t]+([,.;:])", r"\1", cleaned)
+    cleaned = re.sub(r"([,;:])(?:[ \t]*[,;:])+", r"\1", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    return cleaned.strip()
 
 
 def _citation(chunk: dict[str, Any], number: int) -> dict[str, Any]:

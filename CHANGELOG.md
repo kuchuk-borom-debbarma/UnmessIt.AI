@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.0.4] - 2026-07-02
 
 ### Added
+- A redesigned landing page with an animated RAG demo flow for append-friendly indexing, source-grounded reasoning, inline citations, and cited-line navigation.
+- Inline Ask AI citation chips that open cited-line popovers directly inside the answer and link into the matching source note span.
+- Domain-neutral retrieval fan-out for attribute, comparison, and reasoning questions, including expanded recall-key lookup, lexical search, reranking, and snippet packing.
+- Shared page hero, stat-card, toolbar, and segmented-tab patterns across the app's internal pages.
 - Redis-backed runtime support for Docker installs, with manual backend runs still able to use in-memory events/SSE when `REDIS_URL` is unset.
 - Transactional SQLite event outbox rows for note lifecycle and ingest job events, with Redis Streams delivery through the `unmessit:server` consumer group.
 - Persistent handler idempotency rows so redelivered stream events skip completed handler work.
@@ -19,11 +23,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Note detail expand/collapse now reveals 400px per step instead of 200px.
 
 ### Changed
+- Refreshed Notes, Jobs, Settings, Trash, Note Detail, and Note Insights with the same polished visual system as Ask AI while keeping layouts dense and operational.
+- Rebalanced internal page headers into compact glassmorphism panels instead of large banner-style hero blocks.
+- Improved retrieval prompts so answers can synthesize comparisons and reasoning from separate sourced facts without requiring the source to already contain the comparison.
+- Improved lexical retrieval scoring and focused snippets so exact small details rank and cite better than generic matches.
+- Expanded retrieval and prompt documentation for inline citations, source-backed synthesis, and deterministic query fan-out.
 - Reworked the app shell and notes grid for a calmer, more stable UI with fewer persistent visual layers and less layout shifting.
 - Reduced Notes view refresh work by separating full-directory loading from paginated note/folder loading and memoizing derived directory lookups.
 - Cleaned repository-generated artifacts out of the tracked tree and ignored future local logs/codebase-memory outputs.
 
 ### Fixed
+- Ask AI now handles broad comparison/reasoning questions when each side has separate supporting evidence.
+- Ask AI no longer rejects user-requested comparisons only because the subjects come from different contexts or sources.
+- Ask AI now strips invalid or unavailable inline citation markers instead of showing raw `[[cite:...]]` text in answers.
+- Inline citation popovers now layer above the answer area cleanly instead of hiding behind the Ask input or progress UI.
+- Attribute-style questions now retrieve small exact details such as counts, labels, descriptors, and qualifiers more reliably.
+- Cited note links now expand the source note enough to reveal the highlighted span and scroll gently for smaller screens.
+- Jobs note links now open the note id associated with the ingest job instead of treating the job id as a note id.
 - Corrected release history so each version only describes changes introduced in that version.
 - Removed the misleading in-app update/reload button; update detection now points users to the GitHub repository instead of pretending to install updates.
 - Hardened `scripts/dev/run.sh` so it checks ports, starts/waits for Redis, captures frontend logs, and cleans up child processes when either service exits.

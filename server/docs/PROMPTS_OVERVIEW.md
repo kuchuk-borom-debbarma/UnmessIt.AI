@@ -112,9 +112,10 @@ Purpose:
 
 - answer from selected source chunks only
 - cite source chunk ids only
-- synthesize comparisons or similarities when the selected chunks contain facts for each side, even if no source explicitly performs the comparison
+- synthesize comparisons or similarities when the user asks and the selected chunks contain facts for each side, even if no source explicitly performs the comparison
 - preserve exact counts, labels, descriptors, and qualifiers when available
 - embed inline `[[cite:source_chunk_id]]` markers when useful for verification
+- normalize or remove malformed/invalid inline citation markers before returning the answer
 - say what is missing when evidence is incomplete
 
 Contract:
