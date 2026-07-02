@@ -51,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ask AI now strips invalid or unavailable inline citation markers instead of showing raw `[[cite:...]]` text in answers.
 - Inline citation popovers now layer above the answer area cleanly instead of hiding behind the Ask input or progress UI.
 - Attribute-style questions now retrieve small exact details such as counts, labels, descriptors, and qualifiers more reliably.
+- Focused snippets now keep numbered list evidence together so cited lines do not stop at markers such as `1.`.
 - Cited note links now expand the source note enough to reveal the highlighted span and scroll gently for smaller screens.
 - Jobs note links now open the note id associated with the ingest job instead of treating the job id as a note id.
 - Corrected release history so each version only describes changes introduced in that version.

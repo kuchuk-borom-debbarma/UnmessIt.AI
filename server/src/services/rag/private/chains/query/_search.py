@@ -418,7 +418,9 @@ def _passages(text: str) -> list[str]:
     paragraphs = [item.strip() for item in re.split(r"\n\s*\n", text) if item.strip()]
     if len(paragraphs) > 1:
         return paragraphs
-    sentences = [item.strip() for item in re.split(r"(?<=[.!?])\s+", text) if item.strip()]
+    marker = "__LIST_DOT__"
+    protected = re.sub(r"(?m)^(\s*\d+)\.\s+", rf"\1{marker} ", text)
+    sentences = [item.replace(marker, ".").strip() for item in re.split(r"(?<=[.!?])\s+", protected) if item.strip()]
     return sentences or ([text.strip()] if text.strip() else [])
 
 

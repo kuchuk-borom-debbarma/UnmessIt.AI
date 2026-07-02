@@ -328,6 +328,16 @@ def test_query_snippets_expand_physical_terms():
     assert "moles" in _snippets("physical stuff", text, "")[0]
 
 
+def test_query_snippets_keep_numbered_list_items_together():
+    text = "Intro sentence. Physical Details\nAmy has:\n1. Six moles on her face\n2. Three moles near her ears\n3. One mole on her neck\nSensitive Physical Notes\nAmy may feel insecure about hair."
+
+    snippet = _snippets("Amy physical infos", text, "")[0]
+
+    assert "Six moles on her face" in snippet
+    assert "Three moles near her ears" in snippet
+    assert "One mole on her neck" in snippet
+
+
 def test_source_chunk_lexical_search_expands_physical_terms(monkeypatch):
     conn = _memory_db()
     monkeypatch.setattr(source_chunks, "get_connection", lambda: conn)
