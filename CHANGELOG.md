@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A redesigned landing page with an animated RAG demo flow for append-friendly indexing, source-grounded reasoning, inline citations, and cited-line navigation.
 - Inline Ask AI citation chips that open cited-line popovers directly inside the answer and link into the matching source note span.
 - Domain-neutral retrieval fan-out for attribute, comparison, and reasoning questions, including expanded recall-key lookup, lexical search, reranking, and snippet packing.
+- A domain-neutral evidence verifier that filters off-scope chunks and can trigger one focused retry before answer generation.
+- Depth-aware retrieval SSE progress events so Ask AI can show nested planning, search, verifier, retry, and answer steps.
 - Shared page hero, stat-card, toolbar, and segmented-tab patterns across the app's internal pages.
 - Redis-backed runtime support for Docker installs, with manual backend runs still able to use in-memory events/SSE when `REDIS_URL` is unset.
 - Transactional SQLite event outbox rows for note lifecycle and ingest job events, with Redis Streams delivery through the `unmessit:server` consumer group.
@@ -24,7 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Refreshed Notes, Jobs, Settings, Trash, Note Detail, and Note Insights with the same polished visual system as Ask AI while keeping layouts dense and operational.
-- Rebalanced internal page headers into compact glassmorphism panels instead of large banner-style hero blocks.
+- Rebalanced internal pages into compact glassmorphism surfaces with the Ask AI-style soft blurred background and less visual noise.
+- Changed the retrieval flow to plan focused sub-queries, gather packed context, verify the context against the original query, optionally retry once, then answer from verified evidence.
 - Improved retrieval prompts so answers can synthesize comparisons and reasoning from separate sourced facts without requiring the source to already contain the comparison.
 - Improved lexical retrieval scoring and focused snippets so exact small details rank and cite better than generic matches.
 - Expanded retrieval and prompt documentation for inline citations, source-backed synthesis, and deterministic query fan-out.
@@ -35,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Ask AI now handles broad comparison/reasoning questions when each side has separate supporting evidence.
 - Ask AI no longer rejects user-requested comparisons only because the subjects come from different contexts or sources.
+- Ask AI now drops same-word but wrong-scope evidence before answering while still allowing cross-context reasoning when the query asks for it.
+- Ask AI progress no longer renders raw details JSON in the terminal; it shows compact indented retrieval steps instead.
+- Ask AI prompts no longer leak retrieval-internal labels such as `SOURCE_CHUNKS` into user-facing prose.
 - Ask AI now strips invalid or unavailable inline citation markers instead of showing raw `[[cite:...]]` text in answers.
 - Inline citation popovers now layer above the answer area cleanly instead of hiding behind the Ask input or progress UI.
 - Attribute-style questions now retrieve small exact details such as counts, labels, descriptors, and qualifiers more reliably.

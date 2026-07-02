@@ -5,7 +5,8 @@ from uuid import uuid4
 
 from src.infra.progress import reset_progress_reporters, set_progress_reporters
 from src.services.rag.models import IngestResult, QueryResult, ProgressReporter, NullProgressReporter
-from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, build_query_result
+from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, QueryVerifierChain, build_query_result
+from src.services.rag.private.chains.query._search import finalize_chunks
 from src.services.rag.private.pipeline.ingest import get_durable_ingest
 
 
@@ -25,6 +26,7 @@ class RagServiceImpl:
     def __init__(self, json_client) -> None:
         """Create the fixed chains used by every ingest call."""
         self.query_evidence = QueryEvidenceChain(json_client)
+        self.query_verifier = QueryVerifierChain(json_client)
         self.query_answer = QueryAnswerChain(json_client)
 
     async def resume_pending_jobs(self) -> None:
@@ -75,8 +77,10 @@ class RagServiceImpl:
 
         tokens = set_progress_reporters(async_report, sync_report)
         try:
-            await reporter.report("Normalizing query text...", {"query_chars": len(query)})
+            await reporter.report("Normalizing query text...", {"depth": 0, "ref": "retrieval:normalize", "query_chars": len(query)})
             await reporter.report("Searching source-backed evidence...", {
+                "depth": 0,
+                "ref": "retrieval:evidence",
                 "within_directories": within_directories or [],
                 "excluding_directories": excluding_directories or [],
                 "within_tags": within_tags or [],
@@ -84,10 +88,53 @@ class RagServiceImpl:
                 "within_tags_condition": within_tags_condition,
             })
             chunks, trace = await self.query_evidence.run(query, user_id, reporter, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
-            await reporter.report("Generating answer from selected evidence...", {"source_chunk_count": len(chunks)})
+            verification = await self.query_verifier.run(query, chunks, user_id, reporter, attempt=1)
+            chunks = _verified_chunks(chunks, verification)
+            trace["verification_attempts"] = [verification]
+
+            retry_query = verification.get("retry_query") or ""
+            if verification.get("status") == "needs_retry" and retry_query and retry_query.lower() != query.lower():
+                await reporter.report(
+                    "Retrying retrieval with verifier-focused query...",
+                    {"depth": 0, "ref": "retrieval:retry", "retry_query": retry_query},
+                )
+                retry_chunks, retry_trace = await self.query_evidence.run(
+                    retry_query,
+                    user_id,
+                    reporter,
+                    within_directories,
+                    excluding_directories,
+                    within_tags,
+                    excluding_tags,
+                    within_tags_condition,
+                )
+                combined_chunks, combine_trace = finalize_chunks([*chunks, *retry_chunks], query)
+                retry_verification = await self.query_verifier.run(query, combined_chunks, user_id, reporter, attempt=2)
+                chunks = _verified_chunks(combined_chunks, retry_verification)
+                trace["verification_attempts"].append(retry_verification)
+                trace["retry_query"] = retry_query
+                trace["retry_trace"] = retry_trace
+                trace["retry_context_pack"] = combine_trace
+
+            trace["verification"] = trace["verification_attempts"][-1]
+            trace["verified_source_chunk_ids"] = [chunk["id"] for chunk in chunks]
+            trace["verified_source_chunk_count"] = len(chunks)
+
+            await reporter.report("Generating answer from verified evidence...", {"depth": 0, "ref": "retrieval:answer", "source_chunk_count": len(chunks)})
             answer = await self.query_answer.run(query, chunks, user_id, reporter)
-            await reporter.report("Retrieval complete.", {"citation_count": len(answer.get("citation_ids", []))})
+            await reporter.report("Retrieval complete.", {"depth": 0, "ref": "retrieval:done", "citation_count": len(answer.get("citation_ids", []))})
         finally:
             reset_progress_reporters(tokens)
         
         return build_query_result(query, chunks, answer, trace)
+
+
+def _verified_chunks(chunks: list[dict], verification: dict) -> list[dict]:
+    on_topic_ids = verification.get("on_topic_ids") or []
+    if on_topic_ids:
+        allowed = set(on_topic_ids)
+        return [chunk for chunk in chunks if chunk["id"] in allowed]
+    off_topic_ids = set(verification.get("off_topic_ids") or [])
+    if off_topic_ids:
+        return [chunk for chunk in chunks if chunk["id"] not in off_topic_ids]
+    return chunks

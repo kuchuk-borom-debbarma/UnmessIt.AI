@@ -50,12 +50,15 @@ def breakdown_node(json_client) -> callable:
         user_id = state.get("user_id")
         
         if reporter:
-            await reporter.report("Planning retrieval sub-queries...", {"query_chars": len(query)})
+            await reporter.report("Planning retrieval sub-queries...", {"depth": 1, "ref": "retrieval:plan", "query_chars": len(query)})
         sub_queries = await _decompose(json_client, query, user_id)
         logger.info("query_breakdown query_len=%s sub_queries=%s", len(query), len(sub_queries))
         
         if reporter:
-            await reporter.report(f"Using {len(sub_queries)} retrieval pass(es): {', '.join(sub_queries)}", {"sub_queries": sub_queries})
+            await reporter.report(
+                f"Using {len(sub_queries)} retrieval pass(es).",
+                {"depth": 1, "ref": "retrieval:plan:subqueries", "sub_queries": sub_queries},
+            )
             
         return {"sub_queries": sub_queries}
 
@@ -72,8 +75,9 @@ async def _decompose(json_client, query: str, user_id: str) -> list[str]:
                 "Each sub-query must be self-contained and searchable on its own. "
                 "Include the original query as the first item. "
                 f"Return at most {_MAX_SUB_QUERIES} sub-queries. "
-                "For comparison questions, include per-subject searches and comparison-dimension searches. "
-                "For appearance or attribute questions, include specific detail searches for the subject. "
+                "For multi-part questions, include focused searches for each requested subject, scope, and comparison or reasoning dimension. "
+                "For attribute questions, include specific detail searches for the requested subject and attribute family. "
+                "Preserve query qualifiers such as source, time, place, folder, product, work, or domain so same-word matches from another context do not dominate. "
                 "If the query is already simple and focused, return only the original query."
             ),
             (

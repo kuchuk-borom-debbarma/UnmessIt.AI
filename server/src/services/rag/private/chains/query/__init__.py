@@ -48,12 +48,15 @@ class QueryEvidenceChain:
         raw_chunks: list[dict[str, Any]] = result["chunks"]
         trace_parts: list[dict[str, Any]] = result["trace_parts"]
         if reporter:
-            await reporter.report("Merging sub-query evidence...", {"raw_chunk_count": len(raw_chunks), "sub_query_count": len(trace_parts)})
+            await reporter.report(
+                "Merging sub-query evidence...",
+                {"depth": 1, "ref": "retrieval:evidence:merge", "raw_chunk_count": len(raw_chunks), "sub_query_count": len(trace_parts)},
+            )
         chunks, finalize_trace = finalize_chunks(raw_chunks, query)
         if reporter:
             await reporter.report(
                 f"Final context selected {len(chunks)} chunk(s); saved {finalize_trace.get('context_chars_saved', 0)} chars",
-                {"source_chunk_ids": [chunk["id"] for chunk in chunks], **finalize_trace},
+                {"depth": 1, "ref": "retrieval:evidence:final", "source_chunk_ids": [chunk["id"] for chunk in chunks], **finalize_trace},
             )
         
         # Calculate true baseline chars (unique across all subqueries before budget dropping)
@@ -80,6 +83,113 @@ class QueryEvidenceChain:
         return chunks, trace
 
 
+class QueryVerifierChain:
+    """Judge whether packed evidence matches the query scope before answering."""
+
+    def __init__(self, json_client) -> None:
+        self.json_client = json_client
+
+    async def run(
+        self,
+        query: str,
+        chunks: list[dict[str, Any]],
+        user_id: str,
+        reporter: ProgressReporter | None = None,
+        attempt: int = 1,
+    ) -> dict[str, Any]:
+        """Return relevance decisions and an optional focused retry query."""
+        if not chunks:
+            return {
+                "status": "insufficient",
+                "reason": "No evidence chunks were selected.",
+                "on_topic_ids": [],
+                "off_topic_ids": [],
+                "retry_query": query,
+            }
+
+        if reporter:
+            await reporter.report(
+                "Verifying evidence against query scope...",
+                {"depth": 1, "ref": f"retrieval:verify:{attempt}", "source_chunk_count": len(chunks)},
+            )
+
+        valid_ids = {chunk["id"] for chunk in chunks}
+        try:
+            data = await self.json_client.async_invoke_json(
+                system=(
+                    "Judge whether retrieved evidence can answer the user's query without mixing unrelated contexts. "
+                    "Return only valid JSON. No markdown. "
+                    "Use only the provided compact chunk payloads. "
+                    "Classify chunks as on-topic when they match the user's requested subject, scope, qualifiers, and sense of ambiguous terms. "
+                    "Classify chunks as off-topic when they use a different sense, domain, event, entity, time, or scope than the query asks for. "
+                    "When the query explicitly asks to compare, connect, or contrast multiple subjects, chunks for each requested subject may be on-topic even if they come from different contexts. "
+                    "When the query is scoped to one context, do not keep chunks from another context just because words overlap. "
+                    "If enough on-topic evidence exists, status is sufficient. "
+                    "If evidence is close but missing a likely retrievable subject, detail, or scope, status is needs_retry and retry_query must be a focused search query. "
+                    "If the selected evidence cannot answer the query and a retry is unlikely to help, status is insufficient. "
+                    "Do not reveal hidden reasoning; put a concise user-safe reason in reason."
+                ),
+                human=(
+                    f"QUERY:\n{query}\n\n"
+                    f"CHUNKS:\n{json.dumps(_chunk_payload(chunks), ensure_ascii=False)}\n\n"
+                    'Return JSON: {"status":"sufficient|needs_retry|insufficient","reason":"short reason","on_topic_ids":["source_chunk_id"],"off_topic_ids":["source_chunk_id"],"retry_query":"focused query or empty string"}'
+                ),
+                user_id=user_id,
+            )
+        except Exception as exc:
+            logger.warning("query_verifier_failed error=%s", exc)
+            if reporter:
+                await reporter.report(
+                    "Evidence verifier failed; continuing with ranked context.",
+                    {"depth": 1, "ref": f"retrieval:verify:{attempt}:fallback", "error": str(exc)[:500]},
+                )
+            return {
+                "status": "sufficient",
+                "reason": "Verifier unavailable; using ranked retrieval output.",
+                "on_topic_ids": [chunk["id"] for chunk in chunks],
+                "off_topic_ids": [],
+                "retry_query": "",
+            }
+
+        if not isinstance(data, dict):
+            data = {}
+        status = str(data.get("status") or "sufficient").strip().lower()
+        if status not in {"sufficient", "needs_retry", "insufficient"}:
+            status = "sufficient"
+        on_topic_ids = _valid_ids(data.get("on_topic_ids"), valid_ids)
+        off_topic_ids = _valid_ids(data.get("off_topic_ids"), valid_ids)
+        if on_topic_ids:
+            off_topic_ids = [chunk_id for chunk_id in off_topic_ids if chunk_id not in set(on_topic_ids)]
+        elif off_topic_ids:
+            off_topic = set(off_topic_ids)
+            on_topic_ids = [chunk["id"] for chunk in chunks if chunk["id"] not in off_topic]
+        elif status == "sufficient":
+            on_topic_ids = [chunk["id"] for chunk in chunks]
+
+        retry_query = str(data.get("retry_query") or "").strip()
+        reason = str(data.get("reason") or "").strip()[:500]
+        result = {
+            "status": status,
+            "reason": reason or "Evidence checked against the query scope.",
+            "on_topic_ids": on_topic_ids,
+            "off_topic_ids": off_topic_ids,
+            "retry_query": retry_query,
+        }
+        if reporter:
+            await reporter.report(
+                f"Verifier marked {len(on_topic_ids)} on-topic chunk(s), {len(off_topic_ids)} off-topic.",
+                {
+                    "depth": 1,
+                    "ref": f"retrieval:verify:{attempt}:result",
+                    "status": status,
+                    "on_topic_count": len(on_topic_ids),
+                    "off_topic_count": len(off_topic_ids),
+                    "retry_query": retry_query,
+                },
+            )
+        return result
+
+
 class QueryAnswerChain:
     """Generate an answer from already-selected source chunks."""
 
@@ -90,12 +200,15 @@ class QueryAnswerChain:
         """Return an answer and source chunk ids used as citations."""
         if not chunks:
             if reporter:
-                await reporter.report("No evidence chunks found; skipping answer model call.")
+                await reporter.report("No evidence chunks found; skipping answer model call.", {"depth": 1, "ref": "retrieval:answer:empty"})
             return {"answer": "I could not find relevant source chunks for that query.", "citation_ids": []}
 
         try:
             if reporter:
-                await reporter.report("Building answer prompt from packed snippets...", {"source_chunk_count": len(chunks)})
+                await reporter.report(
+                    "Building answer prompt from packed snippets...",
+                    {"depth": 1, "ref": "retrieval:answer:prompt", "source_chunk_count": len(chunks)},
+                )
             data = await self.json_client.async_invoke_json(
                 system=(
                     "Answer the user query using only SOURCE_CHUNKS. "
@@ -103,6 +216,7 @@ class QueryAnswerChain:
                     "SOURCE_CHUNKS are the only evidence; recall metadata is not evidence. "
                     "Each source chunk contains a summary and focused snippets from saved text. "
                     "If the evidence is incomplete, say what is missing. "
+                    "Do not mention SOURCE_CHUNKS, chunks, retrieval internals, or source ids in prose. "
                     "For broad, timeline, comparison, similarity, or reasoning questions, synthesize across chunks when the facts for each side are present. "
                     "Do not require a source to explicitly perform the comparison; compare the sourced facts yourself. "
                     "When the user explicitly asks to compare or relate subjects, do not reject the comparison only because the subjects come from different contexts or sources. "
@@ -122,11 +236,11 @@ class QueryAnswerChain:
                 user_id=user_id,
             )
             if reporter:
-                await reporter.report("Answer model returned JSON; validating citations...")
+                await reporter.report("Answer model returned JSON; validating citations...", {"depth": 1, "ref": "retrieval:answer:validate"})
         except Exception as exc:
             logger.warning("query_answer_failed error=%s", exc)
             if reporter:
-                await reporter.report(f"Answer generation failed: {exc}")
+                await reporter.report(f"Answer generation failed: {exc}", {"depth": 1, "ref": "retrieval:answer:error"})
             return {"answer": "I found relevant source chunks, but answer generation failed.", "citation_ids": []}
 
         answer = str(data.get("answer") or "").strip()
@@ -136,7 +250,10 @@ class QueryAnswerChain:
         citation_ids = list(dict.fromkeys([*citation_ids, *marker_ids]))[:6]
         answer = _sanitize_answer_citations(answer, set(citation_ids))
         if reporter:
-            await reporter.report(f"Selected {len(citation_ids)} citation(s)", {"citation_ids": citation_ids})
+            await reporter.report(
+                f"Selected {len(citation_ids)} citation(s)",
+                {"depth": 1, "ref": "retrieval:answer:citations", "citation_ids": citation_ids},
+            )
         return {"answer": answer or "I found relevant source chunks, but no answer was generated.", "citation_ids": citation_ids}
 
 
@@ -166,6 +283,17 @@ def _chunk_payload(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         }
         for chunk in chunks
     ]
+
+
+def _valid_ids(value: Any, valid_ids: set[str]) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        chunk_id = str(item)
+        if chunk_id in valid_ids and chunk_id not in result:
+            result.append(chunk_id)
+    return result
 
 
 def _sanitize_answer_citations(answer: str, citation_ids: set[str]) -> str:

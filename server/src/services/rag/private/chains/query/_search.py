@@ -72,7 +72,10 @@ async def search_node(state: QueryState) -> dict[str, Any]:
         raise ValueError("user_id is required in QueryState for multi-tenant search")
     
     if reporter:
-        await reporter.report(f"Starting concurrent search across {len(state['sub_queries'])} sub-queries...")
+        await reporter.report(
+            f"Starting concurrent search across {len(state['sub_queries'])} sub-query pass(es)...",
+            {"depth": 1, "ref": "retrieval:search", "sub_query_count": len(state["sub_queries"])},
+        )
         
     within_directories = state.get("within_directories") or []
     excluding_directories = state.get("excluding_directories") or []
@@ -81,8 +84,12 @@ async def search_node(state: QueryState) -> dict[str, Any]:
     within_tags_condition = state.get("within_tags_condition", "any")
 
     async def _search_and_report(index: int, sq: str):
+        search_ref = f"retrieval:search:{index}"
         if reporter:
-            await reporter.report(f"Sub-query {index}/{len(state['sub_queries'])}: starting search for '{sq}'", {"sub_query": sq})
+            await reporter.report(
+                f"Sub-query {index}/{len(state['sub_queries'])}: searching focused evidence.",
+                {"depth": 2, "ref": search_ref, "parent_ref": "retrieval:search", "sub_query": sq},
+            )
         res = await _evidence_for(
             sq,
             state.get("query", ""),
@@ -94,12 +101,13 @@ async def search_node(state: QueryState) -> dict[str, Any]:
             excluding_tags,
             within_tags_condition,
             reporter,
+            search_ref,
         )
         if reporter:
             chunks, trace = res
             await reporter.report(
                 f"Sub-query {index}/{len(state['sub_queries'])}: packed {len(chunks)} evidence chunk(s)",
-                {k: v for k, v in trace.items() if k != "baseline_lengths"},
+                {"depth": 2, "ref": f"{search_ref}:done", "parent_ref": search_ref, **{k: v for k, v in trace.items() if k != "baseline_lengths"}},
             )
         return res
         
@@ -135,31 +143,40 @@ def finalize_chunks(raw_chunks: list[dict[str, Any]], query: str) -> tuple[list[
 # ── internal helpers ─────────────────────────────────────────────────────────
 
 
-async def _evidence_for(sub_query: str, global_query: str, user_id: str, extracted_subjects: list[str], within_directories: list[str], excluding_directories: list[str], within_tags: list[str], excluding_tags: list[str], within_tags_condition: str, reporter=None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+async def _evidence_for(sub_query: str, global_query: str, user_id: str, extracted_subjects: list[str], within_directories: list[str], excluding_directories: list[str], within_tags: list[str], excluding_tags: list[str], within_tags_condition: str, reporter=None, parent_ref: str = "retrieval:search") -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Run all three search paths for one sub-query concurrently where possible."""
     # Vector search and lexical search can run in parallel; recall key lookup is cheap.
     async def _vector_path():
         if reporter:
-            await reporter.report(f"Vector source search: '{sub_query}'")
-        chunks, ids = await _vector_source_chunks(sub_query, user_id, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition, reporter)
+            await reporter.report("Vector source search...", {"depth": 3, "ref": f"{parent_ref}:vector", "parent_ref": parent_ref, "sub_query": sub_query})
+        chunks, ids = await _vector_source_chunks(sub_query, user_id, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition, reporter, parent_ref)
         if reporter:
-            await reporter.report(f"Vector source search returned {len(ids)} hit(s)", {"sub_query": sub_query, "source_chunk_ids": ids})
+            await reporter.report(
+                f"Vector source search returned {len(ids)} hit(s)",
+                {"depth": 3, "ref": f"{parent_ref}:vector:done", "parent_ref": f"{parent_ref}:vector", "sub_query": sub_query, "source_chunk_ids": ids},
+            )
         return chunks, ids
 
     async def _lexical_path():
         if reporter:
-            await reporter.report(f"Lexical source search: '{sub_query}'")
+            await reporter.report("Lexical source search...", {"depth": 3, "ref": f"{parent_ref}:lexical", "parent_ref": parent_ref, "sub_query": sub_query})
         chunks = await asyncio.to_thread(source_chunks.search, sub_query, user_id, 8, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
         if reporter:
-            await reporter.report(f"Lexical source search returned {len(chunks)} chunk(s)", {"sub_query": sub_query, "source_chunk_ids": [chunk["id"] for chunk in chunks]})
+            await reporter.report(
+                f"Lexical source search returned {len(chunks)} chunk(s)",
+                {"depth": 3, "ref": f"{parent_ref}:lexical:done", "parent_ref": f"{parent_ref}:lexical", "sub_query": sub_query, "source_chunk_ids": [chunk["id"] for chunk in chunks]},
+            )
         return chunks
 
     async def _recall_path():
         if reporter:
-            await reporter.report(f"Recall key search: '{sub_query}'")
+            await reporter.report("Recall key search...", {"depth": 3, "ref": f"{parent_ref}:recall", "parent_ref": parent_ref, "sub_query": sub_query})
         keys = await _recall_keys(sub_query, user_id, extracted_subjects)
         if reporter:
-            await reporter.report(f"Recall key search returned {len(keys)} key(s)", {"sub_query": sub_query, "recall_keys": [{"id": key["id"], "name": key["name"]} for key in keys]})
+            await reporter.report(
+                f"Recall key search returned {len(keys)} key(s)",
+                {"depth": 3, "ref": f"{parent_ref}:recall:done", "parent_ref": f"{parent_ref}:recall", "sub_query": sub_query, "recall_keys": [{"id": key["id"], "name": key["name"]} for key in keys]},
+            )
         return keys
 
     (vector_chunks, vector_ids), lexical_chunks, recall_keys = await asyncio.gather(
@@ -168,14 +185,23 @@ async def _evidence_for(sub_query: str, global_query: str, user_id: str, extract
         _recall_path(),
     )
     if reporter:
-        await reporter.report(f"Expanding {len(recall_keys)} recall key(s) into linked chunks", {"sub_query": sub_query})
+        await reporter.report(
+            f"Expanding {len(recall_keys)} recall key(s) into linked chunks",
+            {"depth": 3, "ref": f"{parent_ref}:recall:expand", "parent_ref": f"{parent_ref}:recall", "sub_query": sub_query},
+        )
     linked_ids = await asyncio.to_thread(recall.linked_source_chunk_ids, [key["id"] for key in recall_keys], user_id, 12, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
     linked_chunks = await asyncio.to_thread(source_chunks.get_by_ids, linked_ids, user_id)
     if reporter:
-        await reporter.report(f"Recall expansion returned {len(linked_chunks)} linked chunk(s)", {"sub_query": sub_query, "source_chunk_ids": linked_ids})
+        await reporter.report(
+            f"Recall expansion returned {len(linked_chunks)} linked chunk(s)",
+            {"depth": 3, "ref": f"{parent_ref}:recall:expand:done", "parent_ref": f"{parent_ref}:recall:expand", "sub_query": sub_query, "source_chunk_ids": linked_ids},
+        )
     chunks, _ = _rank_chunks(sub_query, [*vector_chunks, *lexical_chunks, *linked_chunks])
     if reporter:
-        await reporter.report(f"Ranked {len(chunks)} unique chunk(s) for '{sub_query}'", {"sub_query": sub_query, "source_chunk_ids": [chunk["id"] for chunk in chunks[:MAX_EVIDENCE_CHUNKS]]})
+        await reporter.report(
+            f"Ranked {len(chunks)} unique chunk(s) for sub-query",
+            {"depth": 3, "ref": f"{parent_ref}:rank", "parent_ref": parent_ref, "sub_query": sub_query, "source_chunk_ids": [chunk["id"] for chunk in chunks[:MAX_EVIDENCE_CHUNKS]]},
+        )
     
     top_chunks = chunks[:MAX_EVIDENCE_CHUNKS]
     baseline_lengths = {chunk["id"]: len(str(chunk.get("text", ""))) for chunk in top_chunks}
@@ -185,7 +211,7 @@ async def _evidence_for(sub_query: str, global_query: str, user_id: str, extract
     if reporter:
         await reporter.report(
             f"Packed sub-query context: {pack_trace['context_chars_after_packing']}/{pack_trace['context_chars_before_packing']} chars",
-            {"sub_query": sub_query, **pack_trace},
+            {"depth": 3, "ref": f"{parent_ref}:pack", "parent_ref": parent_ref, "sub_query": sub_query, **pack_trace},
         )
 
     trace_part = {
@@ -202,14 +228,17 @@ async def _evidence_for(sub_query: str, global_query: str, user_id: str, extract
     return chunks, trace_part
 
 
-async def _vector_source_chunks(query: str, user_id: str, within_directories: list[str], excluding_directories: list[str], within_tags: list[str], excluding_tags: list[str], within_tags_condition: str, reporter=None) -> tuple[list[dict[str, Any]], list[str]]:
+async def _vector_source_chunks(query: str, user_id: str, within_directories: list[str], excluding_directories: list[str], within_tags: list[str], excluding_tags: list[str], within_tags_condition: str, reporter=None, parent_ref: str = "retrieval:search") -> tuple[list[dict[str, Any]], list[str]]:
     """Use Chroma when available; lexical search still works if embeddings are down."""
     try:
         hits = await asyncio.to_thread(source_chunk_vectors.search, query, user_id, 8, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
     except Exception as exc:
         logger.warning("query_source_vector_search_failed error=%s", exc)
         if reporter:
-            await reporter.report("Vector source search failed; continuing with lexical and recall search.", {"error": str(exc)[:500]})
+            await reporter.report(
+                "Vector source search failed; continuing with lexical and recall search.",
+                {"depth": 3, "ref": f"{parent_ref}:vector:error", "parent_ref": f"{parent_ref}:vector", "error": str(exc)[:500]},
+            )
         return [], []
     ids = [hit["object_id"] for hit in hits if hit.get("object_type") == "source_chunk"]
     chunks = await asyncio.to_thread(source_chunks.get_by_ids, ids, user_id)
@@ -233,8 +262,8 @@ async def _recall_keys(query: str, user_id: str, extracted_subjects: list[str]) 
     all_keys = []
     
     # Direct FTS name lookup for implied subjects (Highest priority)
-    # CRITICAL INSIGHT: If the LLM successfully resolved a description (e.g. "the man") 
-    # into a specific entity name ("Prince Vasili"), we MUST put these keys at the 
+    # CRITICAL INSIGHT: If the LLM successfully resolved a description
+    # into a specific entity name, we MUST put these keys at the
     # front of the list. Otherwise, they get pushed behind generic term matches like 
     # "Officer" or "Guards" and truncated by the [:8] cap at the end.
     if extracted_subjects:

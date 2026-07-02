@@ -104,6 +104,32 @@ Contract:
 
 The result is capped and can be empty.
 
+### Evidence Verification
+
+File: `server/src/services/rag/private/chains/query/__init__.py`
+
+Purpose:
+
+- judge whether packed evidence matches the original query scope
+- keep on-topic chunks and drop off-topic same-word matches
+- allow cross-context evidence when the user explicitly asks to compare, connect, or contrast subjects
+- request one focused retry when the current evidence is close but missing likely retrievable support
+- avoid domain-specific assumptions and expose only a concise reason
+
+Contract:
+
+```json
+{
+  "status": "sufficient|needs_retry|insufficient",
+  "reason": "short reason",
+  "on_topic_ids": ["source_chunk_id"],
+  "off_topic_ids": ["source_chunk_id"],
+  "retry_query": "focused query or empty string"
+}
+```
+
+The service filters chunks with this result before answer generation. If `needs_retry` includes a focused query, retrieval runs one more packed search and verifies the combined context again.
+
 ### Answer Generation
 
 File: `server/src/services/rag/private/chains/query/__init__.py`

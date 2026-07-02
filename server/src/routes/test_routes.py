@@ -95,6 +95,18 @@ def test_retrieval_route_returns_current_query_shape(monkeypatch):
     assert calls == [("hello", "user-1", None, ["dir-1/"], ["dir-2/"], ["tag-1"], ["tag-2"], "all")]
 
 
+def test_retrieval_progress_payload_uses_nested_shape():
+    payload = retrieval_route._progress_payload("Step", {"depth": 2, "ref": "query:step", "parent_ref": "query", "count": 3})
+
+    assert payload == {
+        "message": "Step",
+        "depth": 2,
+        "ref": "query:step",
+        "parent_ref": "query",
+        "details": {"count": 3},
+    }
+
+
 def test_retrieval_route_accepts_legacy_tag_names(monkeypatch):
     monkeypatch.setattr(retrieval_route.tags, "get_by_name", lambda value, user_id: {"id": "tag-id-1"} if value == "Tag One" else None)
 

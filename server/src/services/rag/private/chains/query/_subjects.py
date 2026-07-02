@@ -29,7 +29,7 @@ def subjects_node(json_client) -> callable:
         reporter = state.get("reporter")
         
         if reporter:
-            await reporter.report("Extracting implicit subjects from query...")
+            await reporter.report("Resolving implicit query subjects...", {"depth": 1, "ref": "retrieval:subjects"})
             
         subjects = await _identify_subjects(json_client, query, sub_queries, user_id)
         logger.info("query_subjects query_len=%s extracted=%s", len(query), len(subjects))
@@ -37,7 +37,7 @@ def subjects_node(json_client) -> callable:
         if reporter:
             await reporter.report(
                 f"Found implicit subjects: {', '.join(subjects)}" if subjects else "No implicit subjects found.",
-                {"subjects": subjects},
+                {"depth": 1, "ref": "retrieval:subjects:done", "subjects": subjects},
             )
             
         return {"extracted_subjects": subjects}
@@ -49,9 +49,9 @@ async def _identify_subjects(json_client, query: str, sub_queries: list[str], us
     """Ask the LLM for subjects the query refers to by description; fall back to [].
 
     CRITICAL INSIGHT:
-    For multi-hop relational queries (e.g., "the man who helped the young officer"),
-    generic lexical extraction only yields nouns ("man", "officer"). FTS search will 
-    fail to match these to the actual entity keys ("Prince Vasili", "Boris").
+    For multi-hop relational queries that describe a subject indirectly, generic
+    lexical extraction only yields broad nouns. FTS search can then miss the
+    actual recall key name.
     
     The only way to bridge this gap in a single-pass graph is to explicitly ask the LLM
     to use its general knowledge to resolve descriptions into specific proper names.
@@ -61,9 +61,10 @@ async def _identify_subjects(json_client, query: str, sub_queries: list[str], us
     try:
         data = await json_client.async_invoke_json(
             (
-                "Identify the specific named entities (people, characters, places, items, concepts) that the query refers to by description rather than by explicit name. "
+                "Identify specific named subjects that the query refers to by description rather than by explicit name. "
                 "Use your general knowledge to resolve the descriptions into specific proper names whenever possible. "
-                "If the query describes a subject (e.g., 'the man who...', 'the young officer', 'the company'), figure out who or what it is and return their exact name. "
+                "Subjects can be entities, documents, works, events, concepts, systems, objects, places, organizations, or people. "
+                "If the query describes a subject indirectly, return the most likely exact name. "
                 "Return only valid JSON. No markdown. "
                 f"Return at most {_MAX_SUBJECTS} subjects. "
                 "If every subject is already stated by explicit proper name in the query, return []."
@@ -81,6 +82,5 @@ async def _identify_subjects(json_client, query: str, sub_queries: list[str], us
         cleaned = [str(s).strip() for s in subjects if str(s).strip()]
         return cleaned[:_MAX_SUBJECTS]
     except Exception as exc:
-        # ponytail: silent fallback — retrieval always runs even if extraction fails.
         logger.warning("query_subjects_failed error=%s", exc)
         return []

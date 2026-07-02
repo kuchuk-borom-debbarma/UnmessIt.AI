@@ -17,6 +17,14 @@ type QueryResult = {
 
 type Toast = { tone: 'success' | 'danger'; message: string }
 
+type ProgressStep = {
+  message: string
+  depth: number
+  ref: string
+  parent_ref?: string
+  details?: Record<string, unknown>
+}
+
 export interface AskContextType {
   query: string
   setQuery: (q: string) => void
@@ -40,10 +48,10 @@ export interface AskContextType {
   result: QueryResult | null
   toast: Toast | null
   setToast: (t: Toast | null) => void
-  progressSteps: string[]
+  progressSteps: ProgressStep[]
   handleAsk: (token: string) => void
   stopAsk: () => void
 }
 
 export const AskContext = createContext<AskContextType | null>(null)
-export type { QueryResult, SourceChunk, Toast }
+export type { QueryResult, SourceChunk, Toast, ProgressStep }

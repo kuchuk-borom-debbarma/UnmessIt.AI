@@ -42,6 +42,22 @@ class ProgressReporter(Protocol):
 
 `src/routes/retrieval.py` adapts SSE to this protocol for request-scoped progress.
 
+Retrieval progress events use the same nested display shape as ingest jobs:
+
+```json
+{
+  "message": "Sub-query 1/3: searching focused evidence.",
+  "depth": 2,
+  "ref": "retrieval:search:1",
+  "parent_ref": "retrieval:search",
+  "details": {
+    "sub_query": "focused query"
+  }
+}
+```
+
+`message`, `depth`, and `ref` are top-level display fields. Extra diagnostic values stay under `details` so the Ask UI can render a compact indented trace without dumping raw JSON.
+
 Durable ingest emits a domain event (`ingest_job.changed`) after job-row changes. `src/services/rag/private/durability/events.py` bridges that event to SSE and publishes on `ingest_jobs:{user_id}`.
 
 See `server/docs/REDIS_EVENTS.md` for Redis Pub/Sub fanout and presence details.

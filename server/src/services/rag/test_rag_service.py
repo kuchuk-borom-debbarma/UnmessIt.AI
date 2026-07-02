@@ -11,7 +11,7 @@ from src.repositories import config_presets, dev, raw_inputs, recall, recall_key
 from src.services.rag.private.chains.recall.candidates import RecallCandidateChain
 from src.services.rag.private.chains.recall.index import RecallIndexChain
 from src.services.rag.private.chains.recall.normalizer import RecallNormalizerChain
-from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain
+from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, QueryVerifierChain
 from src.services.rag.private.chains.query._breakdown import _decompose
 from src.services.rag.private.chains.query._search import _rank_chunks, _snippets
 from src.services.rag.private.chains.source_chunk_assembler import SourceChunkAssemblerChain
@@ -62,6 +62,31 @@ class FakeJson:
 
     async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
         return self.invoke_json(system, human)
+
+
+async def test_query_verifier_filters_off_scope_chunks_and_requests_retry():
+    class FakeVerifierJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            assert "without mixing unrelated contexts" in system
+            return {
+                "status": "needs_retry",
+                "reason": "The requested scope is missing one focused subject.",
+                "on_topic_ids": ["chunk-cp"],
+                "off_topic_ids": ["chunk-aot"],
+                "retry_query": "David Cyberpunk focused evidence",
+            }
+
+    chunks = [
+        {"id": "chunk-cp", "summary": "David in one context", "_snippets": ["David details"]},
+        {"id": "chunk-aot", "summary": "A different same-word context", "_snippets": ["Attack Titan details"]},
+    ]
+
+    result = await QueryVerifierChain(FakeVerifierJson()).run("compare David and Eren", chunks, "user-1")
+
+    assert result["status"] == "needs_retry"
+    assert result["on_topic_ids"] == ["chunk-cp"]
+    assert result["off_topic_ids"] == ["chunk-aot"]
+    assert result["retry_query"] == "David Cyberpunk focused evidence"
 
 
 async def test_ingest_submits_durable_job(monkeypatch):

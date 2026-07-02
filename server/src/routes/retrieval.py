@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from fastapi import APIRouter, Request, Depends
@@ -37,10 +38,27 @@ class SseProgressReporter(ProgressReporter):
         self.topic = topic
 
     async def report(self, message: str, details: dict | None = None) -> None:
-        await self.sse.publish(self.topic, "progress", {
-            "message": message,
-            "details": details or {}
-        })
+        await self.sse.publish(self.topic, "progress", _progress_payload(message, details))
+
+
+def _progress_payload(message: str, details: dict | None = None) -> dict:
+    """Normalize retrieval progress to the same nested shape as job progress."""
+    rest = dict(details or {})
+    try:
+        depth = int(rest.pop("depth", 0) or 0)
+    except (TypeError, ValueError):
+        depth = 0
+    ref = rest.pop("ref", None) or f"message:{hashlib.sha1(message.encode()).hexdigest()[:12]}"
+    parent_ref = rest.pop("parent_ref", None)
+    payload = {
+        "message": message,
+        "depth": max(depth, 0),
+        "ref": str(ref),
+        "details": rest,
+    }
+    if parent_ref:
+        payload["parent_ref"] = str(parent_ref)
+    return payload
 
 
 @router.get("/events/{client_id}")
