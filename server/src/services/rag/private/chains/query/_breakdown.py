@@ -109,6 +109,8 @@ def _deterministic_expansions(query: str) -> list[str]:
     subjects = _named_subjects(query)
     expansions: list[str] = []
 
+    expansions.extend(_multipart_expansions(query))
+
     if terms & _ATTRIBUTE_TERMS:
         if subjects:
             for subject in subjects[:3]:
@@ -140,6 +142,21 @@ def _deterministic_expansions(query: str) -> list[str]:
             expansions.append("evidence context causes effects changes outcomes sequence")
 
     return _dedupe(expansions)[: _MAX_SUB_QUERIES - 1]
+
+
+def _multipart_expansions(query: str) -> list[str]:
+    """Split broad enumerations into direct searches without knowing the domain."""
+    if len(query) < 80:
+        return []
+    normalized = " ".join(query.split())
+    pieces = [
+        piece.strip(" .?!")
+        for piece in re.split(r"\s*(?:,|;|\band\b|\bor\b)\s*", normalized, flags=re.IGNORECASE)
+    ]
+    pieces = [piece for piece in pieces if 12 <= len(piece) <= 160 and len(piece.split()) >= 2]
+    if len(pieces) < 3:
+        return []
+    return [f"{piece} evidence context" for piece in pieces[: _MAX_SUB_QUERIES - 1]]
 
 
 def _named_subjects(query: str) -> list[str]:

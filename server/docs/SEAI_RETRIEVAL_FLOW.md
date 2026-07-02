@@ -5,7 +5,7 @@ Retrieval is source-backed. It selects source chunks, expands through recall lin
 ```txt
 query
 -> breakdown into at most 6 focused sub-queries
-   -> deterministic fan-out for attribute, comparison, and reasoning questions
+   -> deterministic fan-out for broad multi-part, attribute, comparison, and reasoning questions
 -> per-sub-query search:
    -> source chunk vector search
    -> source chunk lexical search
@@ -20,11 +20,11 @@ query
 -> answer from verified source chunks with optional inline citation markers
 ```
 
-The breakdown step passes simple queries through unchanged. For broad attribute or reasoning questions, it combines LLM decomposition with deterministic fan-out so retrieval searches for the facts needed to answer, not only the exact words the user typed.
+The breakdown step passes simple queries through unchanged. For broad multi-part, attribute, comparison, or reasoning questions, it combines LLM decomposition with deterministic fan-out so retrieval searches for the facts needed to answer, not only the exact words the user typed. Broad enumerations can add clause-level searches without assuming any domain.
 
 Each chunk is reduced to its summary plus the most query-relevant passages before answer generation. This keeps token use low for local and cloud models.
 
-Before answer generation, the verifier judges the packed chunk payload against the original query. It keeps chunks that match the requested subject, scope, qualifiers, and sense of ambiguous terms, drops off-topic same-word matches, and can ask retrieval to retry once with a more focused query. Explicit comparison or relationship questions may keep evidence from multiple contexts when those contexts are part of the user request.
+Before answer generation, the verifier judges the packed chunk payload against the original query. It keeps chunks that match the requested subject, scope, qualifiers, and sense of ambiguous terms, drops off-topic same-word matches, and can ask retrieval to retry once with a more focused query. Explicit comparison or relationship questions may keep evidence from multiple contexts when those contexts are part of the user request. If selected evidence supports only part of a multi-part query, the verifier keeps that partial evidence instead of discarding it as insufficient.
 
 Attribute, comparison, and reasoning-style queries get deterministic query-term expansion before recall-key lookup, lexical search, reranking, and snippet packing. Attribute questions add neutral detail terms such as labels, counts, features, and measurements, with appearance terms only when the query asks for them. Comparison questions generate per-subject searches plus shared dimension searches for attributes, context, changes, goals, and outcomes. Reasoning/change questions add neutral cause, effect, context, sequence, and outcome terms.
 
@@ -34,6 +34,7 @@ Attribute, comparison, and reasoning-style queries get deterministic query-term 
 - Recall keys and recall links are navigation hints, not factual authority.
 - The answer model may synthesize user-requested comparisons from sourced facts; the source does not need to contain an explicit comparison or a shared context.
 - Evidence verification keeps cross-context evidence only when the query asks for cross-context reasoning or when the chunks match the same requested scope.
+- Partial on-topic evidence should still reach answer generation; the answer should cover supported parts first and briefly name missing parts.
 - Inline answer references use `[[cite:source_chunk_id]]` markers. The UI renders these as source popups and links to the cited note span.
 - Evidence is capped before returning to the answer step.
 - If search finds no source chunks, the answer says no relevant source chunks were found.

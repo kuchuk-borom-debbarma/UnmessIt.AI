@@ -124,9 +124,11 @@ class QueryVerifierChain:
                     "Classify chunks as off-topic when they use a different sense, domain, event, entity, time, or scope than the query asks for. "
                     "When the query explicitly asks to compare, connect, or contrast multiple subjects, chunks for each requested subject may be on-topic even if they come from different contexts. "
                     "When the query is scoped to one context, do not keep chunks from another context just because words overlap. "
+                    "If some chunks support only part of a multi-part query, keep those chunks on-topic and mark missing parts in reason. "
+                    "Do not set status to insufficient when on-topic chunks can support a partial answer. "
                     "If enough on-topic evidence exists, status is sufficient. "
-                    "If evidence is close but missing a likely retrievable subject, detail, or scope, status is needs_retry and retry_query must be a focused search query. "
-                    "If the selected evidence cannot answer the query and a retry is unlikely to help, status is insufficient. "
+                    "If on-topic evidence is partial and a focused retry may find missing parts, status is needs_retry and retry_query must be focused. "
+                    "If no selected chunk can answer any part of the query and a retry is unlikely to help, status is insufficient. "
                     "Do not reveal hidden reasoning; put a concise user-safe reason in reason."
                 ),
                 human=(
@@ -167,6 +169,8 @@ class QueryVerifierChain:
             on_topic_ids = [chunk["id"] for chunk in chunks]
 
         retry_query = str(data.get("retry_query") or "").strip()
+        if on_topic_ids and status == "insufficient":
+            status = "needs_retry" if retry_query else "sufficient"
         reason = str(data.get("reason") or "").strip()[:500]
         result = {
             "status": status,
@@ -215,7 +219,8 @@ class QueryAnswerChain:
                     "Return only valid JSON. No markdown. "
                     "SOURCE_CHUNKS are the only evidence; recall metadata is not evidence. "
                     "Each source chunk contains a summary and focused snippets from saved text. "
-                    "If the evidence is incomplete, say what is missing. "
+                    "If evidence supports only part of the query, answer the supported part first and briefly name what is missing. "
+                    "Do not refuse the whole query only because another requested part is missing. "
                     "Do not mention SOURCE_CHUNKS, chunks, retrieval internals, or source ids in prose. "
                     "For broad, timeline, comparison, similarity, or reasoning questions, synthesize across chunks when the facts for each side are present. "
                     "Do not require a source to explicitly perform the comparison; compare the sourced facts yourself. "

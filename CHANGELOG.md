@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refreshed Notes, Jobs, Settings, Trash, Note Detail, and Note Insights with the same polished visual system as Ask AI while keeping layouts dense and operational.
 - Rebalanced internal pages into compact glassmorphism surfaces with the Ask AI-style soft blurred background and less visual noise.
 - Changed the retrieval flow to plan focused sub-queries, gather packed context, verify the context against the original query, optionally retry once, then answer from verified evidence.
+- Changed broad multi-part retrieval to add generic clause-level sub-queries and preserve partial on-topic evidence instead of refusing the whole question.
 - Changed Settings so LLM answer calls and embedding/indexing calls can use different active presets or different rotation orders.
 - Improved retrieval prompts so answers can synthesize comparisons and reasoning from separate sourced facts without requiring the source to already contain the comparison.
 - Improved lexical retrieval scoring and focused snippets so exact small details rank and cite better than generic matches.
@@ -40,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Ask AI now handles broad comparison/reasoning questions when each side has separate supporting evidence.
+- Ask AI now answers supported parts of an incomplete multi-part query and briefly names missing evidence instead of treating the whole query as unanswerable.
 - Ask AI no longer rejects user-requested comparisons only because the subjects come from different contexts or sources.
 - Ask AI now drops same-word but wrong-scope evidence before answering while still allowing cross-context reasoning when the query asks for it.
 - Ask AI progress no longer renders raw details JSON in the terminal; it shows compact indented retrieval steps instead.

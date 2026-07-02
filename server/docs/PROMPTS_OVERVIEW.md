@@ -75,6 +75,7 @@ Purpose:
 
 - keep simple queries unchanged
 - split compound queries into at most six focused sub-queries
+- add generic clause-level searches for broad enumerations
 - add deterministic attribute, comparison, and reasoning fan-out when the model returns only the original query
 
 Contract:
@@ -112,6 +113,7 @@ Purpose:
 
 - judge whether packed evidence matches the original query scope
 - keep on-topic chunks and drop off-topic same-word matches
+- keep partial on-topic evidence for incomplete multi-part questions
 - allow cross-context evidence when the user explicitly asks to compare, connect, or contrast subjects
 - request one focused retry when the current evidence is close but missing likely retrievable support
 - avoid domain-specific assumptions and expose only a concise reason
@@ -142,7 +144,7 @@ Purpose:
 - preserve exact counts, labels, descriptors, and qualifiers when available
 - embed inline `[[cite:source_chunk_id]]` markers when useful for verification
 - normalize or remove malformed/invalid inline citation markers before returning the answer
-- say what is missing when evidence is incomplete
+- answer supported parts first and briefly say what is missing when evidence is incomplete
 
 Contract:
 

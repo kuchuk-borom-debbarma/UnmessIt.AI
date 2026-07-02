@@ -89,6 +89,29 @@ async def test_query_verifier_filters_off_scope_chunks_and_requests_retry():
     assert result["retry_query"] == "David Cyberpunk focused evidence"
 
 
+async def test_query_verifier_keeps_partial_on_topic_evidence():
+    class PartialVerifierJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            assert "partial answer" in system
+            return {
+                "status": "insufficient",
+                "reason": "Only one requested part is present.",
+                "on_topic_ids": ["chunk-supported"],
+                "off_topic_ids": [],
+                "retry_query": "",
+            }
+
+    chunks = [
+        {"id": "chunk-supported", "summary": "One requested part", "_snippets": ["Supported detail"]},
+        {"id": "chunk-other", "summary": "Unrelated", "_snippets": ["Other detail"]},
+    ]
+
+    result = await QueryVerifierChain(PartialVerifierJson()).run("explain several related causes", chunks, "user-1")
+
+    assert result["status"] == "sufficient"
+    assert result["on_topic_ids"] == ["chunk-supported"]
+
+
 async def test_ingest_submits_durable_job(monkeypatch):
     async def _fake_submit(data, user_id, job_id):
         return {"id": job_id, "status": "queued", "raw_input_id": "raw-1", "stage": "source_chunks", "attempt_count": 0, "metadata": {}}
@@ -420,6 +443,19 @@ async def test_query_breakdown_expands_reasoning_queries_when_llm_underplans():
 
     assert result[0] == "Why did Subject Alpha change?"
     assert any("Subject Alpha evidence context causes effects" in query for query in result)
+
+
+async def test_query_breakdown_splits_broad_multi_part_queries_when_llm_underplans():
+    class OriginalOnlyJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            return {"sub_queries": ["How did one factor, another factor, and a later result connect over time?"]}
+
+    query = "How did one factor, another factor, a third factor, and a later result connect over time?"
+    result = await _decompose(OriginalOnlyJson(), query, "user-1")
+
+    assert result[0] == query
+    assert any("another factor evidence context" == item for item in result)
+    assert any("a third factor evidence context" == item for item in result)
 
 
 async def test_query_breakdown_falls_back_to_original_query_on_llm_failure():
