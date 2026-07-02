@@ -688,14 +688,14 @@ export function NotesView({ token }: { token: string }) {
           </div>
 
           <div className="page-hero-actions">
-            <button 
+            <button
               className="icon-btn h-12 w-12 text-muted-foreground hover:bg-red-500/10 hover:text-red-500"
               onClick={() => navigate('/trash')}
               title="View Trash"
             >
               <Trash2 size={20} />
             </button>
-            <button 
+            <button
               className="premium-btn premium-btn-primary h-12 px-6 gap-2"
               onClick={() => {
                 setIsSelectingType(true)

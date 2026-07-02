@@ -198,7 +198,7 @@ export function NoteDetailView({ token }: { token: string }) {
             </div>
           </div>
           <div className="page-hero-actions">
-            <button 
+            <button
               onClick={() => navigate('/notes')}
               className="premium-btn premium-btn-secondary h-11 gap-2 px-4"
             >
