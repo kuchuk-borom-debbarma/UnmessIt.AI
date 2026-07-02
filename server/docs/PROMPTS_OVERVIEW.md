@@ -74,7 +74,8 @@ File: `server/src/services/rag/private/chains/query/_breakdown.py`
 Purpose:
 
 - keep simple queries unchanged
-- split compound queries into at most four focused sub-queries
+- split compound queries into at most six focused sub-queries
+- add deterministic physical-detail and comparison fan-out when the model returns only the original query
 
 Contract:
 
@@ -111,7 +112,8 @@ Purpose:
 
 - answer from selected source chunks only
 - cite source chunk ids only
-- synthesize comparisons or similarities when the selected chunks contain facts for each side
+- synthesize comparisons or similarities when the selected chunks contain facts for each side, even if no source explicitly performs the comparison
+- preserve exact small physical details such as counts of moles, scars, marks, hair, eyes, height, and build when available
 - embed inline `[[cite:source_chunk_id]]` markers when useful for verification
 - say what is missing when evidence is incomplete
 

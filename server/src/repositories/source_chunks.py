@@ -7,6 +7,29 @@ from typing import Any
 from src.infra.sqlite import get_connection
 from src.services.rag.models import SourceChunk
 
+_PHYSICAL_TRIGGERS = {
+    "appearance", "appearances", "body", "build", "description", "described",
+    "face", "features", "look", "looks", "mark", "marks", "mole", "moles",
+    "physical", "trait", "traits",
+}
+_PHYSICAL_EXPANSIONS = (
+    "appearance", "physical", "body", "face", "hair", "eyes", "eye", "skin",
+    "height", "build", "scar", "scars", "mole", "moles", "mark", "marks",
+    "birthmark", "birthmarks", "freckle", "freckles", "complexion", "tattoo",
+    "tattoos", "piercing", "piercings",
+)
+_COMPARISON_TRIGGERS = {
+    "compare", "comparison", "contrast", "contrasts", "different",
+    "difference", "differences", "dissimilar", "dissimilarities", "parallel",
+    "parallels", "same", "similar", "similarities", "similarity", "versus",
+    "vs",
+}
+_COMPARISON_EXPANSIONS = (
+    "motivation", "trauma", "change", "changes", "transformation", "arc",
+    "personality", "belief", "beliefs", "goal", "goals", "conflict",
+    "choice", "choices", "violence", "identity", "parallels", "contrast",
+)
+
 
 def save_many(chunks: list[SourceChunk]) -> None:
     """Store citable chunks with JSON-encoded spans and metadata."""
@@ -274,14 +297,14 @@ def _terms(query: str) -> list[str]:
         if len(clean) >= 3 and lowered not in seen:
             seen.add(lowered)
             terms.append(clean)
-    if seen & {"physical", "appearance", "appearances", "look", "looks", "body", "face"}:
-        for term in ("appearance", "physical", "body", "face", "hair", "eyes", "skin", "height", "build", "scar", "scars", "mole", "moles", "mark", "marks"):
+    if seen & _PHYSICAL_TRIGGERS:
+        for term in _PHYSICAL_EXPANSIONS:
             if term not in seen:
                 seen.add(term)
                 terms.append(term)
-    if seen & {"similar", "similarities", "dissimilar", "dissimilarities", "compare", "comparison", "different", "differences"}:
-        for term in ("motivation", "trauma", "change", "transformation", "arc", "personality", "belief", "goal", "conflict", "choice", "violence", "identity"):
+    if seen & _COMPARISON_TRIGGERS:
+        for term in _COMPARISON_EXPANSIONS:
             if term not in seen:
                 seen.add(term)
                 terms.append(term)
-    return terms[:24]
+    return terms[:36]

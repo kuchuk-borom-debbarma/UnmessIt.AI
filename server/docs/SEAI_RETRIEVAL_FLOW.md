@@ -4,7 +4,8 @@ Retrieval is source-backed. It selects source chunks, expands through recall lin
 
 ```txt
 query
--> breakdown into at most 4 focused sub-queries
+-> breakdown into at most 6 focused sub-queries
+   -> deterministic fan-out for appearance, attribute, and comparison questions
 -> per-sub-query search:
    -> source chunk vector search
    -> source chunk lexical search
@@ -16,11 +17,11 @@ query
 -> answer from selected source chunks with optional inline citation markers
 ```
 
-The breakdown step passes simple queries through unchanged and fans out only for compound questions.
+The breakdown step passes simple queries through unchanged. For broad attribute or reasoning questions, it combines LLM decomposition with deterministic fan-out so retrieval searches for the facts needed to answer, not only the exact words the user typed.
 
 Each chunk is reduced to its summary plus the most query-relevant passages before answer generation. This keeps token use low for local and cloud models.
 
-Attribute and comparison-style queries get a small deterministic query-term expansion before lexical search and snippet packing. For example, "physical stuff" also searches appearance terms such as scars, marks, and moles; comparison questions also look for arc, motivation, identity, and conflict language.
+Attribute and comparison-style queries get deterministic query-term expansion before recall-key lookup, lexical search, reranking, and snippet packing. For example, "physical stuff" also searches appearance terms such as scars, marks, birthmarks, freckles, and moles. Comparison questions generate per-subject searches plus shared dimension searches for arcs, motivation, identity, conflict, and changes.
 
 ## Rules
 

@@ -16,6 +16,29 @@ MAX_SNIPPETS_PER_CHUNK = 3
 MAX_SNIPPET_CHARS = 420
 _CONTEXT_CHARS_PER_PASS = 6000
 
+_PHYSICAL_TRIGGERS = {
+    "appearance", "appearances", "body", "build", "description", "described",
+    "face", "features", "look", "looks", "mark", "marks", "mole", "moles",
+    "physical", "trait", "traits",
+}
+_PHYSICAL_EXPANSIONS = [
+    "appearance", "physical", "body", "face", "hair", "eyes", "eye", "skin",
+    "height", "build", "scar", "scars", "mole", "moles", "mark", "marks",
+    "birthmark", "birthmarks", "freckle", "freckles", "complexion", "tattoo",
+    "tattoos", "piercing", "piercings",
+]
+_COMPARISON_TRIGGERS = {
+    "compare", "comparison", "contrast", "contrasts", "different",
+    "difference", "differences", "dissimilar", "dissimilarities", "parallel",
+    "parallels", "same", "similar", "similarities", "similarity", "versus",
+    "vs",
+}
+_COMPARISON_EXPANSIONS = [
+    "motivation", "trauma", "change", "changes", "transformation", "arc",
+    "personality", "belief", "beliefs", "goal", "goals", "conflict",
+    "choice", "choices", "violence", "identity", "parallels", "contrast",
+]
+
 
 async def search_node(state: QueryState) -> dict[str, Any]:
     """LangGraph node: run evidence search for all sub-queries concurrently.
@@ -189,7 +212,7 @@ async def _recall_keys(query: str, user_id: str, extracted_subjects: list[str]) 
     Path 2+3b handle queries that describe subjects by relationship rather than
     by explicit name — the subjects node extracts those names before search runs.
     """
-    term_keys = await asyncio.to_thread(recall.find_candidate_keys, _terms(query), user_id, 8)
+    term_keys = await asyncio.to_thread(recall.find_candidate_keys, _expanded_terms(query), user_id, 8)
     all_keys = []
     
     # Direct FTS name lookup for implied subjects (Highest priority)
@@ -245,7 +268,7 @@ def _rank_chunks(
     # multiply the exact-match lexical overlap score over and over again.
     appearances: dict[str, int] = {}
 
-    terms = set(_terms(query))
+    terms = set(_expanded_terms(query))
     for chunk in chunks:
         chunk_id = chunk["id"]
         merged.setdefault(chunk_id, chunk)
@@ -379,21 +402,15 @@ def _expanded_terms(query: str) -> list[str]:
     lowered = {term.lower() for term in terms}
     expansions: list[str] = []
 
-    if lowered & {"physical", "appearance", "appearances", "look", "looks", "body", "face"}:
-        expansions.extend([
-            "appearance", "physical", "body", "face", "hair", "eyes", "skin",
-            "height", "build", "scar", "scars", "mole", "moles", "mark", "marks",
-        ])
+    if lowered & _PHYSICAL_TRIGGERS:
+        expansions.extend(_PHYSICAL_EXPANSIONS)
 
-    if lowered & {"similar", "similarities", "dissimilar", "dissimilarities", "compare", "comparison", "different", "differences"}:
-        expansions.extend([
-            "motivation", "trauma", "change", "transformation", "arc", "personality",
-            "belief", "goal", "conflict", "choice", "violence", "identity",
-        ])
+    if lowered & _COMPARISON_TRIGGERS:
+        expansions.extend(_COMPARISON_EXPANSIONS)
 
     seen = {term.lower() for term in terms}
     for term in expansions:
         if term.lower() not in seen:
             seen.add(term.lower())
             terms.append(term)
-    return terms[:28]
+    return terms[:36]

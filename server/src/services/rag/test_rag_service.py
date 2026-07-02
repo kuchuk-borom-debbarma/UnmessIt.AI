@@ -12,7 +12,8 @@ from src.services.rag.private.chains.recall.candidates import RecallCandidateCha
 from src.services.rag.private.chains.recall.index import RecallIndexChain
 from src.services.rag.private.chains.recall.normalizer import RecallNormalizerChain
 from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain
-from src.services.rag.private.chains.query._search import _snippets
+from src.services.rag.private.chains.query._breakdown import _decompose
+from src.services.rag.private.chains.query._search import _rank_chunks, _snippets
 from src.services.rag.private.chains.source_chunk_assembler import SourceChunkAssemblerChain
 from src.services.rag.private.chains.source_chunk_drafts import SourceChunkDraftChain
 from src.services.rag.private.chains.source_windows import SourceWindowChain
@@ -293,6 +294,16 @@ def test_source_chunk_lexical_search_expands_physical_terms(monkeypatch):
     assert [row["id"] for row in rows] == ["chunk-1"]
 
 
+def test_query_rank_chunks_uses_expanded_physical_terms():
+    generic = _source_chunk("generic", "Amy likes quiet mornings and old songs.")
+    mole_detail = _source_chunk("mole-detail", "Amy has two moles near her neck and a small scar.")
+
+    ranked, reasons = _rank_chunks("physical stuff about Amy", [generic, mole_detail])
+
+    assert ranked[0]["id"] == "mole-detail"
+    assert "query_terms:" in " ".join(reasons["mole-detail"])
+
+
 async def test_query_answer_accepts_inline_citation_markers():
     class MarkerJson:
         async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
@@ -307,10 +318,32 @@ async def test_query_answer_accepts_inline_citation_markers():
     assert result["citation_ids"] == ["chunk-1"]
 
 
+async def test_query_breakdown_expands_physical_attribute_queries_when_llm_underplans():
+    class OriginalOnlyJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            return {"sub_queries": ["Tell me physical stuff about Amy"]}
+
+    result = await _decompose(OriginalOnlyJson(), "Tell me physical stuff about Amy", "user-1")
+
+    assert result[0] == "Tell me physical stuff about Amy"
+    assert any("Amy appearance physical traits" in query and "moles" in query for query in result)
+
+
+async def test_query_breakdown_expands_comparison_queries_when_llm_underplans():
+    class OriginalOnlyJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            return {"sub_queries": ["How similar are David and Eren Yeager?"]}
+
+    result = await _decompose(OriginalOnlyJson(), "How similar are David and Eren Yeager?", "user-1")
+
+    assert result[0] == "How similar are David and Eren Yeager?"
+    assert any(query.startswith("David character arc") for query in result)
+    assert any(query.startswith("Eren Yeager character arc") for query in result)
+    assert any("David Eren Yeager similarities differences" in query for query in result)
+
+
 async def test_query_breakdown_falls_back_to_original_query_on_llm_failure():
     """Breakdown must not block retrieval when the LLM call fails."""
-    from src.services.rag.private.chains.query._breakdown import _decompose
-
     class FailJson:
         async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
             raise RuntimeError("provider unavailable")
@@ -321,9 +354,7 @@ async def test_query_breakdown_falls_back_to_original_query_on_llm_failure():
 
 
 async def test_query_breakdown_caps_and_deduplicates_sub_queries():
-    """Breakdown must cap at 4, always lead with original, and dedup."""
-    from src.services.rag.private.chains.query._breakdown import _decompose
-
+    """Breakdown must cap at 6, always lead with original, and dedup."""
     class OverflowJson:
         async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
             return {"sub_queries": [
@@ -332,14 +363,17 @@ async def test_query_breakdown_caps_and_deduplicates_sub_queries():
                 "sub-query 2",
                 "sub-query 1",  # duplicate
                 "sub-query 3",
-                "sub-query 4",  # 6th — should be cut
+                "sub-query 4",
+                "sub-query 5",
+                "sub-query 6",  # 8th item, 7th unique — should be cut
             ]}
 
     result = await _decompose(OverflowJson(), "original", "user-1")
 
     assert result[0] == "original"
-    assert len(result) == 4
-    assert len(set(result)) == 4  # no duplicates
+    assert len(result) == 6
+    assert len(set(result)) == 6  # no duplicates
+    assert "sub-query 6" not in result
 
 
 async def test_normalizer_reuses_single_exact_name_or_alias_match(monkeypatch):
