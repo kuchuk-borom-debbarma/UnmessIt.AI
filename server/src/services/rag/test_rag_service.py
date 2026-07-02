@@ -275,7 +275,7 @@ async def test_query_context_packer_ranks_and_falls_back(monkeypatch):
 
 
 def test_query_snippets_expand_physical_terms():
-    text = "Amy likes quiet mornings.\n\nShe has two moles near her neck and a small scar."
+    text = "The subject likes quiet mornings.\n\nThey have two moles near the neck and a small scar."
 
     assert "moles" in _snippets("physical stuff", text, "")[0]
 
@@ -295,10 +295,10 @@ def test_source_chunk_lexical_search_expands_physical_terms(monkeypatch):
 
 
 def test_query_rank_chunks_uses_expanded_physical_terms():
-    generic = _source_chunk("generic", "Amy likes quiet mornings and old songs.")
-    mole_detail = _source_chunk("mole-detail", "Amy has two moles near her neck and a small scar.")
+    generic = _source_chunk("generic", "Subject Alpha likes quiet mornings and old songs.")
+    mole_detail = _source_chunk("mole-detail", "Subject Alpha has two moles near the neck and a small scar.")
 
-    ranked, reasons = _rank_chunks("physical stuff about Amy", [generic, mole_detail])
+    ranked, reasons = _rank_chunks("physical stuff about Subject Alpha", [generic, mole_detail])
 
     assert ranked[0]["id"] == "mole-detail"
     assert "query_terms:" in " ".join(reasons["mole-detail"])
@@ -307,11 +307,11 @@ def test_query_rank_chunks_uses_expanded_physical_terms():
 async def test_query_answer_accepts_inline_citation_markers():
     class MarkerJson:
         async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
-            return {"answer": "Amy has two moles. [[cite:chunk-1]]", "citation_ids": []}
+            return {"answer": "Subject Alpha has two moles. [[cite:chunk-1]]", "citation_ids": []}
 
     result = await QueryAnswerChain(MarkerJson()).run(
-        "physical stuff about Amy",
-        [_source_chunk("chunk-1", "She has two moles near her neck.")],
+        "physical stuff about Subject Alpha",
+        [_source_chunk("chunk-1", "They have two moles near the neck.")],
         user_id="user-1",
     )
 
@@ -321,25 +321,36 @@ async def test_query_answer_accepts_inline_citation_markers():
 async def test_query_breakdown_expands_physical_attribute_queries_when_llm_underplans():
     class OriginalOnlyJson:
         async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
-            return {"sub_queries": ["Tell me physical stuff about Amy"]}
+            return {"sub_queries": ["Tell me physical stuff about Subject Alpha"]}
 
-    result = await _decompose(OriginalOnlyJson(), "Tell me physical stuff about Amy", "user-1")
+    result = await _decompose(OriginalOnlyJson(), "Tell me physical stuff about Subject Alpha", "user-1")
 
-    assert result[0] == "Tell me physical stuff about Amy"
-    assert any("Amy appearance physical traits" in query and "moles" in query for query in result)
+    assert result[0] == "Tell me physical stuff about Subject Alpha"
+    assert any("Subject Alpha appearance physical details" in query and "counts" in query for query in result)
 
 
 async def test_query_breakdown_expands_comparison_queries_when_llm_underplans():
     class OriginalOnlyJson:
         async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
-            return {"sub_queries": ["How similar are David and Eren Yeager?"]}
+            return {"sub_queries": ["How similar are Subject Alpha and Subject Beta?"]}
 
-    result = await _decompose(OriginalOnlyJson(), "How similar are David and Eren Yeager?", "user-1")
+    result = await _decompose(OriginalOnlyJson(), "How similar are Subject Alpha and Subject Beta?", "user-1")
 
-    assert result[0] == "How similar are David and Eren Yeager?"
-    assert any(query.startswith("David character arc") for query in result)
-    assert any(query.startswith("Eren Yeager character arc") for query in result)
-    assert any("David Eren Yeager similarities differences" in query for query in result)
+    assert result[0] == "How similar are Subject Alpha and Subject Beta?"
+    assert any(query.startswith("Subject Alpha attributes context") for query in result)
+    assert any(query.startswith("Subject Beta attributes context") for query in result)
+    assert any("Subject Alpha Subject Beta similarities differences" in query and "attributes" in query for query in result)
+
+
+async def test_query_breakdown_expands_reasoning_queries_when_llm_underplans():
+    class OriginalOnlyJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            return {"sub_queries": ["Why did Subject Alpha change?"]}
+
+    result = await _decompose(OriginalOnlyJson(), "Why did Subject Alpha change?", "user-1")
+
+    assert result[0] == "Why did Subject Alpha change?"
+    assert any("Subject Alpha evidence context causes effects" in query for query in result)
 
 
 async def test_query_breakdown_falls_back_to_original_query_on_llm_failure():

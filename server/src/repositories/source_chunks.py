@@ -7,16 +7,22 @@ from typing import Any
 from src.infra.sqlite import get_connection
 from src.services.rag.models import SourceChunk
 
-_PHYSICAL_TRIGGERS = {
-    "appearance", "appearances", "body", "build", "description", "described",
-    "face", "features", "look", "looks", "mark", "marks", "mole", "moles",
-    "physical", "trait", "traits",
+_ATTRIBUTE_TRIGGERS = {
+    "appearance", "appearances", "attribute", "attributes", "body", "build",
+    "characteristic", "characteristics", "count", "counts", "description",
+    "described", "detail", "details", "face", "feature", "features", "look",
+    "looks", "mark", "marks", "mole", "moles", "number", "numbers",
+    "physical", "property", "properties", "quality", "qualities", "spec",
+    "specs", "trait", "traits",
 }
-_PHYSICAL_EXPANSIONS = (
-    "appearance", "physical", "body", "face", "hair", "eyes", "eye", "skin",
-    "height", "build", "scar", "scars", "mole", "moles", "mark", "marks",
-    "birthmark", "birthmarks", "freckle", "freckles", "complexion", "tattoo",
-    "tattoos", "piercing", "piercings",
+_ATTRIBUTE_EXPANSIONS = (
+    "attribute", "attributes", "detail", "details", "descriptor",
+    "descriptors", "label", "labels", "count", "counts", "number", "numbers",
+    "feature", "features", "property", "properties", "measurement",
+    "measurements", "appearance", "physical", "body", "face", "hair", "eyes",
+    "eye", "skin", "height", "build", "scar", "scars", "mole", "moles",
+    "mark", "marks", "birthmark", "birthmarks", "freckle", "freckles",
+    "complexion", "tattoo", "tattoos", "piercing", "piercings",
 )
 _COMPARISON_TRIGGERS = {
     "compare", "comparison", "contrast", "contrasts", "different",
@@ -25,9 +31,20 @@ _COMPARISON_TRIGGERS = {
     "vs",
 }
 _COMPARISON_EXPANSIONS = (
-    "motivation", "trauma", "change", "changes", "transformation", "arc",
-    "personality", "belief", "beliefs", "goal", "goals", "conflict",
-    "choice", "choices", "violence", "identity", "parallels", "contrast",
+    "attribute", "attributes", "context", "background", "behavior", "change",
+    "changes", "goal", "goals", "constraint", "constraints", "relationship",
+    "relationships", "decision", "decisions", "outcome", "outcomes",
+    "parallels", "contrast",
+)
+_REASONING_TRIGGERS = {
+    "cause", "causes", "changed", "changes", "developed", "development",
+    "effect", "effects", "evolved", "evolution", "impact", "impacts",
+    "reason", "reasons", "timeline", "why",
+}
+_REASONING_EXPANSIONS = (
+    "evidence", "context", "background", "cause", "causes", "effect",
+    "effects", "change", "changes", "outcome", "outcomes", "sequence",
+    "before", "after", "because",
 )
 
 
@@ -297,13 +314,18 @@ def _terms(query: str) -> list[str]:
         if len(clean) >= 3 and lowered not in seen:
             seen.add(lowered)
             terms.append(clean)
-    if seen & _PHYSICAL_TRIGGERS:
-        for term in _PHYSICAL_EXPANSIONS:
+    if seen & _ATTRIBUTE_TRIGGERS:
+        for term in _ATTRIBUTE_EXPANSIONS:
             if term not in seen:
                 seen.add(term)
                 terms.append(term)
     if seen & _COMPARISON_TRIGGERS:
         for term in _COMPARISON_EXPANSIONS:
+            if term not in seen:
+                seen.add(term)
+                terms.append(term)
+    if seen & _REASONING_TRIGGERS:
+        for term in _REASONING_EXPANSIONS:
             if term not in seen:
                 seen.add(term)
                 terms.append(term)

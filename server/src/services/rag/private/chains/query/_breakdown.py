@@ -11,15 +11,23 @@ logger = logging.getLogger(__name__)
 _MAX_SUB_QUERIES = 6
 
 _ATTRIBUTE_TERMS = {
-    "appearance", "appearances", "body", "build", "description", "described",
-    "face", "features", "look", "looks", "mark", "marks", "mole", "moles",
-    "physical", "trait", "traits",
+    "appearance", "appearances", "attribute", "attributes", "body", "build",
+    "characteristic", "characteristics", "count", "counts", "description",
+    "described", "detail", "details", "face", "feature", "features", "look",
+    "looks", "mark", "marks", "mole", "moles", "number", "numbers",
+    "physical", "property", "properties", "quality", "qualities", "spec",
+    "specs", "trait", "traits",
 }
 _COMPARISON_TERMS = {
     "compare", "comparison", "contrast", "contrasts", "different",
     "difference", "differences", "dissimilar", "dissimilarities", "parallel",
     "parallels", "same", "similar", "similarities", "similarity", "versus",
     "vs",
+}
+_REASONING_TERMS = {
+    "cause", "causes", "changed", "changes", "developed", "development",
+    "effect", "effects", "evolved", "evolution", "impact", "impacts",
+    "reason", "reasons", "timeline", "why",
 }
 _QUESTION_STOPWORDS = {
     "about", "and", "are", "compare", "different", "does", "for", "how", "is",
@@ -101,22 +109,31 @@ def _deterministic_expansions(query: str) -> list[str]:
         if subjects:
             for subject in subjects[:3]:
                 expansions.append(
-                    f"{subject} appearance physical traits hair eyes skin height build scars moles marks"
+                    f"{subject} appearance physical details visible features marks counts measurements"
                 )
         else:
-            expansions.append("appearance physical traits hair eyes skin height build scars moles marks")
+            expansions.append("appearance physical details visible features marks counts measurements")
 
     if terms & _COMPARISON_TERMS:
         for subject in subjects[:3]:
             expansions.append(
-                f"{subject} character arc motivation trauma identity change personality goals conflict"
+                f"{subject} attributes context behavior goals constraints changes outcomes relationships"
             )
         if len(subjects) >= 2:
             expansions.append(
-                f"{subjects[0]} {subjects[1]} similarities differences parallels contrast motivation trauma identity character arc"
+                f"{subjects[0]} {subjects[1]} similarities differences parallels contrast attributes context changes goals outcomes"
             )
         else:
-            expansions.append("similarities differences parallels contrast motivation trauma identity character arc")
+            expansions.append("similarities differences parallels contrast attributes context changes goals outcomes")
+
+    if terms & _REASONING_TERMS:
+        if subjects:
+            for subject in subjects[:3]:
+                expansions.append(
+                    f"{subject} evidence context causes effects changes outcomes sequence"
+                )
+        else:
+            expansions.append("evidence context causes effects changes outcomes sequence")
 
     return _dedupe(expansions)[: _MAX_SUB_QUERIES - 1]
 

@@ -16,16 +16,22 @@ MAX_SNIPPETS_PER_CHUNK = 3
 MAX_SNIPPET_CHARS = 420
 _CONTEXT_CHARS_PER_PASS = 6000
 
-_PHYSICAL_TRIGGERS = {
-    "appearance", "appearances", "body", "build", "description", "described",
-    "face", "features", "look", "looks", "mark", "marks", "mole", "moles",
-    "physical", "trait", "traits",
+_ATTRIBUTE_TRIGGERS = {
+    "appearance", "appearances", "attribute", "attributes", "body", "build",
+    "characteristic", "characteristics", "count", "counts", "description",
+    "described", "detail", "details", "face", "feature", "features", "look",
+    "looks", "mark", "marks", "mole", "moles", "number", "numbers",
+    "physical", "property", "properties", "quality", "qualities", "spec",
+    "specs", "trait", "traits",
 }
-_PHYSICAL_EXPANSIONS = [
-    "appearance", "physical", "body", "face", "hair", "eyes", "eye", "skin",
-    "height", "build", "scar", "scars", "mole", "moles", "mark", "marks",
-    "birthmark", "birthmarks", "freckle", "freckles", "complexion", "tattoo",
-    "tattoos", "piercing", "piercings",
+_ATTRIBUTE_EXPANSIONS = [
+    "attribute", "attributes", "detail", "details", "descriptor",
+    "descriptors", "label", "labels", "count", "counts", "number", "numbers",
+    "feature", "features", "property", "properties", "measurement",
+    "measurements", "appearance", "physical", "body", "face", "hair", "eyes",
+    "eye", "skin", "height", "build", "scar", "scars", "mole", "moles",
+    "mark", "marks", "birthmark", "birthmarks", "freckle", "freckles",
+    "complexion", "tattoo", "tattoos", "piercing", "piercings",
 ]
 _COMPARISON_TRIGGERS = {
     "compare", "comparison", "contrast", "contrasts", "different",
@@ -34,9 +40,20 @@ _COMPARISON_TRIGGERS = {
     "vs",
 }
 _COMPARISON_EXPANSIONS = [
-    "motivation", "trauma", "change", "changes", "transformation", "arc",
-    "personality", "belief", "beliefs", "goal", "goals", "conflict",
-    "choice", "choices", "violence", "identity", "parallels", "contrast",
+    "attribute", "attributes", "context", "background", "behavior", "change",
+    "changes", "goal", "goals", "constraint", "constraints", "relationship",
+    "relationships", "decision", "decisions", "outcome", "outcomes",
+    "parallels", "contrast",
+]
+_REASONING_TRIGGERS = {
+    "cause", "causes", "changed", "changes", "developed", "development",
+    "effect", "effects", "evolved", "evolution", "impact", "impacts",
+    "reason", "reasons", "timeline", "why",
+}
+_REASONING_EXPANSIONS = [
+    "evidence", "context", "background", "cause", "causes", "effect",
+    "effects", "change", "changes", "outcome", "outcomes", "sequence",
+    "before", "after", "because",
 ]
 
 
@@ -402,11 +419,14 @@ def _expanded_terms(query: str) -> list[str]:
     lowered = {term.lower() for term in terms}
     expansions: list[str] = []
 
-    if lowered & _PHYSICAL_TRIGGERS:
-        expansions.extend(_PHYSICAL_EXPANSIONS)
+    if lowered & _ATTRIBUTE_TRIGGERS:
+        expansions.extend(_ATTRIBUTE_EXPANSIONS)
 
     if lowered & _COMPARISON_TRIGGERS:
         expansions.extend(_COMPARISON_EXPANSIONS)
+
+    if lowered & _REASONING_TRIGGERS:
+        expansions.extend(_REASONING_EXPANSIONS)
 
     seen = {term.lower() for term in terms}
     for term in expansions:

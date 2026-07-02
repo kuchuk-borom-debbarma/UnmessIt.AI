@@ -21,7 +21,7 @@ The breakdown step passes simple queries through unchanged. For broad attribute 
 
 Each chunk is reduced to its summary plus the most query-relevant passages before answer generation. This keeps token use low for local and cloud models.
 
-Attribute and comparison-style queries get deterministic query-term expansion before recall-key lookup, lexical search, reranking, and snippet packing. For example, "physical stuff" also searches appearance terms such as scars, marks, birthmarks, freckles, and moles. Comparison questions generate per-subject searches plus shared dimension searches for arcs, motivation, identity, conflict, and changes.
+Attribute, comparison, and reasoning-style queries get deterministic query-term expansion before recall-key lookup, lexical search, reranking, and snippet packing. Attribute questions add neutral detail terms such as labels, counts, features, and measurements, with appearance terms only when the query asks for them. Comparison questions generate per-subject searches plus shared dimension searches for attributes, context, changes, goals, and outcomes. Reasoning/change questions add neutral cause, effect, context, sequence, and outcome terms.
 
 ## Rules
 
