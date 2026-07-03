@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Evidence verification now uses an exact memory/Redis cache for repeated verifier decisions over the same query and compact evidence payload.
 - Answer generation now uses an exact memory/Redis cache for repeated final answers over the same query and compact verified evidence payload.
 - Document ingestion now uses exact memory/Redis caching for `SourceChunkDraftChain` (summaries) and `RecallDraftChain` (entities) to skip re-running expensive LLM calls on identical text blocks.
+- Recall candidate lookup during ingest now uses exact memory/Redis caching to skip repeated SQLite and vector candidate searches before the recall-draft LLM.
 
 ### Changed
 - Refactored Server-Sent Events (SSE) progress reporting to use a centralized context variable (`_active_parent_ref`) for cleaner nested UI representations.

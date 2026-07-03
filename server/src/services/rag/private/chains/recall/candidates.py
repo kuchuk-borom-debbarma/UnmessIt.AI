@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from typing import Any, Callable, Awaitable
 
-from src.repositories import recall, recall_key_vectors
+from src.infra import retrieval_cache
+from src.infra.settings import get_user_embedding_settings
+from src.repositories import recall, recall_key_vectors, retrieval_index
 from src.services.rag.models import SourceChunk
 
 logger = logging.getLogger(__name__)
@@ -16,6 +19,16 @@ class RecallCandidateChain:
 
     async def run(self, raw_text: str, user_id: str, source_chunks: list[SourceChunk], on_progress: Callable[[str], Awaitable[None]] | None = None) -> list[dict[str, Any]]:
         """Return top possible matches so the LLM can reuse them instead of inventing duplicates."""
+        cache_key = _candidate_cache_key(raw_text, user_id, source_chunks)
+        if cache_key:
+            if on_progress: await on_progress("checking cached recall candidates")
+            cached = _cached_candidates(await retrieval_cache.get_json(cache_key))
+            if cached is not None:
+                logger.info("recall_candidates_cache_hit chunks=%s candidates=%s", len(source_chunks), len(cached))
+                if on_progress: await on_progress(f"reusing {len(cached)} cached recall candidate(s)")
+                return cached
+            if on_progress: await on_progress("no cached recall candidates")
+
         if on_progress: await on_progress("extracting terms from chunk entities")
         terms = _important_terms(raw_text, source_chunks)
         if on_progress: await on_progress("building semantic search string")
@@ -38,6 +51,10 @@ class RecallCandidateChain:
             len(merged),
             _source_counts(merged),
         )
+        if cache_key:
+            await retrieval_cache.set_json(cache_key, {"candidates": _json_safe_candidates(merged)})
+            logger.info("recall_candidates_cache_set chunks=%s candidates=%s", len(source_chunks), len(merged))
+            if on_progress: await on_progress(f"cached {len(merged)} recall candidate(s)")
         return merged
 
 
@@ -95,3 +112,54 @@ def _source_counts(candidates: list[dict[str, Any]]) -> dict[str, int]:
         source = str(candidate.get("match_source") or "unknown")
         counts[source] = counts.get(source, 0) + 1
     return counts
+
+
+def _candidate_cache_key(raw_text: str, user_id: str, source_chunks: list[SourceChunk]) -> str:
+    return retrieval_cache.cache_key(
+        "recall_candidates:v1",
+        user_id,
+        retrieval_index.get_version(user_id),
+        _embedding_settings_signature(user_id),
+        raw_text[:1000],
+        _chunk_payload(source_chunks),
+    )
+
+
+def _chunk_payload(source_chunks: list[SourceChunk]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": chunk["id"],
+            "summary": chunk.get("summary") or "",
+            "text_preview": str(chunk.get("text") or "")[:400],
+            "salient_entities": (chunk.get("metadata") or {}).get("salient_entities", []),
+        }
+        for chunk in source_chunks[:30]
+    ]
+
+
+def _embedding_settings_signature(user_id: str) -> str:
+    try:
+        settings = get_user_embedding_settings(user_id)
+    except Exception:
+        return "embedding-settings:none"
+    return "|".join([
+        settings.embedding_provider,
+        settings.embedding_model,
+        settings.embedding_base_url or "",
+        str(settings.embedding_batch_size),
+    ])
+
+
+def _cached_candidates(value: dict[str, Any] | None) -> list[dict[str, Any]] | None:
+    if not isinstance(value, dict):
+        return None
+    candidates = value.get("candidates")
+    if not isinstance(candidates, list):
+        return None
+    if any(not isinstance(candidate, dict) or not candidate.get("id") for candidate in candidates):
+        return None
+    return candidates
+
+
+def _json_safe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return json.loads(json.dumps(candidates, ensure_ascii=False, default=str))

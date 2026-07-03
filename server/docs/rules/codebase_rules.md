@@ -43,6 +43,7 @@ Keep the server boring, small, and easy to read.
 - Exact retrieval LLM caches belong in `src/infra/`, must include prompt text and model/settings signatures in their keys, and must never cache provider failures.
 - Semantic retrieval caches may be used for query-planning outputs and evidence candidate boosts; they must be disposable, versioned by prompt/settings or retrieval index/settings/filters, and must never skip the verifier.
 - Evidence-search caches must be exact-only, infra-backed, disposable, and keyed by the SQLite retrieval index version. Bump that version whenever source chunks, recall links/keys, note tags, directory metadata, trash/restore state, or raw inputs change.
+- Recall-candidate lookup caches may use exact memory/Redis caching during ingest; key them by user, retrieval index version, embedding settings, and source chunk payload because candidates are hints before the recall-draft LLM.
 - Verifier caches must be exact-only and keyed by prompt text, LLM settings, attempt number, query, and compact evidence payload; never cache provider failure fallbacks.
 - Answer caches must be exact-only and keyed by prompt text, LLM settings, query, and compact verified evidence payload; never cache provider failure fallbacks.
 

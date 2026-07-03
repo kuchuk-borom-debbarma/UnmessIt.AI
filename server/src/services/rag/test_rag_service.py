@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from src.repositories import config_presets, dev, notes, raw_inputs, recall, recall_key_vectors, retrieval_index, source_chunk_vectors, source_chunks, tags
+from src.services.rag.private.chains.recall import candidates as candidates_mod
 from src.services.rag.private.chains.recall.candidates import RecallCandidateChain
 from src.services.rag.private.chains.recall.index import RecallIndexChain
 from src.services.rag.private.chains.recall.normalizer import RecallNormalizerChain
@@ -399,6 +400,93 @@ async def test_candidate_lookup_merges_ranks_filters_and_caps(monkeypatch):
     assert [candidate["id"] for candidate in candidates[:3]] == ["exact-1", "keyword-1", "extra-0"]
     assert "ignored-source" not in {candidate["id"] for candidate in candidates}
     assert "semantic vector match" in " ".join(candidates[1]["match_notes"])
+
+
+async def test_recall_candidate_cache_hit_skips_second_lookup(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    source_chunks_data = [_source_chunk("chunk-1", "Grisha inherited the Attack Titan.")]
+    calls = {"sqlite": 0, "vector": 0}
+    progress = []
+
+    async def on_progress(message: str) -> None:
+        progress.append(message)
+
+    monkeypatch.setattr(candidates_mod.retrieval_index, "get_version", lambda user_id: 1)
+    monkeypatch.setattr(candidates_mod, "_embedding_settings_signature", lambda user_id: "embedding:v1")
+    monkeypatch.setattr(retrieval_cache.redis, "get_json", _raise_async)
+    monkeypatch.setattr(retrieval_cache.redis, "set_json", _raise_async)
+
+    def fake_find_candidate_keys(*args, **kwargs):
+        calls["sqlite"] += 1
+        return [_candidate("key-1", "Grisha Yeager", "exact")]
+
+    def fake_vector_search(*args, **kwargs):
+        calls["vector"] += 1
+        return []
+
+    monkeypatch.setattr(recall, "find_candidate_keys", fake_find_candidate_keys)
+    monkeypatch.setattr(recall_key_vectors, "search", fake_vector_search)
+    monkeypatch.setattr(recall, "find_keys_by_ids", lambda ids, user_id: [])
+
+    first = await RecallCandidateChain().run("Grisha inherited the Attack Titan.", "user-1", source_chunks_data, on_progress)
+    second = await RecallCandidateChain().run("Grisha inherited the Attack Titan.", "user-1", source_chunks_data, on_progress)
+
+    assert first == second
+    assert calls == {"sqlite": 1, "vector": 1}
+    assert "checking cached recall candidates" in progress
+    assert "reusing 1 cached recall candidate(s)" in progress
+
+
+async def test_recall_candidate_cache_misses_when_retrieval_index_changes(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    source_chunks_data = [_source_chunk("chunk-1", "Grisha inherited the Attack Titan.")]
+    version = {"value": 1}
+    calls = []
+
+    monkeypatch.setattr(candidates_mod.retrieval_index, "get_version", lambda user_id: version["value"])
+    monkeypatch.setattr(candidates_mod, "_embedding_settings_signature", lambda user_id: "embedding:v1")
+    monkeypatch.setattr(retrieval_cache.redis, "get_json", _raise_async)
+    monkeypatch.setattr(retrieval_cache.redis, "set_json", _raise_async)
+    monkeypatch.setattr(recall_key_vectors, "search", lambda *args, **kwargs: [])
+    monkeypatch.setattr(recall, "find_keys_by_ids", lambda ids, user_id: [])
+
+    def fake_find_candidate_keys(*args, **kwargs):
+        calls.append(version["value"])
+        return [_candidate(f"key-{version['value']}", "Grisha Yeager", "exact")]
+
+    monkeypatch.setattr(recall, "find_candidate_keys", fake_find_candidate_keys)
+
+    first = await RecallCandidateChain().run("Grisha inherited the Attack Titan.", "user-1", source_chunks_data)
+    version["value"] = 2
+    second = await RecallCandidateChain().run("Grisha inherited the Attack Titan.", "user-1", source_chunks_data)
+
+    assert [candidate["id"] for candidate in first] == ["key-1"]
+    assert [candidate["id"] for candidate in second] == ["key-2"]
+    assert calls == [1, 2]
+
+
+async def test_recall_candidate_cache_ignores_invalid_payload(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    source_chunks_data = [_source_chunk("chunk-1", "Grisha inherited the Attack Titan.")]
+    calls = []
+
+    monkeypatch.setattr(candidates_mod.retrieval_index, "get_version", lambda user_id: 1)
+    monkeypatch.setattr(candidates_mod, "_embedding_settings_signature", lambda user_id: "embedding:v1")
+    monkeypatch.setattr(retrieval_cache, "get_json", lambda key: _async_value({"candidates": "bad"}))
+    monkeypatch.setattr(retrieval_cache, "set_json", lambda key, value: _async_value(None))
+    monkeypatch.setattr(recall_key_vectors, "search", lambda *args, **kwargs: [])
+    monkeypatch.setattr(recall, "find_keys_by_ids", lambda ids, user_id: [])
+
+    def fake_find_candidate_keys(*args, **kwargs):
+        calls.append(True)
+        return [_candidate("key-1", "Grisha Yeager", "exact")]
+
+    monkeypatch.setattr(recall, "find_candidate_keys", fake_find_candidate_keys)
+
+    candidates = await RecallCandidateChain().run("Grisha inherited the Attack Titan.", "user-1", source_chunks_data)
+
+    assert [candidate["id"] for candidate in candidates] == ["key-1"]
+    assert calls == [True]
 
 
 async def test_query_uses_source_search_and_recall_expansion(monkeypatch):
