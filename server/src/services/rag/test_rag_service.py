@@ -128,6 +128,13 @@ async def test_query_verifier_keeps_partial_on_topic_evidence():
     assert result["on_topic_ids"] == ["chunk-supported"]
 
 
+def test_query_verifier_treats_opinion_queries_as_grounded_assessment():
+    system = _verifier_system_prompt()
+
+    assert "opinion, take, impression" in system
+    assert "source-grounded assessment" in system
+
+
 async def test_query_verifier_exact_cache_skips_second_llm_call(monkeypatch):
     retrieval_cache.get_memory_json_cache.cache_clear()
     calls = []

@@ -213,6 +213,7 @@ def _verifier_system_prompt() -> str:
         "Classify chunks as on-topic when they match the user's requested subject, scope, qualifiers, and sense of ambiguous terms. "
         "Classify chunks as off-topic when they use a different sense, domain, event, entity, time, or scope than the query asks for. "
         "When the query explicitly asks to compare, connect, or contrast multiple subjects, chunks for each requested subject may be on-topic even if they come from different contexts. "
+        "When the query asks for an opinion, take, impression, or what to think about a subject, treat it as a request for a source-grounded assessment; chunks about that subject can be on-topic even if they do not contain someone else's opinion. "
         "When the query is scoped to one context, do not keep chunks from another context just because words overlap. "
         "If some chunks support only part of a multi-part query, keep those chunks on-topic and mark missing parts in reason. "
         "Do not set status to insufficient when on-topic chunks can support a partial answer. "
