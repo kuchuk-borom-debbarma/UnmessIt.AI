@@ -12,3 +12,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prompt rules now document cache-friendly structure: durable instructions first, reusable schemas/examples next, and dynamic user/source data last.
 - Embeddings are now cached in memory and Redis when available, reducing repeated provider calls for identical text/model inputs.
 - Query breakdown now uses an exact memory/Redis cache so repeated retrieval queries can skip the planning LLM call.
+- Subject extraction now uses exact memory/Redis caching for repeated query-planning inputs.
+- Subject extraction can reuse strict semantic cache hits when prompt, LLM, and embedding settings match.

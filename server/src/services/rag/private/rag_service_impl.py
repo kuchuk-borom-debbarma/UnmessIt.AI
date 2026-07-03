@@ -88,6 +88,7 @@ class RagServiceImpl:
                 "within_tags_condition": within_tags_condition,
             })
             chunks, trace = await self.query_evidence.run(query, user_id, reporter, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
+            # TODO: evidence-search cache belongs here, before verifier, after a retrieval index version exists.
             verification = await self.query_verifier.run(query, chunks, user_id, reporter, attempt=1)
             chunks = _verified_chunks(chunks, verification)
             trace["verification_attempts"] = [verification]

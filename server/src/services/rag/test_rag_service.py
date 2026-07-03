@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,7 @@ from src.services.rag.private.chains.recall.index import RecallIndexChain
 from src.services.rag.private.chains.recall.normalizer import RecallNormalizerChain
 from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, QueryVerifierChain
 from src.services.rag.private.chains.query import _breakdown as breakdown_mod
+from src.services.rag.private.chains.query import _subjects as subjects_mod
 from src.services.rag.private.chains.query._breakdown import _decompose
 from src.services.rag.private.chains.query._search import _rank_chunks, _snippets
 from src.services.rag.private.chains.source_chunk_assembler import SourceChunkAssemblerChain
@@ -504,6 +506,14 @@ async def test_query_breakdown_caps_and_deduplicates_sub_queries():
     assert "sub-query 6" not in result
 
 
+def test_query_breakdown_prompt_requests_embedding_friendly_deterministic_phrases():
+    system = breakdown_mod._breakdown_system_prompt()
+
+    assert "deterministic embedding-friendly search phrases" in system
+    assert "stable nouns and qualifiers" in system
+    assert "avoid pronouns" in system
+
+
 async def test_query_breakdown_cache_skips_second_llm_call(monkeypatch):
     retrieval_cache.get_memory_json_cache.cache_clear()
     calls = []
@@ -541,6 +551,118 @@ async def test_query_breakdown_cache_misses_when_settings_change(monkeypatch):
     assert first == ["original", "call 1"]
     assert second == ["original", "call 2"]
     assert len(calls) == 2
+
+
+async def test_query_subjects_exact_cache_skips_second_llm_call(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class CountingJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            return {"subjects": ["Subject Alpha"]}
+
+    monkeypatch.setattr(subjects_mod, "_llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(subjects_mod, "_subjects_semantic_cache_key", lambda *args: None)
+
+    first = await subjects_mod._identify_subjects(CountingJson(), "query", ["query"], "user-1")
+    second = await subjects_mod._identify_subjects(CountingJson(), "query", ["query"], "user-1")
+
+    assert first == ["Subject Alpha"]
+    assert second == first
+    assert len(calls) == 1
+
+
+async def test_query_subjects_exact_cache_stores_empty_subjects(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class EmptyJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            return {"subjects": []}
+
+    monkeypatch.setattr(subjects_mod, "_llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(subjects_mod, "_subjects_semantic_cache_key", lambda *args: None)
+
+    assert await subjects_mod._identify_subjects(EmptyJson(), "query", ["query"], "user-1") == []
+    assert await subjects_mod._identify_subjects(EmptyJson(), "query", ["query"], "user-1") == []
+    assert len(calls) == 1
+
+
+async def test_query_subjects_failure_fallback_is_not_cached(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class FailThenOkJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            if len(calls) == 1:
+                raise RuntimeError("down")
+            return {"subjects": ["Subject Alpha"]}
+
+    monkeypatch.setattr(subjects_mod, "_llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(subjects_mod, "_subjects_semantic_cache_key", lambda *args: None)
+
+    assert await subjects_mod._identify_subjects(FailThenOkJson(), "query", ["query"], "user-1") == []
+    assert await subjects_mod._identify_subjects(FailThenOkJson(), "query", ["query"], "user-1") == ["Subject Alpha"]
+    assert len(calls) == 2
+
+
+async def test_query_subjects_semantic_cache_hit_skips_llm(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+
+    class FailJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            raise AssertionError("LLM should not be called")
+
+    monkeypatch.setattr(subjects_mod, "_subjects_exact_cache_key", lambda *args: None)
+    monkeypatch.setattr(subjects_mod, "_subjects_semantic_cache_key", lambda *args: ("ns", "normalized query"))
+    monkeypatch.setattr(retrieval_cache, "get_semantic_json", lambda *args, **kwargs: {"subjects": ["Subject Alpha"]})
+
+    assert await subjects_mod._identify_subjects(FailJson(), "query", ["query"], "user-1") == ["Subject Alpha"]
+
+
+async def test_query_subjects_semantic_miss_calls_llm(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class CountingJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            return {"subjects": ["Subject Alpha"]}
+
+    monkeypatch.setattr(subjects_mod, "_subjects_exact_cache_key", lambda *args: None)
+    monkeypatch.setattr(subjects_mod, "_subjects_semantic_cache_key", lambda *args: ("ns", "normalized query"))
+    monkeypatch.setattr(retrieval_cache, "get_semantic_json", lambda *args, **kwargs: None)
+    monkeypatch.setattr(retrieval_cache, "set_semantic_json", lambda *args, **kwargs: None)
+
+    assert await subjects_mod._identify_subjects(CountingJson(), "query", ["query"], "user-1") == ["Subject Alpha"]
+    assert len(calls) == 1
+
+
+def test_query_subjects_semantic_cache_key_changes_with_signatures(monkeypatch):
+    monkeypatch.setattr(subjects_mod, "_llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(subjects_mod, "_embedding_settings_signature", lambda user_id: "embed-a")
+    first = subjects_mod._subjects_semantic_cache_key("query", ["sub"], "user-1", "system")
+
+    monkeypatch.setattr(subjects_mod, "_llm_settings_signature", lambda user_id: "llm-b")
+    second = subjects_mod._subjects_semantic_cache_key("query", ["sub"], "user-1", "system")
+
+    monkeypatch.setattr(subjects_mod, "_llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(subjects_mod, "_embedding_settings_signature", lambda user_id: "embed-b")
+    third = subjects_mod._subjects_semantic_cache_key("query", ["sub"], "user-1", "system")
+
+    assert first is not None and second is not None and third is not None
+    assert first[0] != second[0]
+    assert first[0] != third[0]
+
+
+def test_subject_cache_todo_sits_before_verifier_boundary():
+    source = inspect.getsource(RagServiceImpl.query)
+
+    assert "TODO: evidence-search cache belongs here, before verifier" in source
+    assert source.index("TODO: evidence-search cache") < source.index("self.query_verifier.run")
 
 
 async def test_normalizer_reuses_single_exact_name_or_alias_match(monkeypatch):

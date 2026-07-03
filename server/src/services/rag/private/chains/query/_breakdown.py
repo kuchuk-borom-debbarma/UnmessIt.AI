@@ -111,6 +111,8 @@ def _breakdown_system_prompt() -> str:
         "Decompose the user query into focused sub-queries for evidence retrieval. "
         "Return only valid JSON. No markdown. "
         "Each sub-query must be self-contained and searchable on its own. "
+        "Write sub-queries as deterministic embedding-friendly search phrases, not conversational questions. "
+        "Use stable nouns and qualifiers from the query; avoid pronouns, filler words, punctuation-only differences, and wording variation that does not change meaning. "
         "Include the original query as the first item. "
         f"Return at most {_MAX_SUB_QUERIES} sub-queries. "
         "For multi-part questions, include focused searches for each requested subject, scope, and comparison or reasoning dimension. "

@@ -97,6 +97,7 @@ Prompts should be boring, standard, explicit, and portable across domains. A goo
 - Final answers must cite citable source spans, not metadata.
 - Recall keys are general recall structures for reusable user-specific things, not a domain-specific model.
 - Retrieval prompts should select evidence that matches the user's subject and time scope before broader context.
+- Query breakdown and subject extraction prompts should produce deterministic, embedding-friendly query-planning text: stable nouns and qualifiers, no pronouns, no filler words, and no wording variation that does not change meaning.
 
 ## 11. Provider-Native Prompt Caching
 

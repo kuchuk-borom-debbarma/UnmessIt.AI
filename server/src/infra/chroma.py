@@ -125,6 +125,17 @@ def _user_collection(user_id: str):
     return _collection(user_id, digest)
 
 
+@lru_cache(maxsize=100)
+def semantic_cache_collection(user_id: str, namespace: str):
+    """Return a disposable Chroma collection for retrieval semantic caches."""
+    name_hash = hashlib.sha256(f"{user_id}:{namespace}".encode("utf-8")).hexdigest()[:24]
+    return _get_client().get_or_create_collection(
+        f"retrieval_cache_{name_hash}",
+        embedding_function=RotatingEmbeddingFunction(user_id),
+        metadata={"hnsw:space": "cosine"},
+    )
+
+
 class RotatingEmbeddingFunction(chromadb.EmbeddingFunction):
     """Chroma embedding callback that tries rotation lanes in order."""
 

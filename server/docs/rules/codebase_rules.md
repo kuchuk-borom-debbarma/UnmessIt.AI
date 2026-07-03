@@ -41,6 +41,7 @@ Keep the server boring, small, and easy to read.
 - Redis is a delivery/cache layer. SQLite remains the source of truth for jobs, events, and idempotency.
 - Embedding cache belongs in `src/infra/`, may use in-memory plus Redis layers, and must stay disposable; never make Redis the source of truth for vectors.
 - Exact retrieval LLM caches belong in `src/infra/`, must include prompt text and model/settings signatures in their keys, and must never cache provider failures.
+- Semantic retrieval caches are allowed only for query-planning outputs until a retrieval index version exists; they must be disposable and versioned by prompt plus settings.
 
 ## 6. Routes
 - Keep these URLs stable: `POST /ingest/`, `POST /api/retrieval/query`, `GET /notes/`, `POST /notes/`, `GET /directories/`, `GET /tags/`, `GET /configs/presets`, `GET /configs/processing`, `PUT /configs/processing`, `GET /configs/rotation`, `PUT /configs/rotation`.
