@@ -148,6 +148,7 @@ class RagServiceImpl:
                     "ref": "retrieval:done",
                     "citation_count": len(answer.get("citation_ids", [])),
                     "cache_summary": result["retrieval_trace"].get("cache_summary", {}),
+                    "context_engineering": result["retrieval_trace"].get("context_engineering", {}),
                 },
             )
         finally:

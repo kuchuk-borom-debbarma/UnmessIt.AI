@@ -18,6 +18,18 @@ type Citation = {
   start_char?: number | null
   end_char?: number | null
 }
+type ContextEngineering = {
+  ran?: boolean
+  raw_chars?: number
+  packed_chars?: number
+  saved_chars?: number
+  shrink_percent?: number
+}
+type RetrievalTraceLike = {
+  context_engineering?: ContextEngineering
+  context_chars_before_packing?: number
+  context_chars_after_packing?: number
+}
 
 const CITE_MARKER_RE = /(\[\[cite:[^\]\s]+\]\]?)/g
 const CITE_MARKER_ONLY_RE = /^\[\[cite:([^\]\s]+)\]\]?$/
@@ -39,6 +51,25 @@ function cacheStatusClass(status: string) {
   if (status.includes('hit')) return 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
   if (status === 'set') return 'border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300'
   return 'border-zinc-500/20 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300'
+}
+
+function contextShrinkPercent(before?: number, after?: number) {
+  if (!before || before <= 0) return 0
+  return Math.round(Math.min(100, Math.max(0, ((before - (after || 0)) / before) * 100)))
+}
+
+function contextEngineeringTrace(trace?: RetrievalTraceLike | null): ContextEngineering | null {
+  if (!trace) return null
+  if (trace.context_engineering) return trace.context_engineering
+  const raw = Number(trace.context_chars_before_packing || 0)
+  const packed = Number(trace.context_chars_after_packing || 0)
+  return {
+    ran: raw > 0,
+    raw_chars: raw,
+    packed_chars: packed,
+    saved_chars: Math.max(raw - packed, 0),
+    shrink_percent: contextShrinkPercent(raw, packed),
+  }
 }
 
 function ToastMessage({ toast }: { toast: Toast }) {
@@ -242,6 +273,7 @@ export function AskView({ token }: { token: string }) {
     withinTags, setWithinTags, excludingTags, setExcludingTags, withinTagsCondition, setWithinTagsCondition,
     result, toast, progressSteps, handleAsk, stopAsk
   } = useAsk()
+  const contextEngineering = contextEngineeringTrace(result?.retrieval_trace)
 
   return (
     <div className="flex flex-col flex-1 h-full max-w-4xl mx-auto w-full pt-10 md:pt-20 relative">
@@ -529,22 +561,27 @@ export function AskView({ token }: { token: string }) {
                             </div>
                           </div>
                         )}
-                        {result.retrieval_trace.context_chars_before_packing && (
+                        {contextEngineering && (
                           <div className="p-5 rounded-2xl bg-emerald-500/5 dark:bg-black/40 border border-emerald-500/20 dark:border-emerald-900/30 flex flex-col justify-center shadow-inner md:col-span-4">
                               <div className="flex justify-between items-end mb-3">
-                                <div className="text-[10px] font-bold text-emerald-600/80 dark:text-emerald-500/80 uppercase tracking-widest">Token Optimization via Context Engineering</div>
-                                <div className="text-xl font-black text-emerald-600 dark:text-emerald-400">-{result.retrieval_trace.context_chars_saved?.toLocaleString()} chars</div>
+                                <div className="text-[10px] font-bold text-emerald-600/80 dark:text-emerald-500/80 uppercase tracking-widest">Context Engineering</div>
+                                <div className="text-xl font-black text-emerald-600 dark:text-emerald-400">
+                                  {contextEngineering.ran ? `${contextEngineering.shrink_percent}% smaller` : 'No new work'}
+                                </div>
                               </div>
                               <div className="w-full bg-black/5 dark:bg-zinc-900 rounded-full h-1.5 overflow-hidden">
                               <div 
                                 className="bg-emerald-500 h-full rounded-full" 
-                                style={{ width: `${Math.min(100, Math.max(0, ((result.retrieval_trace.context_chars_saved || 0) / (result.retrieval_trace.context_chars_before_packing || 1)) * 100))}%` }}
+                                style={{ width: `${contextEngineering.shrink_percent || 0}%` }}
                               ></div>
                             </div>
                             <div className="flex justify-between mt-2 text-[10px] text-zinc-500 font-mono">
-                              <span>Raw Text: {result.retrieval_trace.context_chars_before_packing?.toLocaleString()}c</span>
-                              <span>Packed: {result.retrieval_trace.context_chars_after_packing?.toLocaleString()}c</span>
+                              <span>Raw context: {contextEngineering.raw_chars?.toLocaleString()} chars</span>
+                              <span>Engineered context: {contextEngineering.packed_chars?.toLocaleString()} chars</span>
                             </div>
+                            {!contextEngineering.ran && (
+                              <div className="mt-2 text-[10px] text-zinc-500 font-semibold">No LLM context was compressed during this cached run.</div>
+                            )}
                           </div>
                         )}
                       </div>

@@ -107,12 +107,19 @@ async def search_node(state: QueryState) -> dict[str, Any]:
     )
     cached = _valid_evidence_cache(await retrieval_cache.get_json(cache_key), index_version)
     if cached is not None:
+        context_trace = _empty_context_engineering("cache")
         if reporter:
             await reporter.report(
                 "Using cached evidence search results.",
-                {"depth": 1, "ref": "retrieval:search:cache_hit", "parent_ref": "retrieval:search", "retrieval_index_version": index_version},
+                {
+                    "depth": 1,
+                    "ref": "retrieval:search:cache_hit",
+                    "parent_ref": "retrieval:search",
+                    "retrieval_index_version": index_version,
+                    **context_trace,
+                },
             )
-        return {**cached, "cache_events": [{"stage": "evidence", "status": "hit"}]}
+        return {**cached, **context_trace, "cache_events": [{"stage": "evidence", "status": "hit"}]}
     cache_events = [{"stage": "evidence", "status": "miss"}]
 
     async def _search_and_report(index: int, sq: str):
@@ -141,7 +148,7 @@ async def search_node(state: QueryState) -> dict[str, Any]:
         if reporter:
             chunks, trace = res
             await reporter.report(
-                f"Sub-query {index}/{len(state['sub_queries'])}: packed {len(chunks)} evidence chunk(s)",
+                f"Sub-query {index}/{len(state['sub_queries'])}: engineered {len(chunks)} evidence chunk(s)",
                 {"depth": 2, "ref": f"{search_ref}:done", "parent_ref": search_ref, **{k: v for k, v in trace.items() if k != "baseline_lengths"}},
             )
         return res
@@ -154,6 +161,7 @@ async def search_node(state: QueryState) -> dict[str, Any]:
         all_chunks.extend(chunks)
         cache_events.extend(trace_part.pop("cache_events", []))
         trace_parts.append(trace_part)
+    context_trace = _aggregate_context_engineering(trace_parts)
         
     await retrieval_cache.set_json(cache_key, {
         "cache_version": _EVIDENCE_CACHE_VERSION,
@@ -162,11 +170,11 @@ async def search_node(state: QueryState) -> dict[str, Any]:
         "trace_parts": trace_parts,
     })
     cache_events.append({"stage": "evidence", "status": "set"})
-    return {"chunks": all_chunks, "trace_parts": trace_parts, "cache_events": cache_events}
+    return {"chunks": all_chunks, "trace_parts": trace_parts, "cache_events": cache_events, **context_trace}
 
 
 def finalize_chunks(raw_chunks: list[dict[str, Any]], query: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Dedup, re-rank, and context-pack the accumulated chunks from all sub-query passes.
+    """Dedup and re-rank accumulated chunks from all sub-query passes.
 
     Called by QueryEvidenceChain after the graph completes; not a graph node itself
     because it needs the full merged set before trimming to MAX_EVIDENCE_CHUNKS.
@@ -178,9 +186,10 @@ def finalize_chunks(raw_chunks: list[dict[str, Any]], query: str) -> tuple[list[
     deduped = list(seen.values())
 
     ranked, score_trace = _rank_chunks(query, deduped)
-    ranked, context_trace = _pack_context(query, ranked[:MAX_EVIDENCE_CHUNKS])
+    ranked = ranked[:MAX_EVIDENCE_CHUNKS]
     selected_score_trace = {chunk["id"]: score_trace.get(chunk["id"], []) for chunk in ranked}
-    return ranked, {**context_trace, "chunk_score_reasons": selected_score_trace}
+    selected_snippet_counts = {chunk["id"]: len(chunk.get("_snippets") or []) for chunk in ranked}
+    return ranked, {"selected_snippet_counts": selected_snippet_counts, "chunk_score_reasons": selected_score_trace}
 
 
 # ── internal helpers ─────────────────────────────────────────────────────────
@@ -351,10 +360,18 @@ async def _evidence_for(
     
     combined_query = f"{global_query} {sub_query}".strip()
     chunks, pack_trace = _pack_context(combined_query, top_chunks, budget=_CONTEXT_CHARS_PER_PASS)
+    context = pack_trace["context_engineering"]
+    logger.info(
+        "context_engineering source=fresh raw_chars=%s packed_chars=%s saved_chars=%s chunks=%s",
+        context["raw_chars"],
+        context["packed_chars"],
+        context["saved_chars"],
+        context["chunk_count"],
+    )
     if reporter:
         await reporter.report(
-            f"Packed sub-query context: {pack_trace['context_chars_after_packing']}/{pack_trace['context_chars_before_packing']} chars",
-            {"depth": 3, "ref": f"{parent_ref}:pack", "parent_ref": parent_ref, "sub_query": sub_query, **pack_trace},
+            f"Engineered context: {context['raw_chars']} -> {context['packed_chars']} chars",
+            {"depth": 3, "ref": f"{parent_ref}:context", "parent_ref": parent_ref, "sub_query": sub_query, **pack_trace},
         )
 
     trace_part = {
@@ -368,6 +385,7 @@ async def _evidence_for(
         "linked_source_chunk_count": len(linked_chunks),
         "source_chunk_count": len(chunks),
         "baseline_lengths": baseline_lengths,
+        **pack_trace,
         "cache_events": semantic_events,
     }
     semantic_events.extend(await _set_semantic_evidence_candidates(
@@ -669,12 +687,89 @@ def _pack_context(
         if after_chars >= budget:
             break
             
+    saved_chars = max(before_chars - after_chars, 0)
+    context = {
+        "ran": True,
+        "source": "fresh",
+        "raw_chars": before_chars,
+        "packed_chars": after_chars,
+        "saved_chars": saved_chars,
+        "shrink_percent": _shrink_percent(before_chars, after_chars),
+        "chunk_count": len(packed),
+        "snippet_count": sum(snippet_counts.values()),
+    }
     return packed, {
         "context_chars_before_packing": before_chars,
         "context_chars_after_packing": after_chars,
-        "context_chars_saved": max(before_chars - after_chars, 0),
+        "context_chars_saved": saved_chars,
+        "context_engineering": context,
         "selected_snippet_counts": snippet_counts,
     }
+
+
+def _empty_context_engineering(source: str) -> dict[str, Any]:
+    context = {
+        "ran": False,
+        "source": source,
+        "raw_chars": 0,
+        "packed_chars": 0,
+        "saved_chars": 0,
+        "shrink_percent": 0,
+        "chunk_count": 0,
+        "snippet_count": 0,
+    }
+    return {
+        "context_engineering": context,
+        "context_chars_before_packing": 0,
+        "context_chars_after_packing": 0,
+        "context_chars_saved": 0,
+        "selected_snippet_counts": {},
+    }
+
+
+def _aggregate_context_engineering(trace_parts: list[dict[str, Any]]) -> dict[str, Any]:
+    selected_snippet_counts: dict[str, int] = {}
+    raw_chars = 0
+    packed_chars = 0
+    chunk_count = 0
+    snippet_count = 0
+    ran = False
+    for trace in trace_parts:
+        selected_snippet_counts.update(trace.get("selected_snippet_counts") or {})
+        context = trace.get("context_engineering") or {}
+        if not context.get("ran"):
+            continue
+        ran = True
+        raw_chars += int(context.get("raw_chars") or 0)
+        packed_chars += int(context.get("packed_chars") or 0)
+        chunk_count += int(context.get("chunk_count") or 0)
+        snippet_count += int(context.get("snippet_count") or 0)
+    if not ran:
+        return _empty_context_engineering("cache")
+    saved_chars = max(raw_chars - packed_chars, 0)
+    context = {
+        "ran": True,
+        "source": "fresh",
+        "raw_chars": raw_chars,
+        "packed_chars": packed_chars,
+        "saved_chars": saved_chars,
+        "shrink_percent": _shrink_percent(raw_chars, packed_chars),
+        "chunk_count": chunk_count,
+        "snippet_count": snippet_count,
+    }
+    return {
+        "context_engineering": context,
+        "context_chars_before_packing": raw_chars,
+        "context_chars_after_packing": packed_chars,
+        "context_chars_saved": saved_chars,
+        "selected_snippet_counts": selected_snippet_counts,
+    }
+
+
+def _shrink_percent(before: int, after: int) -> int:
+    if before <= 0:
+        return 0
+    return round(min(100, max(0, ((before - after) / before) * 100)))
 
 
 def _snippets(query: str, text: str, summary: str) -> list[str]:

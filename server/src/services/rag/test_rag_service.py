@@ -529,6 +529,7 @@ async def test_query_uses_source_search_and_recall_expansion(monkeypatch):
 
 
 async def test_query_context_packer_ranks_and_falls_back(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
     vector = {**_source_chunk("vector", "Attack Titan matters here. A different sentence."), "summary": "vector summary"}
     lexical = {**_source_chunk("lexical", "No direct overlap in text."), "summary": "fallback summary"}
     linked = {**_source_chunk("linked", "Attack Titan is also linked through recall."), "summary": "linked summary"}
@@ -546,10 +547,15 @@ async def test_query_context_packer_ranks_and_falls_back(monkeypatch):
             return {"answer": "ok", "citation_ids": []}
 
     chain = QueryEvidenceChain(PassthroughBreakdownJson())
-    chunks, trace = await chain.run("Attack Titan", user_id="user-1")
+    reporter = CaptureReporter()
+    chunks, trace = await chain.run("Attack Titan", user_id="user-1", reporter=reporter)
 
     assert {chunk["id"] for chunk in chunks} == {"vector", "lexical", "linked"}
     assert trace["selected_snippet_counts"].keys() == {"vector", "lexical", "linked"}
+    assert trace["context_engineering"]["ran"] is True
+    assert trace["context_engineering"]["raw_chars"] > 0
+    assert trace["context_engineering"]["packed_chars"] > 0
+    assert any(details.get("ref", "").endswith(":context") for _, details in reporter.events)
     # lexical chunk has no query-term overlap so it falls back to its summary snippet
     lexical_chunk = next(c for c in chunks if c["id"] == "lexical")
     assert lexical_chunk["_snippets"][0] == "fallback summary"
@@ -567,7 +573,24 @@ async def test_evidence_cache_hit_skips_second_search(monkeypatch):
 
     async def fake_evidence(*args, **kwargs):
         calls.append(args[0])
-        return [_source_chunk("chunk-1", "Attack Titan evidence")], {"sub_query": args[0], "baseline_lengths": {"chunk-1": 21}}
+        return [_source_chunk("chunk-1", "Attack Titan evidence")], {
+            "sub_query": args[0],
+            "baseline_lengths": {"chunk-1": 21},
+            "context_engineering": {
+                "ran": True,
+                "source": "fresh",
+                "raw_chars": 100,
+                "packed_chars": 30,
+                "saved_chars": 70,
+                "shrink_percent": 70,
+                "chunk_count": 1,
+                "snippet_count": 1,
+            },
+            "context_chars_before_packing": 100,
+            "context_chars_after_packing": 30,
+            "context_chars_saved": 70,
+            "selected_snippet_counts": {"chunk-1": 1},
+        }
 
     monkeypatch.setattr(search_mod, "_evidence_for", fake_evidence)
     state = _search_state()
@@ -578,6 +601,17 @@ async def test_evidence_cache_hit_skips_second_search(monkeypatch):
     assert calls == ["Attack Titan"]
     assert first["chunks"] == second["chunks"]
     assert first["trace_parts"] == second["trace_parts"]
+    assert first["context_engineering"]["raw_chars"] == 100
+    assert second["context_engineering"] == {
+        "ran": False,
+        "source": "cache",
+        "raw_chars": 0,
+        "packed_chars": 0,
+        "saved_chars": 0,
+        "shrink_percent": 0,
+        "chunk_count": 0,
+        "snippet_count": 0,
+    }
     assert first["cache_events"] == [{"stage": "evidence", "status": "miss"}, {"stage": "evidence", "status": "set"}]
     assert second["cache_events"] == [{"stage": "evidence", "status": "hit"}]
 
@@ -769,6 +803,44 @@ def test_query_result_includes_cache_summary():
         "verifier": "hit",
         "answer": "miss",
     }
+
+
+def test_query_result_zeros_context_when_source_llm_cache_hits():
+    chunk = {**_source_chunk("chunk-1", "Subject Alpha evidence. Extra raw context."), "_snippets": ["Subject Alpha evidence."]}
+    answer = {"answer": "Supported answer.", "citation_ids": ["chunk-1"]}
+    trace = {
+        "cache_events": [
+            {"stage": "evidence", "status": "hit"},
+            {"stage": "verifier", "status": "hit"},
+            {"stage": "answer", "status": "hit"},
+        ],
+        "context_engineering": {"ran": False, "raw_chars": 0, "packed_chars": 0, "saved_chars": 0},
+    }
+
+    result = build_query_result("Subject Alpha", [chunk], answer, trace)
+
+    assert result["retrieval_trace"]["context_engineering"]["ran"] is False
+    assert result["retrieval_trace"]["context_chars_before_packing"] == 0
+    assert result["retrieval_trace"]["context_chars_after_packing"] == 0
+
+
+def test_query_result_reports_cached_context_when_source_llm_runs():
+    chunk = {**_source_chunk("chunk-1", "Subject Alpha evidence. Extra raw context."), "summary": "Alpha", "_snippets": ["Subject Alpha evidence."]}
+    answer = {"answer": "Supported answer.", "citation_ids": ["chunk-1"]}
+    trace = {
+        "cache_events": [
+            {"stage": "evidence", "status": "hit"},
+            {"stage": "verifier", "status": "miss"},
+            {"stage": "answer", "status": "hit"},
+        ],
+        "context_engineering": {"ran": False, "raw_chars": 0, "packed_chars": 0, "saved_chars": 0},
+    }
+
+    result = build_query_result("Subject Alpha", [chunk], answer, trace)
+
+    assert result["retrieval_trace"]["context_engineering"]["ran"] is True
+    assert result["retrieval_trace"]["context_engineering"]["source"] == "cache"
+    assert result["retrieval_trace"]["context_chars_before_packing"] > result["retrieval_trace"]["context_chars_after_packing"]
 
 
 def test_query_snippets_expand_physical_terms():

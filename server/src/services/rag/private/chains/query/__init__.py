@@ -58,21 +58,20 @@ class QueryEvidenceChain:
                 {"depth": 1, "ref": "retrieval:evidence:merge", "raw_chunk_count": len(raw_chunks), "sub_query_count": len(trace_parts)},
             )
         chunks, finalize_trace = finalize_chunks(raw_chunks, query)
+        for key in (
+            "context_engineering",
+            "context_chars_before_packing",
+            "context_chars_after_packing",
+            "context_chars_saved",
+            "selected_snippet_counts",
+        ):
+            if key in result:
+                finalize_trace[key] = result[key]
         if reporter:
             await reporter.report(
                 f"Selected {len(chunks)} best notes for reading.",
                 {"depth": 1, "ref": "retrieval:evidence:final", "source_chunk_ids": [chunk["id"] for chunk in chunks], **finalize_trace},
             )
-        
-        # Calculate true baseline chars (unique across all subqueries before budget dropping)
-        global_unique_chunks = {}
-        for t in trace_parts:
-            global_unique_chunks.update(t.get("baseline_lengths", {}))
-            
-        true_before_chars = sum(global_unique_chunks.values())
-        if true_before_chars > 0:
-            finalize_trace["context_chars_before_packing"] = true_before_chars
-            finalize_trace["context_chars_saved"] = max(true_before_chars - finalize_trace.get("context_chars_after_packing", 0), 0)
 
         trace = {
             "mode": "source_chunks_with_recall_expansion",
@@ -431,6 +430,8 @@ def build_query_result(query: str, chunks: list[dict[str, Any]], answer: dict[st
     citation_ids = answer.get("citation_ids") or answer.get("citations") or [chunk["id"] for chunk in chunks[:3]]
     cited_chunks = [chunk for chunk in chunks if chunk["id"] in set(citation_ids)]
     cache_events = trace.get("cache_events") if isinstance(trace.get("cache_events"), list) else []
+    cache_summary = _cache_summary(cache_events)
+    context_trace = _context_engineering_for_result(chunks, trace, cache_summary)
     return {
         "answer": answer["answer"],
         "citations": [_citation(chunk, index + 1) for index, chunk in enumerate(cited_chunks)],
@@ -439,7 +440,8 @@ def build_query_result(query: str, chunks: list[dict[str, Any]], answer: dict[st
         "notes": answer.get("notes", []),
         "retrieval_trace": {
             **trace,
-            "cache_summary": _cache_summary(cache_events),
+            **context_trace,
+            "cache_summary": cache_summary,
             "citation_count": len(cited_chunks),
         },
     }
@@ -455,6 +457,66 @@ def _cache_summary(events: list[dict[str, Any]]) -> dict[str, str]:
         cache = event.get("cache")
         summary[stage] = f"{cache}_{status}" if cache and cache != "exact" else status
     return summary
+
+
+def _context_engineering_for_result(
+    chunks: list[dict[str, Any]],
+    trace: dict[str, Any],
+    cache_summary: dict[str, str],
+) -> dict[str, Any]:
+    context = trace.get("context_engineering")
+    if isinstance(context, dict) and (context.get("ran") or context.get("raw_chars")):
+        return {
+            "context_engineering": context,
+            "context_chars_before_packing": context.get("raw_chars", 0),
+            "context_chars_after_packing": context.get("packed_chars", 0),
+            "context_chars_saved": context.get("saved_chars", 0),
+        }
+    if cache_summary.get("verifier") == "hit" and cache_summary.get("answer") == "hit":
+        return _zero_context_engineering()
+    raw_chars = sum(len(str(chunk.get("text", ""))) for chunk in chunks)
+    packed_chars = sum(
+        len(str(chunk.get("summary", ""))) + sum(len(str(snippet)) for snippet in (chunk.get("_snippets") or []))
+        for chunk in chunks
+    )
+    if raw_chars <= 0 or packed_chars <= 0:
+        return _zero_context_engineering()
+    saved_chars = max(raw_chars - packed_chars, 0)
+    context = {
+        "ran": True,
+        "source": "cache",
+        "raw_chars": raw_chars,
+        "packed_chars": packed_chars,
+        "saved_chars": saved_chars,
+        "shrink_percent": round(min(100, max(0, (saved_chars / raw_chars) * 100))),
+        "chunk_count": len(chunks),
+        "snippet_count": sum(len(chunk.get("_snippets") or []) for chunk in chunks),
+    }
+    return {
+        "context_engineering": context,
+        "context_chars_before_packing": raw_chars,
+        "context_chars_after_packing": packed_chars,
+        "context_chars_saved": saved_chars,
+    }
+
+
+def _zero_context_engineering() -> dict[str, Any]:
+    context = {
+        "ran": False,
+        "source": "cache",
+        "raw_chars": 0,
+        "packed_chars": 0,
+        "saved_chars": 0,
+        "shrink_percent": 0,
+        "chunk_count": 0,
+        "snippet_count": 0,
+    }
+    return {
+        "context_engineering": context,
+        "context_chars_before_packing": 0,
+        "context_chars_after_packing": 0,
+        "context_chars_saved": 0,
+    }
 
 
 def _chunk_payload(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
