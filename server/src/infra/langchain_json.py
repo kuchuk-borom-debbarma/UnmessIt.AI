@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 from functools import lru_cache
 from typing import Any
+from urllib.parse import urlsplit
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import JsonOutputParser
@@ -68,7 +70,7 @@ class JsonLLMClient:
                     sniffio.current_async_library_cvar.set(None)
                 except Exception:
                     pass
-                response = llm.invoke(messages)
+                response = llm.invoke(messages, **_prompt_cache_kwargs(settings, system))
                 content = response.content if hasattr(response, "content") else str(response)
                 return JsonOutputParser().parse(content)
             except Exception as exc:
@@ -122,7 +124,7 @@ class JsonLLMClient:
                     f"Calling language model {settings.llm_model} (attempt {attempt}/{settings.llm_max_retries + 1})",
                     {"preset_id": settings.preset_id, "model": settings.llm_model, "attempt": attempt},
                 )
-                response = await llm.ainvoke(messages)
+                response = await llm.ainvoke(messages, **_prompt_cache_kwargs(settings, system))
                 content = response.content if hasattr(response, "content") else str(response)
                 return JsonOutputParser().parse(content)
             except Exception as exc:
@@ -179,6 +181,21 @@ def _repair_messages(content: str, error: str) -> list:
         SystemMessage(content="Repair invalid JSON. Return only valid JSON. No markdown or prose."),
         HumanMessage(content=f"JSON_ERROR:\n{error}\n\nINVALID_JSON:\n{content}"),
     ]
+
+
+def _prompt_cache_kwargs(settings: Settings, system: str) -> dict[str, str]:
+    """Return OpenAI-native prompt cache hints for official OpenAI requests."""
+    if settings.llm_provider != "openai" or not _is_official_openai_base_url(settings.llm_base_url):
+        return {}
+    digest = hashlib.sha256(system.encode("utf-8")).hexdigest()[:16]
+    host = urlsplit(settings.llm_base_url or "https://api.openai.com/v1").hostname or "api.openai.com"
+    return {"prompt_cache_key": f"{settings.llm_provider}:{settings.llm_model}:{host}:{digest}"}
+
+
+def _is_official_openai_base_url(base_url: str | None) -> bool:
+    if not base_url:
+        return True
+    return (urlsplit(base_url).hostname or "").lower() == "api.openai.com"
 
 
 def _json_response_format(base_url: str) -> dict[str, Any]:

@@ -98,7 +98,17 @@ Prompts should be boring, standard, explicit, and portable across domains. A goo
 - Recall keys are general recall structures for reusable user-specific things, not a domain-specific model.
 - Retrieval prompts should select evidence that matches the user's subject and time scope before broader context.
 
-## 11. Test Expectations
+## 11. Provider-Native Prompt Caching
+
+- Treat provider prompt caching as a latency and cost optimization only; behavior must not depend on a cache hit.
+- Put durable, reusable instructions at the beginning of the system message.
+- Put reused schemas or examples after durable instructions, and only include them when they are genuinely needed.
+- Put dynamic user text, source chunks, timestamps, candidate lists, retry data, repair data, and request-specific metadata in the human message or as late as possible.
+- Do not put request ids, timestamps, random ordering, user-specific metadata, or source text near the start of a prompt.
+- Keep repeated instruction, schema, and tool text byte-stable when possible.
+- For providers that support native prompt caching, unsupported providers must continue without special cache fields.
+
+## 12. Test Expectations
 
 - Test behavior or contract-critical phrases, not entire prompt snapshots.
 - Add a small test when a prompt rule prevents a known failure mode.
