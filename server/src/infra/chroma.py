@@ -9,6 +9,7 @@ from typing import Any
 import chromadb
 from chromadb.utils import embedding_functions
 
+from src.infra.embedding_cache import CachedEmbeddingFunction, embedding_cache_namespace
 from src.infra.rate_limit import RateLimitedEmbeddingFunction, get_limiter
 from src.infra.settings import (
     get_user_embedding_setting_candidates as get_user_setting_candidates,
@@ -191,8 +192,8 @@ def _embedding_function_for_key(cache_key: tuple):
         raise ValueError(f"Unsupported embedding provider: {provider}")
 
     if rate_limit > 0:
-        return RateLimitedEmbeddingFunction(fn, get_limiter(rate_limit))
-    return fn
+        fn = RateLimitedEmbeddingFunction(fn, get_limiter(rate_limit))
+    return CachedEmbeddingFunction(fn, embedding_cache_namespace(provider, model, base_url))
 
 
 def _name_part(value: str) -> str:

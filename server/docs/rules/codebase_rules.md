@@ -39,6 +39,7 @@ Keep the server boring, small, and easy to read.
 - Do not log API keys, full prompts, full model responses, or full raw source text.
 - Chroma is a rebuildable index; SQLite source rows are the source of truth.
 - Redis is a delivery/cache layer. SQLite remains the source of truth for jobs, events, and idempotency.
+- Embedding cache belongs in `src/infra/`, may use in-memory plus Redis layers, and must stay disposable; never make Redis the source of truth for vectors.
 
 ## 6. Routes
 - Keep these URLs stable: `POST /ingest/`, `POST /api/retrieval/query`, `GET /notes/`, `POST /notes/`, `GET /directories/`, `GET /tags/`, `GET /configs/presets`, `GET /configs/processing`, `PUT /configs/processing`, `GET /configs/rotation`, `PUT /configs/rotation`.

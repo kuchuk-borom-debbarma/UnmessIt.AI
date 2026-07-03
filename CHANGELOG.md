@@ -10,3 +10,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Provider-native prompt caching now activates automatically for official OpenAI LLM presets by sending a stable, non-secret prompt cache key.
 - Prompt rules now document cache-friendly structure: durable instructions first, reusable schemas/examples next, and dynamic user/source data last.
+- Embeddings are now cached in memory and Redis when available, reducing repeated provider calls for identical text/model inputs.
