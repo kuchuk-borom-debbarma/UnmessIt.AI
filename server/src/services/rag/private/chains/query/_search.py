@@ -18,6 +18,8 @@ MAX_SNIPPETS_PER_CHUNK = 3
 MAX_SNIPPET_CHARS = 420
 _CONTEXT_CHARS_PER_PASS = 6000
 _EVIDENCE_CACHE_VERSION = "evidence-search-v1"
+_SEMANTIC_EVIDENCE_CACHE_VERSION = "evidence-semantic-candidates-v1"
+_SEMANTIC_EVIDENCE_THRESHOLD = 0.98
 
 _ATTRIBUTE_TRIGGERS = {
     "appearance", "appearances", "attribute", "attributes", "body", "build",
@@ -87,6 +89,13 @@ async def search_node(state: QueryState) -> dict[str, Any]:
     within_tags_condition = state.get("within_tags_condition", "any")
     index_version = await asyncio.to_thread(retrieval_index.get_version, user_id)
     embedding_signature = await asyncio.to_thread(_embedding_settings_signature, user_id)
+    filters_signature = _filter_signature(
+        within_directories,
+        excluding_directories,
+        within_tags,
+        excluding_tags,
+        within_tags_condition,
+    )
     cache_key = _evidence_cache_key(
         state.get("query", ""),
         state["sub_queries"],
@@ -94,11 +103,7 @@ async def search_node(state: QueryState) -> dict[str, Any]:
         user_id,
         index_version,
         embedding_signature,
-        within_directories,
-        excluding_directories,
-        within_tags,
-        excluding_tags,
-        within_tags_condition,
+        filters_signature,
     )
     cached = _valid_evidence_cache(await retrieval_cache.get_json(cache_key), index_version)
     if cached is not None:
@@ -127,6 +132,9 @@ async def search_node(state: QueryState) -> dict[str, Any]:
             within_tags,
             excluding_tags,
             within_tags_condition,
+            index_version,
+            embedding_signature,
+            filters_signature,
             reporter,
             search_ref,
         )
@@ -144,6 +152,7 @@ async def search_node(state: QueryState) -> dict[str, Any]:
     trace_parts: list[dict[str, Any]] = []
     for chunks, trace_part in results:
         all_chunks.extend(chunks)
+        cache_events.extend(trace_part.pop("cache_events", []))
         trace_parts.append(trace_part)
         
     await retrieval_cache.set_json(cache_key, {
@@ -184,11 +193,7 @@ def _evidence_cache_key(
     user_id: str,
     index_version: int,
     embedding_signature: str,
-    within_directories: list[str],
-    excluding_directories: list[str],
-    within_tags: list[str],
-    excluding_tags: list[str],
-    within_tags_condition: str,
+    filters_signature: dict[str, Any],
 ) -> str:
     return retrieval_cache.cache_key(
         "evidence_search",
@@ -199,13 +204,7 @@ def _evidence_cache_key(
         subjects,
         index_version,
         embedding_signature,
-        {
-            "within_directories": _stable_list(within_directories),
-            "excluding_directories": _stable_list(excluding_directories),
-            "within_tags": _stable_list(within_tags),
-            "excluding_tags": _stable_list(excluding_tags),
-            "within_tags_condition": within_tags_condition,
-        },
+        filters_signature,
     )
 
 
@@ -246,7 +245,38 @@ def _stable_list(values: list[str]) -> list[str]:
     return sorted({str(value) for value in values if str(value)})
 
 
-async def _evidence_for(sub_query: str, global_query: str, user_id: str, extracted_subjects: list[str], within_directories: list[str], excluding_directories: list[str], within_tags: list[str], excluding_tags: list[str], within_tags_condition: str, reporter=None, parent_ref: str = "retrieval:search") -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _filter_signature(
+    within_directories: list[str],
+    excluding_directories: list[str],
+    within_tags: list[str],
+    excluding_tags: list[str],
+    within_tags_condition: str,
+) -> dict[str, Any]:
+    return {
+        "within_directories": _stable_list(within_directories),
+        "excluding_directories": _stable_list(excluding_directories),
+        "within_tags": _stable_list(within_tags),
+        "excluding_tags": _stable_list(excluding_tags),
+        "within_tags_condition": within_tags_condition,
+    }
+
+
+async def _evidence_for(
+    sub_query: str,
+    global_query: str,
+    user_id: str,
+    extracted_subjects: list[str],
+    within_directories: list[str],
+    excluding_directories: list[str],
+    within_tags: list[str],
+    excluding_tags: list[str],
+    within_tags_condition: str,
+    index_version: int,
+    embedding_signature: str,
+    filters_signature: dict[str, Any],
+    reporter=None,
+    parent_ref: str = "retrieval:search",
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Run all three search paths for one sub-query concurrently where possible."""
     # Vector search and lexical search can run in parallel; recall key lookup is cheap.
     async def _vector_path():
@@ -299,7 +329,17 @@ async def _evidence_for(sub_query: str, global_query: str, user_id: str, extract
             f"Recall expansion returned {len(linked_chunks)} linked chunk(s)",
             {"depth": 3, "ref": f"{parent_ref}:recall:expand:done", "parent_ref": f"{parent_ref}:recall:expand", "sub_query": sub_query, "source_chunk_ids": linked_ids},
         )
-    chunks, _ = _rank_chunks(sub_query, [*vector_chunks, *lexical_chunks, *linked_chunks])
+    semantic_chunks, semantic_trace, semantic_events = await _semantic_evidence_candidates(
+        sub_query,
+        extracted_subjects,
+        user_id,
+        index_version,
+        embedding_signature,
+        filters_signature,
+        reporter,
+        parent_ref,
+    )
+    chunks, _ = _rank_chunks(sub_query, [*semantic_chunks, *vector_chunks, *lexical_chunks, *linked_chunks])
     if reporter:
         await reporter.report(
             f"Ranked {len(chunks)} unique chunk(s) for sub-query",
@@ -320,6 +360,7 @@ async def _evidence_for(sub_query: str, global_query: str, user_id: str, extract
     trace_part = {
         "sub_query": sub_query,
         "extracted_subjects": extracted_subjects,
+        **semantic_trace,
         "vector_source_chunk_ids": vector_ids,
         "lexical_source_chunk_count": len(lexical_chunks),
         "recall_key_count": len(recall_keys),
@@ -327,8 +368,166 @@ async def _evidence_for(sub_query: str, global_query: str, user_id: str, extract
         "linked_source_chunk_count": len(linked_chunks),
         "source_chunk_count": len(chunks),
         "baseline_lengths": baseline_lengths,
+        "cache_events": semantic_events,
     }
+    semantic_events.extend(await _set_semantic_evidence_candidates(
+        sub_query,
+        extracted_subjects,
+        user_id,
+        index_version,
+        embedding_signature,
+        filters_signature,
+        [chunk["id"] for chunk in top_chunks],
+        bool(semantic_chunks),
+        reporter,
+        parent_ref,
+    ))
     return chunks, trace_part
+
+
+async def _semantic_evidence_candidates(
+    sub_query: str,
+    extracted_subjects: list[str],
+    user_id: str,
+    index_version: int,
+    embedding_signature: str,
+    filters_signature: dict[str, Any],
+    reporter=None,
+    parent_ref: str = "retrieval:search",
+) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
+    namespace = _semantic_evidence_namespace(user_id, index_version, embedding_signature, filters_signature)
+    text = retrieval_cache.normalize_semantic_text(sub_query, extracted_subjects)
+    if reporter:
+        await reporter.report(
+            "Checking similar previous evidence...",
+            {"depth": 3, "ref": f"{parent_ref}:semantic", "parent_ref": parent_ref, "namespace": namespace},
+        )
+    match = await asyncio.to_thread(
+        retrieval_cache.get_semantic_json_match,
+        user_id,
+        namespace,
+        text,
+        _SEMANTIC_EVIDENCE_THRESHOLD,
+        False,
+    )
+    payload, distance = match if match else (None, None)
+    source_chunk_ids = _valid_semantic_evidence_payload(payload, index_version, embedding_signature, filters_signature)
+    if source_chunk_ids:
+        chunks = await asyncio.to_thread(source_chunks.get_by_ids, source_chunk_ids, user_id)
+        if chunks:
+            logger.info(
+                "semantic_evidence_cache_hit namespace=%s distance=%s candidates=%s index_version=%s",
+                namespace,
+                distance,
+                len(chunks),
+                index_version,
+            )
+            if reporter:
+                await reporter.report(
+                    f"Reused {len(chunks)} similar evidence candidate(s).",
+                    {
+                        "depth": 3,
+                        "ref": f"{parent_ref}:semantic:hit",
+                        "parent_ref": f"{parent_ref}:semantic",
+                        "namespace": namespace,
+                        "distance": distance,
+                        "source_chunk_ids": [chunk["id"] for chunk in chunks],
+                    },
+                )
+            return chunks, {
+                "semantic_cached_source_chunk_ids": [chunk["id"] for chunk in chunks],
+                "semantic_candidate_count": len(chunks),
+                "semantic_distance": distance,
+            }, [{"stage": "evidence_semantic", "status": "hit"}]
+    logger.info("semantic_evidence_cache_miss namespace=%s index_version=%s", namespace, index_version)
+    if reporter:
+        await reporter.report(
+            "No safe similar evidence match.",
+            {"depth": 3, "ref": f"{parent_ref}:semantic:miss", "parent_ref": f"{parent_ref}:semantic", "namespace": namespace},
+        )
+    return [], {"semantic_candidate_count": 0}, [{"stage": "evidence_semantic", "status": "miss"}]
+
+
+async def _set_semantic_evidence_candidates(
+    sub_query: str,
+    extracted_subjects: list[str],
+    user_id: str,
+    index_version: int,
+    embedding_signature: str,
+    filters_signature: dict[str, Any],
+    source_chunk_ids: list[str],
+    had_hit: bool,
+    reporter=None,
+    parent_ref: str = "retrieval:search",
+) -> list[dict[str, Any]]:
+    if had_hit or not source_chunk_ids:
+        return []
+    namespace = _semantic_evidence_namespace(user_id, index_version, embedding_signature, filters_signature)
+    text = retrieval_cache.normalize_semantic_text(sub_query, extracted_subjects)
+    payload = {
+        "cache_version": _SEMANTIC_EVIDENCE_CACHE_VERSION,
+        "retrieval_index_version": index_version,
+        "embedding_signature": embedding_signature,
+        "filters": filters_signature,
+        "normalized_query": text,
+        "source_chunk_ids": list(dict.fromkeys(source_chunk_ids)),
+    }
+    await asyncio.to_thread(retrieval_cache.set_semantic_json, user_id, namespace, text, payload)
+    logger.info(
+        "semantic_evidence_cache_set namespace=%s candidates=%s index_version=%s",
+        namespace,
+        len(payload["source_chunk_ids"]),
+        index_version,
+    )
+    if reporter:
+        await reporter.report(
+            f"Saved {len(payload['source_chunk_ids'])} evidence candidate(s) for similar searches.",
+            {
+                "depth": 3,
+                "ref": f"{parent_ref}:semantic:set",
+                "parent_ref": f"{parent_ref}:semantic",
+                "namespace": namespace,
+                "source_chunk_ids": payload["source_chunk_ids"],
+            },
+        )
+    return [{"stage": "evidence_semantic", "status": "set"}]
+
+
+def _semantic_evidence_namespace(
+    user_id: str,
+    index_version: int,
+    embedding_signature: str,
+    filters_signature: dict[str, Any],
+) -> str:
+    return retrieval_cache.semantic_namespace(
+        _SEMANTIC_EVIDENCE_CACHE_VERSION,
+        user_id,
+        index_version,
+        embedding_signature,
+        filters_signature,
+    )
+
+
+def _valid_semantic_evidence_payload(
+    value: dict[str, Any] | None,
+    index_version: int,
+    embedding_signature: str,
+    filters_signature: dict[str, Any],
+) -> list[str]:
+    if not isinstance(value, dict):
+        return []
+    if value.get("cache_version") != _SEMANTIC_EVIDENCE_CACHE_VERSION:
+        return []
+    if value.get("retrieval_index_version") != index_version:
+        return []
+    if value.get("embedding_signature") != embedding_signature:
+        return []
+    if value.get("filters") != filters_signature:
+        return []
+    ids = value.get("source_chunk_ids")
+    if not isinstance(ids, list):
+        return []
+    return [chunk_id for chunk_id in dict.fromkeys(str(item) for item in ids) if chunk_id]
 
 
 async def _vector_source_chunks(query: str, user_id: str, within_directories: list[str], excluding_directories: list[str], within_tags: list[str], excluding_tags: list[str], within_tags_condition: str, reporter=None, parent_ref: str = "retrieval:search") -> tuple[list[dict[str, Any]], list[str]]:

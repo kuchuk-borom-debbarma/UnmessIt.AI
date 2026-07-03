@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Subject extraction now uses exact memory/Redis caching for repeated query-planning inputs.
 - Subject extraction can reuse strict semantic cache hits when prompt, LLM, and embedding settings match.
 - Evidence search now uses an exact memory/Redis cache invalidated by a durable SQLite retrieval index version.
+- Evidence search now uses strict semantic candidate caching to boost similar sub-query retrieval without skipping normal search or verification.
 - Evidence verification now uses an exact memory/Redis cache for repeated verifier decisions over the same query and compact evidence payload.
 - Answer generation now uses an exact memory/Redis cache for repeated final answers over the same query and compact verified evidence payload.
 - Document ingestion now uses exact memory/Redis caching for `SourceChunkDraftChain` (summaries) and `RecallDraftChain` (entities) to skip re-running expensive LLM calls on identical text blocks.

@@ -534,6 +534,121 @@ async def test_evidence_cache_ignores_corrupt_redis_payload(monkeypatch):
     assert result["cache_events"] == [{"stage": "evidence", "status": "miss"}, {"stage": "evidence", "status": "set"}]
 
 
+async def test_semantic_evidence_hit_adds_candidates_and_keeps_normal_search(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    conn = _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(retrieval_index, "get_connection", lambda: conn)
+    monkeypatch.setattr(search_mod, "_embedding_settings_signature", lambda user_id: "embedding:v1")
+    monkeypatch.setattr(source_chunk_vectors, "search", lambda *args: [])
+    monkeypatch.setattr(search_mod, "_recall_keys", lambda *args: _async_value([]))
+    monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda *args: [])
+    lexical_calls = []
+    chunks_by_id = {
+        "semantic": _source_chunk("semantic", "Attack Titan semantic evidence"),
+        "lexical": _source_chunk("lexical", "Attack Titan lexical evidence"),
+    }
+
+    def fake_get_by_ids(ids, user_id):
+        return [chunks_by_id[chunk_id] for chunk_id in ids if chunk_id in chunks_by_id]
+
+    def fake_search(*args):
+        lexical_calls.append(args[0])
+        return [chunks_by_id["lexical"]]
+
+    monkeypatch.setattr(source_chunks, "get_by_ids", fake_get_by_ids)
+    monkeypatch.setattr(source_chunks, "search", fake_search)
+    monkeypatch.setattr(
+        retrieval_cache,
+        "get_semantic_json_match",
+        lambda *args, **kwargs: ({"cache_version": search_mod._SEMANTIC_EVIDENCE_CACHE_VERSION, "retrieval_index_version": 0, "embedding_signature": "embedding:v1", "filters": search_mod._filter_signature([], [], [], [], "any"), "source_chunk_ids": ["semantic"]}, 0.01),
+    )
+    reporter = CaptureReporter()
+
+    result = await search_mod.search_node(_search_state(reporter=reporter))
+
+    assert lexical_calls == ["Attack Titan"]
+    assert {chunk["id"] for chunk in result["chunks"]} == {"semantic", "lexical"}
+    assert {"stage": "evidence_semantic", "status": "hit"} in result["cache_events"]
+    assert any(message == "Checking similar previous evidence..." for message, _ in reporter.events)
+    assert any(message == "Reused 1 similar evidence candidate(s)." for message, _ in reporter.events)
+
+
+async def test_semantic_evidence_miss_saves_candidates_and_uses_threshold(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    conn = _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(retrieval_index, "get_connection", lambda: conn)
+    monkeypatch.setattr(search_mod, "_embedding_settings_signature", lambda user_id: "embedding:v1")
+    monkeypatch.setattr(source_chunk_vectors, "search", lambda *args: [])
+    monkeypatch.setattr(search_mod, "_recall_keys", lambda *args: _async_value([]))
+    monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda *args: [])
+    monkeypatch.setattr(source_chunks, "get_by_ids", lambda ids, user_id: [])
+    monkeypatch.setattr(source_chunks, "search", lambda *args: [_source_chunk("lexical", "Attack Titan lexical evidence")])
+    thresholds = []
+    semantic_sets = []
+
+    def fake_semantic_get(user_id, namespace, text, threshold, emit_progress):
+        thresholds.append(threshold)
+        return None
+
+    monkeypatch.setattr(retrieval_cache, "get_semantic_json_match", fake_semantic_get)
+    monkeypatch.setattr(retrieval_cache, "set_semantic_json", lambda *args: semantic_sets.append(args))
+    reporter = CaptureReporter()
+
+    result = await search_mod.search_node(_search_state(reporter=reporter))
+
+    assert thresholds == [0.98]
+    assert semantic_sets
+    assert {"stage": "evidence_semantic", "status": "miss"} in result["cache_events"]
+    assert {"stage": "evidence_semantic", "status": "set"} in result["cache_events"]
+    assert any(message == "No safe similar evidence match." for message, _ in reporter.events)
+    assert any(message == "Saved 1 evidence candidate(s) for similar searches." for message, _ in reporter.events)
+
+
+def test_semantic_evidence_namespace_and_payload_invalidation():
+    filters = search_mod._filter_signature([], [], [], [], "any")
+    changed_filters = search_mod._filter_signature([], [], ["tag-1"], [], "any")
+    first = search_mod._semantic_evidence_namespace("user-1", 1, "embedding:v1", filters)
+
+    assert first != search_mod._semantic_evidence_namespace("user-1", 2, "embedding:v1", filters)
+    assert first != search_mod._semantic_evidence_namespace("user-1", 1, "embedding:v2", filters)
+    assert first != search_mod._semantic_evidence_namespace("user-1", 1, "embedding:v1", changed_filters)
+    payload = {
+        "cache_version": search_mod._SEMANTIC_EVIDENCE_CACHE_VERSION,
+        "retrieval_index_version": 1,
+        "embedding_signature": "embedding:v1",
+        "filters": filters,
+        "source_chunk_ids": ["chunk-1", "chunk-1"],
+    }
+    assert search_mod._valid_semantic_evidence_payload(payload, 1, "embedding:v1", filters) == ["chunk-1"]
+    assert search_mod._valid_semantic_evidence_payload(payload, 2, "embedding:v1", filters) == []
+    assert search_mod._valid_semantic_evidence_payload(payload, 1, "embedding:v2", filters) == []
+    assert search_mod._valid_semantic_evidence_payload(payload, 1, "embedding:v1", changed_filters) == []
+    assert search_mod._valid_semantic_evidence_payload({"bad": True}, 1, "embedding:v1", filters) == []
+
+
+async def test_semantic_evidence_missing_cached_chunks_are_ignored(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    conn = _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(retrieval_index, "get_connection", lambda: conn)
+    monkeypatch.setattr(search_mod, "_embedding_settings_signature", lambda user_id: "embedding:v1")
+    monkeypatch.setattr(source_chunk_vectors, "search", lambda *args: [])
+    monkeypatch.setattr(search_mod, "_recall_keys", lambda *args: _async_value([]))
+    monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda *args: [])
+    monkeypatch.setattr(source_chunks, "get_by_ids", lambda ids, user_id: [])
+    monkeypatch.setattr(source_chunks, "search", lambda *args: [_source_chunk("lexical", "Attack Titan lexical evidence")])
+    monkeypatch.setattr(
+        retrieval_cache,
+        "get_semantic_json_match",
+        lambda *args, **kwargs: ({"cache_version": search_mod._SEMANTIC_EVIDENCE_CACHE_VERSION, "retrieval_index_version": 0, "embedding_signature": "embedding:v1", "filters": search_mod._filter_signature([], [], [], [], "any"), "source_chunk_ids": ["deleted"]}, 0.01),
+    )
+    monkeypatch.setattr(retrieval_cache, "set_semantic_json", lambda *args: None)
+
+    result = await search_mod.search_node(_search_state())
+
+    assert {chunk["id"] for chunk in result["chunks"]} == {"lexical"}
+    assert {"stage": "evidence_semantic", "status": "miss"} in result["cache_events"]
+
+
 def test_query_result_includes_cache_summary():
     chunk = _source_chunk("chunk-1", "Subject Alpha evidence.")
     answer = {"answer": "Supported answer. [[cite:chunk-1]]", "citation_ids": ["chunk-1"]}
@@ -543,6 +658,7 @@ def test_query_result_includes_cache_summary():
             {"stage": "subjects", "cache": "semantic", "status": "hit"},
             {"stage": "evidence", "status": "miss"},
             {"stage": "evidence", "status": "set"},
+            {"stage": "evidence_semantic", "status": "hit"},
             {"stage": "verifier", "status": "hit"},
             {"stage": "answer", "status": "miss"},
         ]
@@ -554,6 +670,7 @@ def test_query_result_includes_cache_summary():
         "breakdown": "hit",
         "subjects": "semantic_hit",
         "evidence": "set",
+        "evidence_semantic": "hit",
         "verifier": "hit",
         "answer": "miss",
     }

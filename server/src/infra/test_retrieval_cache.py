@@ -47,6 +47,7 @@ def test_semantic_cache_respects_similarity_threshold(monkeypatch):
 
     monkeypatch.setattr(retrieval_cache.chroma, "semantic_cache_collection", lambda user_id, namespace: FakeCollection(0.03))
     assert retrieval_cache.get_semantic_json("user-1", "ns", "query") == {"subjects": ["cached"]}
+    assert retrieval_cache.get_semantic_json_match("user-1", "ns", "query", emit_progress=False) == ({"subjects": ["cached"]}, 0.03)
 
     monkeypatch.setattr(retrieval_cache.chroma, "semantic_cache_collection", lambda user_id, namespace: FakeCollection(0.05))
     assert retrieval_cache.get_semantic_json("user-1", "ns", "query") is None

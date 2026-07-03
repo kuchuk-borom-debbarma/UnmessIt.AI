@@ -98,7 +98,7 @@ Prompts should be boring, standard, explicit, and portable across domains. A goo
 - Recall keys are general recall structures for reusable user-specific things, not a domain-specific model.
 - Retrieval prompts should select evidence that matches the user's subject and time scope before broader context.
 - Query breakdown and subject extraction prompts should produce deterministic, embedding-friendly query-planning text: stable nouns and qualifiers, no pronouns, no filler words, and no wording variation that does not change meaning.
-- Query-planning output participates in exact evidence-search cache keys, so prompt changes that affect sub-query or subject wording should be deliberate and covered by retrieval cache tests.
+- Query-planning output participates in exact and semantic evidence-search cache keys, so prompt changes that affect sub-query or subject wording should be deliberate and covered by retrieval cache tests.
 - Verifier prompt text participates in exact verifier cache keys, so verifier prompt changes invalidate cached verifier decisions automatically.
 - Answer prompt text participates in exact answer cache keys, so answer prompt changes invalidate cached final answers automatically.
 

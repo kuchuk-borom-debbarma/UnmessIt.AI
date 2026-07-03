@@ -41,7 +41,7 @@ Keep the server boring, small, and easy to read.
 - Redis is a delivery/cache layer. SQLite remains the source of truth for jobs, events, and idempotency.
 - Embedding cache belongs in `src/infra/`, may use in-memory plus Redis layers, and must stay disposable; never make Redis the source of truth for vectors.
 - Exact retrieval LLM caches belong in `src/infra/`, must include prompt text and model/settings signatures in their keys, and must never cache provider failures.
-- Semantic retrieval caches are allowed only for query-planning outputs until a retrieval index version exists; they must be disposable and versioned by prompt plus settings.
+- Semantic retrieval caches may be used for query-planning outputs and evidence candidate boosts; they must be disposable, versioned by prompt/settings or retrieval index/settings/filters, and must never skip the verifier.
 - Evidence-search caches must be exact-only, infra-backed, disposable, and keyed by the SQLite retrieval index version. Bump that version whenever source chunks, recall links/keys, note tags, directory metadata, trash/restore state, or raw inputs change.
 - Verifier caches must be exact-only and keyed by prompt text, LLM settings, attempt number, query, and compact evidence payload; never cache provider failure fallbacks.
 - Answer caches must be exact-only and keyed by prompt text, LLM settings, query, and compact verified evidence payload; never cache provider failure fallbacks.

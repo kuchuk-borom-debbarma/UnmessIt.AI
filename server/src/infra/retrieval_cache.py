@@ -95,7 +95,13 @@ def normalize_semantic_text(*parts: object) -> str:
     return " ".join(text.split())
 
 
-def get_semantic_json(user_id: str, namespace: str, text: str, threshold: float = SEMANTIC_THRESHOLD) -> dict[str, Any] | None:
+def get_semantic_json_match(
+    user_id: str,
+    namespace: str,
+    text: str,
+    threshold: float = SEMANTIC_THRESHOLD,
+    emit_progress: bool = True,
+) -> tuple[dict[str, Any], float] | None:
     if not user_id or not namespace or not text:
         return None
     try:
@@ -111,19 +117,28 @@ def get_semantic_json(user_id: str, namespace: str, text: str, threshold: float 
     metadatas = (results.get("metadatas") or [[]])[0]
     if not distances or not metadatas:
         logger.info("semantic_cache_miss namespace=%s reason=no_results text_len=%d", namespace, len(text))
-        report_progress_sync("New topic detected; starting full search.", {"depth": 2, "ref": "cache:semantic:miss:no_results", "namespace": namespace})
+        if emit_progress:
+            report_progress_sync("New topic detected; starting full search.", {"depth": 2, "ref": "cache:semantic:miss:no_results", "namespace": namespace})
         return None
-    if 1 - float(distances[0]) < threshold:
-        logger.info("semantic_cache_miss namespace=%s reason=below_threshold distance=%s threshold=%s", namespace, distances[0], threshold)
-        report_progress_sync("New topic detected; starting full search.", {"depth": 2, "ref": "cache:semantic:miss:below_threshold", "namespace": namespace, "distance": distances[0]})
+    distance = float(distances[0])
+    if 1 - distance < threshold:
+        logger.info("semantic_cache_miss namespace=%s reason=below_threshold distance=%s threshold=%s", namespace, distance, threshold)
+        if emit_progress:
+            report_progress_sync("New topic detected; starting full search.", {"depth": 2, "ref": "cache:semantic:miss:below_threshold", "namespace": namespace, "distance": distance})
         return None
     try:
         value = json.loads(metadatas[0].get("payload") or "{}")
     except (AttributeError, json.JSONDecodeError):
         return None
-    logger.info("semantic_cache_hit namespace=%s distance=%s", namespace, distances[0])
-    report_progress_sync("Found a highly similar previous question; reusing its answer!", {"depth": 2, "ref": "cache:semantic:hit", "namespace": namespace, "distance": distances[0]})
-    return value if isinstance(value, dict) else None
+    logger.info("semantic_cache_hit namespace=%s distance=%s", namespace, distance)
+    if emit_progress:
+        report_progress_sync("Found a highly similar previous question; reusing its answer!", {"depth": 2, "ref": "cache:semantic:hit", "namespace": namespace, "distance": distance})
+    return (value, distance) if isinstance(value, dict) else None
+
+
+def get_semantic_json(user_id: str, namespace: str, text: str, threshold: float = SEMANTIC_THRESHOLD) -> dict[str, Any] | None:
+    match = get_semantic_json_match(user_id, namespace, text, threshold)
+    return match[0] if match else None
 
 
 def set_semantic_json(user_id: str, namespace: str, text: str, value: dict[str, Any]) -> None:

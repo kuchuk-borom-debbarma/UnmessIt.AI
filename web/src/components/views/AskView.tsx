@@ -26,6 +26,7 @@ const CACHE_LABELS: Record<string, string> = {
   breakdown: 'Breakdown',
   subjects: 'Subjects',
   evidence: 'Evidence',
+  evidence_semantic: 'Semantic Evidence',
   verifier: 'Verifier',
   answer: 'Answer',
 }
