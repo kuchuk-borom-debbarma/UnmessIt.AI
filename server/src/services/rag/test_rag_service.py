@@ -12,6 +12,7 @@ from src.services.rag.private.chains.recall.candidates import RecallCandidateCha
 from src.services.rag.private.chains.recall.index import RecallIndexChain
 from src.services.rag.private.chains.recall.normalizer import RecallNormalizerChain
 from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, QueryVerifierChain
+from src.services.rag.private.chains.query import _breakdown as breakdown_mod
 from src.services.rag.private.chains.query._breakdown import _decompose
 from src.services.rag.private.chains.query._search import _rank_chunks, _snippets
 from src.services.rag.private.chains.source_chunk_assembler import SourceChunkAssemblerChain
@@ -24,6 +25,7 @@ from src.services.rag.private.durability.models import STAGE_SOURCE_CHUNKS, STAT
 from src.services.rag.private.durability.runner import DurableIngestRunner
 from src.services.rag.private.pipeline.ingest import submit_ingest_job, get_durable_ingest
 from src.services.rag.private.rag_service_impl import RagServiceImpl
+from src.infra import retrieval_cache
 
 
 def test_ingest_progress_payload_defaults_and_structured_refs():
@@ -500,6 +502,45 @@ async def test_query_breakdown_caps_and_deduplicates_sub_queries():
     assert len(result) == 6
     assert len(set(result)) == 6  # no duplicates
     assert "sub-query 6" not in result
+
+
+async def test_query_breakdown_cache_skips_second_llm_call(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class CountingJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            return {"sub_queries": ["original", "cached expansion"]}
+
+    monkeypatch.setattr(breakdown_mod, "_llm_settings_signature", lambda user_id: "settings-a")
+
+    first = await breakdown_mod._decompose(CountingJson(), "original", "user-1")
+    second = await breakdown_mod._decompose(CountingJson(), "original", "user-1")
+
+    assert first == ["original", "cached expansion"]
+    assert second == first
+    assert len(calls) == 1
+
+
+async def test_query_breakdown_cache_misses_when_settings_change(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+    signatures = iter(["settings-a", "settings-b"])
+
+    class CountingJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            return {"sub_queries": ["original", f"call {len(calls)}"]}
+
+    monkeypatch.setattr(breakdown_mod, "_llm_settings_signature", lambda user_id: next(signatures))
+
+    first = await breakdown_mod._decompose(CountingJson(), "original", "user-1")
+    second = await breakdown_mod._decompose(CountingJson(), "original", "user-1")
+
+    assert first == ["original", "call 1"]
+    assert second == ["original", "call 2"]
+    assert len(calls) == 2
 
 
 async def test_normalizer_reuses_single_exact_name_or_alias_match(monkeypatch):

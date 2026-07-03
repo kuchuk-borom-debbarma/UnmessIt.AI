@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any
+
+from src.infra import retrieval_cache
+from src.infra.settings import get_user_llm_setting_candidates
 
 from ._state import QueryState
 
@@ -67,23 +71,19 @@ def breakdown_node(json_client) -> callable:
 
 async def _decompose(json_client, query: str, user_id: str) -> list[str]:
     """Ask the LLM to break the query into focused sub-queries; fall back on failure."""
+    system = _breakdown_system_prompt()
+    human = _breakdown_human_prompt(query)
+    cache_key = _breakdown_cache_key(query, user_id, system, human)
+    if cache_key:
+        cached = await retrieval_cache.get_json(cache_key)
+        sub_queries = _cached_sub_queries(cached)
+        if sub_queries:
+            return sub_queries
+
     try:
         data = await json_client.async_invoke_json(
-            (
-                "Decompose the user query into focused sub-queries for evidence retrieval. "
-                "Return only valid JSON. No markdown. "
-                "Each sub-query must be self-contained and searchable on its own. "
-                "Include the original query as the first item. "
-                f"Return at most {_MAX_SUB_QUERIES} sub-queries. "
-                "For multi-part questions, include focused searches for each requested subject, scope, and comparison or reasoning dimension. "
-                "For attribute questions, include specific detail searches for the requested subject and attribute family. "
-                "Preserve query qualifiers such as source, time, place, folder, product, work, or domain so same-word matches from another context do not dominate. "
-                "If the query is already simple and focused, return only the original query."
-            ),
-            (
-                f"QUERY:\n{query}\n\n"
-                f'Return JSON: {{"sub_queries":["original query","sub-query 1","sub-query 2"]}}'
-            ),
+            system,
+            human,
             user_id=user_id,
         )
         sub_queries = data.get("sub_queries") if isinstance(data, dict) else None
@@ -97,10 +97,69 @@ async def _decompose(json_client, query: str, user_id: str) -> list[str]:
             if q not in seen:
                 seen.add(q)
                 result.append(q)
-        return result[:_MAX_SUB_QUERIES]
+        result = result[:_MAX_SUB_QUERIES]
+        if cache_key:
+            await retrieval_cache.set_json(cache_key, {"sub_queries": result})
+        return result
     except Exception as exc:
         logger.warning("query_breakdown_failed error=%s", exc)
         return [query]
+
+
+def _breakdown_system_prompt() -> str:
+    return (
+        "Decompose the user query into focused sub-queries for evidence retrieval. "
+        "Return only valid JSON. No markdown. "
+        "Each sub-query must be self-contained and searchable on its own. "
+        "Include the original query as the first item. "
+        f"Return at most {_MAX_SUB_QUERIES} sub-queries. "
+        "For multi-part questions, include focused searches for each requested subject, scope, and comparison or reasoning dimension. "
+        "For attribute questions, include specific detail searches for the requested subject and attribute family. "
+        "Preserve query qualifiers such as source, time, place, folder, product, work, or domain so same-word matches from another context do not dominate. "
+        "If the query is already simple and focused, return only the original query."
+    )
+
+
+def _breakdown_human_prompt(query: str) -> str:
+    return (
+        f"QUERY:\n{query}\n\n"
+        f'Return JSON: {{"sub_queries":["original query","sub-query 1","sub-query 2"]}}'
+    )
+
+
+def _breakdown_cache_key(query: str, user_id: str | None, system: str, human: str) -> str | None:
+    signature = _llm_settings_signature(user_id)
+    if not signature:
+        return None
+    return retrieval_cache.cache_key("query_breakdown:v1", signature, system, human, query)
+
+
+def _llm_settings_signature(user_id: str | None) -> str | None:
+    try:
+        candidates = get_user_llm_setting_candidates(user_id or "")
+    except Exception:
+        return None
+    safe = [
+        {
+            "provider": item.llm_provider,
+            "model": item.llm_model,
+            "base_url": item.llm_base_url,
+            "temperature": item.llm_temperature,
+            "max_tokens": item.llm_max_tokens,
+        }
+        for item in candidates
+    ]
+    return json.dumps(safe, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _cached_sub_queries(value: dict[str, Any] | None) -> list[str] | None:
+    if not isinstance(value, dict):
+        return None
+    items = value.get("sub_queries")
+    if not isinstance(items, list) or not items:
+        return None
+    cleaned = [str(item).strip() for item in items if str(item).strip()]
+    return cleaned[:_MAX_SUB_QUERIES] or None
 
 
 def _deterministic_expansions(query: str) -> list[str]:
