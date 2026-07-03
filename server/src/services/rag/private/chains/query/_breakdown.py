@@ -6,7 +6,6 @@ import re
 from typing import Any
 
 from src.infra import retrieval_cache
-from src.infra.settings import get_user_llm_setting_candidates
 
 from ._state import QueryState
 
@@ -130,28 +129,13 @@ def _breakdown_human_prompt(query: str) -> str:
 
 
 def _breakdown_cache_key(query: str, user_id: str | None, system: str, human: str) -> str | None:
-    signature = _llm_settings_signature(user_id)
+    signature = retrieval_cache.llm_settings_signature(user_id)
     if not signature:
         return None
     return retrieval_cache.cache_key("query_breakdown:v1", signature, system, human, query)
 
 
-def _llm_settings_signature(user_id: str | None) -> str | None:
-    try:
-        candidates = get_user_llm_setting_candidates(user_id or "")
-    except Exception:
-        return None
-    safe = [
-        {
-            "provider": item.llm_provider,
-            "model": item.llm_model,
-            "base_url": item.llm_base_url,
-            "temperature": item.llm_temperature,
-            "max_tokens": item.llm_max_tokens,
-        }
-        for item in candidates
-    ]
-    return json.dumps(safe, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
 
 
 def _cached_sub_queries(value: dict[str, Any] | None) -> list[str] | None:

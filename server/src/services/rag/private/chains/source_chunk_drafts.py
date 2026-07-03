@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from src.infra import retrieval_cache
 from src.services.rag.models import SourceChunkDraft, SourceWindow
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,14 @@ class SourceChunkDraftChain:
 
     async def run(self, window: SourceWindow, user_id: str) -> list[SourceChunkDraft]:
         """Return summary metadata while keeping source text selection deterministic."""
+        llm_signature = retrieval_cache.llm_settings_signature(user_id)
+        cache_key = retrieval_cache.cache_key("ingest_chunk_draft:v1", llm_signature, window["text"]) if llm_signature else None
+        
+        if cache_key:
+            cached = await retrieval_cache.get_json(cache_key)
+            if cached is not None:
+                return [_draft(window, cached)]
+                
         try:
             data = await self.json_client.async_invoke_json(
                 "Summarize one source chunk and extract its main subjects. Return only JSON.",
@@ -28,7 +37,10 @@ class SourceChunkDraftChain:
                 ),
                 user_id=user_id,
             )
-            return [_draft(window, data if isinstance(data, dict) else {})]
+            result = data if isinstance(data, dict) else {}
+            if cache_key and isinstance(data, dict):
+                await retrieval_cache.set_json(cache_key, result)
+            return [_draft(window, result)]
         except Exception as exc:
             # Durable ingest should retry provider/auth outages instead of saving guessed chunks.
             logger.warning("source_chunk_draft_failed retryable=true error=%s", exc)

@@ -593,7 +593,7 @@ async def test_query_breakdown_cache_skips_second_llm_call(monkeypatch):
             calls.append(human)
             return {"sub_queries": ["original", "cached expansion"]}
 
-    monkeypatch.setattr(breakdown_mod, "_llm_settings_signature", lambda user_id: "settings-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "settings-a")
 
     first = await breakdown_mod._decompose(CountingJson(), "original", "user-1")
     second = await breakdown_mod._decompose(CountingJson(), "original", "user-1")
@@ -613,7 +613,7 @@ async def test_query_breakdown_cache_misses_when_settings_change(monkeypatch):
             calls.append(human)
             return {"sub_queries": ["original", f"call {len(calls)}"]}
 
-    monkeypatch.setattr(breakdown_mod, "_llm_settings_signature", lambda user_id: next(signatures))
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: next(signatures))
 
     first = await breakdown_mod._decompose(CountingJson(), "original", "user-1")
     second = await breakdown_mod._decompose(CountingJson(), "original", "user-1")
@@ -632,7 +632,7 @@ async def test_query_subjects_exact_cache_skips_second_llm_call(monkeypatch):
             calls.append(human)
             return {"subjects": ["Subject Alpha"]}
 
-    monkeypatch.setattr(subjects_mod, "_llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
     monkeypatch.setattr(subjects_mod, "_subjects_semantic_cache_key", lambda *args: None)
 
     first = await subjects_mod._identify_subjects(CountingJson(), "query", ["query"], "user-1")
@@ -652,7 +652,7 @@ async def test_query_subjects_exact_cache_stores_empty_subjects(monkeypatch):
             calls.append(human)
             return {"subjects": []}
 
-    monkeypatch.setattr(subjects_mod, "_llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
     monkeypatch.setattr(subjects_mod, "_subjects_semantic_cache_key", lambda *args: None)
 
     assert await subjects_mod._identify_subjects(EmptyJson(), "query", ["query"], "user-1") == []
@@ -671,7 +671,7 @@ async def test_query_subjects_failure_fallback_is_not_cached(monkeypatch):
                 raise RuntimeError("down")
             return {"subjects": ["Subject Alpha"]}
 
-    monkeypatch.setattr(subjects_mod, "_llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
     monkeypatch.setattr(subjects_mod, "_subjects_semantic_cache_key", lambda *args: None)
 
     assert await subjects_mod._identify_subjects(FailThenOkJson(), "query", ["query"], "user-1") == []
@@ -712,14 +712,14 @@ async def test_query_subjects_semantic_miss_calls_llm(monkeypatch):
 
 
 def test_query_subjects_semantic_cache_key_changes_with_signatures(monkeypatch):
-    monkeypatch.setattr(subjects_mod, "_llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
     monkeypatch.setattr(subjects_mod, "_embedding_settings_signature", lambda user_id: "embed-a")
     first = subjects_mod._subjects_semantic_cache_key("query", ["sub"], "user-1", "system")
 
-    monkeypatch.setattr(subjects_mod, "_llm_settings_signature", lambda user_id: "llm-b")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-b")
     second = subjects_mod._subjects_semantic_cache_key("query", ["sub"], "user-1", "system")
 
-    monkeypatch.setattr(subjects_mod, "_llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
     monkeypatch.setattr(subjects_mod, "_embedding_settings_signature", lambda user_id: "embed-b")
     third = subjects_mod._subjects_semantic_cache_key("query", ["sub"], "user-1", "system")
 

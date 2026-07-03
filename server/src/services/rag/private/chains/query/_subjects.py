@@ -8,7 +8,6 @@ from typing import Any
 from src.infra import retrieval_cache
 from src.infra.settings import get_user_embedding_settings
 
-from ._breakdown import _llm_settings_signature
 from ._state import QueryState
 
 logger = logging.getLogger(__name__)
@@ -132,14 +131,14 @@ def _subjects_human_prompt(query: str, sub_queries: list[str]) -> str:
 
 
 def _subjects_exact_cache_key(query: str, sub_queries: list[str], user_id: str | None, system: str, human: str) -> str | None:
-    signature = _llm_settings_signature(user_id)
+    signature = retrieval_cache.llm_settings_signature(user_id)
     if not signature:
         return None
     return retrieval_cache.cache_key(_PROMPT_VERSION, user_id or "", signature, system, human, query, sub_queries)
 
 
 def _subjects_semantic_cache_key(query: str, sub_queries: list[str], user_id: str | None, system: str) -> tuple[str, str] | None:
-    llm_signature = _llm_settings_signature(user_id)
+    llm_signature = retrieval_cache.llm_settings_signature(user_id)
     embedding_signature = _embedding_settings_signature(user_id)
     if not llm_signature or not embedding_signature:
         return None

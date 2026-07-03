@@ -11,6 +11,7 @@ from typing import Any
 from src.infra import chroma
 from src.infra import redis
 from src.infra.progress import report_progress, report_progress_sync
+from src.infra.settings import get_user_llm_setting_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -146,3 +147,21 @@ def _text_part(value: object) -> str:
     if isinstance(value, list):
         return " ".join(str(item) for item in value)
     return str(value or "")
+
+
+def llm_settings_signature(user_id: str | None) -> str | None:
+    try:
+        candidates = get_user_llm_setting_candidates(user_id or "")
+    except Exception:
+        return None
+    safe = [
+        {
+            "provider": item.llm_provider,
+            "model": item.llm_model,
+            "base_url": item.llm_base_url,
+            "temperature": item.llm_temperature,
+            "max_tokens": item.llm_max_tokens,
+        }
+        for item in candidates
+    ]
+    return json.dumps(safe, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

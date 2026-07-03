@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Subject extraction now uses exact memory/Redis caching for repeated query-planning inputs.
 - Subject extraction can reuse strict semantic cache hits when prompt, LLM, and embedding settings match.
 - Evidence search now uses an exact memory/Redis cache invalidated by a durable SQLite retrieval index version.
+- Document ingestion now uses exact memory/Redis caching for `SourceChunkDraftChain` (summaries) and `RecallDraftChain` (entities) to skip re-running expensive LLM calls on identical text blocks.
 
 ### Changed
 - Refactored Server-Sent Events (SSE) progress reporting to use a centralized context variable (`_active_parent_ref`) for cleaner nested UI representations.
