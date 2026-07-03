@@ -54,7 +54,8 @@ def breakdown_node(json_client) -> callable:
         
         if reporter:
             await reporter.report("Planning specific searches...", {"depth": 1, "ref": "retrieval:plan", "query_chars": len(query)})
-        sub_queries = await _decompose(json_client, query, user_id)
+        cache_events: list[dict[str, Any]] = []
+        sub_queries = await _decompose(json_client, query, user_id, cache_events)
         logger.info("query_breakdown query_len=%s sub_queries=%s", len(query), len(sub_queries))
         
         if reporter:
@@ -63,12 +64,12 @@ def breakdown_node(json_client) -> callable:
                 {"depth": 1, "ref": "retrieval:plan:subqueries", "sub_queries": sub_queries},
             )
             
-        return {"sub_queries": sub_queries}
+        return {"sub_queries": sub_queries, "cache_events": cache_events}
 
     return _node
 
 
-async def _decompose(json_client, query: str, user_id: str) -> list[str]:
+async def _decompose(json_client, query: str, user_id: str, cache_events: list[dict[str, Any]] | None = None) -> list[str]:
     """Ask the LLM to break the query into focused sub-queries; fall back on failure."""
     system = _breakdown_system_prompt()
     human = _breakdown_human_prompt(query)
@@ -77,7 +78,11 @@ async def _decompose(json_client, query: str, user_id: str) -> list[str]:
         cached = await retrieval_cache.get_json(cache_key)
         sub_queries = _cached_sub_queries(cached)
         if sub_queries:
+            if cache_events is not None:
+                cache_events.append({"stage": "breakdown", "status": "hit"})
             return sub_queries
+        if cache_events is not None:
+            cache_events.append({"stage": "breakdown", "status": "miss"})
 
     try:
         data = await json_client.async_invoke_json(
@@ -99,6 +104,8 @@ async def _decompose(json_client, query: str, user_id: str) -> list[str]:
         result = result[:_MAX_SUB_QUERIES]
         if cache_key:
             await retrieval_cache.set_json(cache_key, {"sub_queries": result})
+            if cache_events is not None:
+                cache_events.append({"stage": "breakdown", "status": "set"})
         return result
     except Exception as exc:
         logger.warning("query_breakdown_failed error=%s", exc)

@@ -96,6 +96,7 @@ class RagServiceImpl:
             set_active_parent_ref("retrieval:verify")
             await reporter.report("Reviewing gathered information...", {"depth": 0, "ref": "retrieval:verify"})
             verification = await self.query_verifier.run(query, chunks, user_id, reporter, attempt=1)
+            trace.setdefault("cache_events", []).extend(verification.pop("_cache_events", []))
             chunks = _verified_chunks(chunks, verification)
             trace["verification_attempts"] = [verification]
 
@@ -121,6 +122,8 @@ class RagServiceImpl:
                 set_active_parent_ref("retrieval:verify:retry")
                 await reporter.report("Reviewing refined information...", {"depth": 0, "ref": "retrieval:verify:retry"})
                 retry_verification = await self.query_verifier.run(query, combined_chunks, user_id, reporter, attempt=2)
+                trace.setdefault("cache_events", []).extend(retry_trace.get("cache_events") or [])
+                trace.setdefault("cache_events", []).extend(retry_verification.pop("_cache_events", []))
                 chunks = _verified_chunks(combined_chunks, retry_verification)
                 trace["verification_attempts"].append(retry_verification)
                 trace["retry_query"] = retry_query
@@ -134,14 +137,24 @@ class RagServiceImpl:
             set_active_parent_ref("retrieval:answer")
             await reporter.report("Writing your final answer...", {"depth": 0, "ref": "retrieval:answer", "source_chunk_count": len(chunks)})
             answer = await self.query_answer.run(query, chunks, user_id, reporter)
+            trace.setdefault("cache_events", []).extend(answer.pop("_cache_events", []))
             
             set_active_parent_ref(None)
-            await reporter.report("Retrieval complete.", {"depth": 0, "ref": "retrieval:done", "citation_count": len(answer.get("citation_ids", []))})
+            result = build_query_result(query, chunks, answer, trace)
+            await reporter.report(
+                "Retrieval complete.",
+                {
+                    "depth": 0,
+                    "ref": "retrieval:done",
+                    "citation_count": len(answer.get("citation_ids", [])),
+                    "cache_summary": result["retrieval_trace"].get("cache_summary", {}),
+                },
+            )
         finally:
             reset_progress_reporters(tokens)
             set_active_parent_ref(None)
         
-        return build_query_result(query, chunks, answer, trace)
+        return result
 
 
 def _verified_chunks(chunks: list[dict], verification: dict) -> list[dict]:

@@ -12,7 +12,7 @@ from src.repositories import config_presets, dev, notes, raw_inputs, recall, rec
 from src.services.rag.private.chains.recall.candidates import RecallCandidateChain
 from src.services.rag.private.chains.recall.index import RecallIndexChain
 from src.services.rag.private.chains.recall.normalizer import RecallNormalizerChain
-from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, QueryVerifierChain
+from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, QueryVerifierChain, build_query_result
 from src.services.rag.private.chains.query import _answer_cache_key, _answer_human_prompt, _answer_system_prompt
 from src.services.rag.private.chains.query import _verifier_cache_key, _verifier_human_prompt, _verifier_system_prompt
 from src.services.rag.private.chains.query import _breakdown as breakdown_mod
@@ -149,8 +149,10 @@ async def test_query_verifier_exact_cache_skips_second_llm_call(monkeypatch):
     first = await QueryVerifierChain(CountingVerifierJson()).run("Subject Alpha", chunks, "user-1")
     second = await QueryVerifierChain(CountingVerifierJson()).run("Subject Alpha", chunks, "user-1", reporter=reporter)
 
-    assert first == second
+    assert {k: v for k, v in first.items() if k != "_cache_events"} == {k: v for k, v in second.items() if k != "_cache_events"}
     assert len(calls) == 1
+    assert first["_cache_events"] == [{"stage": "verifier", "status": "miss"}, {"stage": "verifier", "status": "set"}]
+    assert second["_cache_events"] == [{"stage": "verifier", "status": "hit"}]
     assert ("Reusing previous note review.", {
         "depth": 1,
         "ref": "retrieval:verify:1:cache_hit",
@@ -479,7 +481,10 @@ async def test_evidence_cache_hit_skips_second_search(monkeypatch):
     second = await search_mod.search_node(state)
 
     assert calls == ["Attack Titan"]
-    assert first == second
+    assert first["chunks"] == second["chunks"]
+    assert first["trace_parts"] == second["trace_parts"]
+    assert first["cache_events"] == [{"stage": "evidence", "status": "miss"}, {"stage": "evidence", "status": "set"}]
+    assert second["cache_events"] == [{"stage": "evidence", "status": "hit"}]
 
 
 async def test_evidence_cache_key_changes_for_filters_user_version_and_embedding(monkeypatch):
@@ -526,6 +531,32 @@ async def test_evidence_cache_ignores_corrupt_redis_payload(monkeypatch):
 
     assert calls == ["Attack Titan"]
     assert result["chunks"][0]["id"] == "chunk-1"
+    assert result["cache_events"] == [{"stage": "evidence", "status": "miss"}, {"stage": "evidence", "status": "set"}]
+
+
+def test_query_result_includes_cache_summary():
+    chunk = _source_chunk("chunk-1", "Subject Alpha evidence.")
+    answer = {"answer": "Supported answer. [[cite:chunk-1]]", "citation_ids": ["chunk-1"]}
+    trace = {
+        "cache_events": [
+            {"stage": "breakdown", "status": "hit"},
+            {"stage": "subjects", "cache": "semantic", "status": "hit"},
+            {"stage": "evidence", "status": "miss"},
+            {"stage": "evidence", "status": "set"},
+            {"stage": "verifier", "status": "hit"},
+            {"stage": "answer", "status": "miss"},
+        ]
+    }
+
+    result = build_query_result("Subject Alpha", [chunk], answer, trace)
+
+    assert result["retrieval_trace"]["cache_summary"] == {
+        "breakdown": "hit",
+        "subjects": "semantic_hit",
+        "evidence": "set",
+        "verifier": "hit",
+        "answer": "miss",
+    }
 
 
 def test_query_snippets_expand_physical_terms():
@@ -642,8 +673,10 @@ async def test_query_answer_exact_cache_skips_second_llm_call(monkeypatch):
     first = await QueryAnswerChain(CountingJson()).run("Subject Alpha", chunks, "user-1")
     second = await QueryAnswerChain(CountingJson()).run("Subject Alpha", chunks, "user-1", reporter=reporter)
 
-    assert first == second
+    assert {k: v for k, v in first.items() if k != "_cache_events"} == {k: v for k, v in second.items() if k != "_cache_events"}
     assert len(calls) == 1
+    assert first["_cache_events"] == [{"stage": "answer", "status": "miss"}, {"stage": "answer", "status": "set"}]
+    assert second["_cache_events"] == [{"stage": "answer", "status": "hit"}]
     assert ("Reusing previous final answer.", {
         "depth": 1,
         "ref": "retrieval:answer:cache_hit",

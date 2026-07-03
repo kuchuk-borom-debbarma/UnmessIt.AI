@@ -107,7 +107,8 @@ async def search_node(state: QueryState) -> dict[str, Any]:
                 "Using cached evidence search results.",
                 {"depth": 1, "ref": "retrieval:search:cache_hit", "parent_ref": "retrieval:search", "retrieval_index_version": index_version},
             )
-        return cached
+        return {**cached, "cache_events": [{"stage": "evidence", "status": "hit"}]}
+    cache_events = [{"stage": "evidence", "status": "miss"}]
 
     async def _search_and_report(index: int, sq: str):
         search_ref = f"retrieval:search:{index}"
@@ -151,7 +152,8 @@ async def search_node(state: QueryState) -> dict[str, Any]:
         "chunks": all_chunks,
         "trace_parts": trace_parts,
     })
-    return {"chunks": all_chunks, "trace_parts": trace_parts}
+    cache_events.append({"stage": "evidence", "status": "set"})
+    return {"chunks": all_chunks, "trace_parts": trace_parts, "cache_events": cache_events}
 
 
 def finalize_chunks(raw_chunks: list[dict[str, Any]], query: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:

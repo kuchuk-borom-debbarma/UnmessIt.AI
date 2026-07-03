@@ -35,6 +35,7 @@ class QueryEvidenceChain:
             "query": query,
             "sub_queries": [],
             "extracted_subjects": [],
+            "cache_events": [],
             "user_id": user_id,
             "reporter": reporter,
             "within_directories": within_directories or [],
@@ -50,6 +51,7 @@ class QueryEvidenceChain:
         extracted_subjects: list[str] = result.get("extracted_subjects") or []
         raw_chunks: list[dict[str, Any]] = result["chunks"]
         trace_parts: list[dict[str, Any]] = result["trace_parts"]
+        cache_events: list[dict[str, Any]] = result.get("cache_events") or []
         if reporter:
             await reporter.report(
                 "Combining and selecting the best notes...",
@@ -81,6 +83,7 @@ class QueryEvidenceChain:
             "sub_query_traces": trace_parts,
             "ranked_source_chunk_ids": [chunk["id"] for chunk in chunks],
             "source_chunk_count": len(chunks),
+            "cache_events": cache_events,
             **finalize_trace,
         }
         return chunks, trace
@@ -142,7 +145,7 @@ class QueryVerifierChain:
                             "retry_query": cached["retry_query"],
                         },
                     )
-                return cached
+                return {**cached, "_cache_events": [{"stage": "verifier", "status": "hit"}]}
 
         try:
             data = await self.json_client.async_invoke_json(
@@ -186,6 +189,7 @@ class QueryVerifierChain:
                         "off_topic_count": len(result["off_topic_ids"]),
                     },
                 )
+            result["_cache_events"] = [{"stage": "verifier", "status": "miss"}, {"stage": "verifier", "status": "set"}]
         if reporter:
             await reporter.report(
                 f"Approved {len(result['on_topic_ids'])} notes as highly relevant, rejected {len(result['off_topic_ids'])}.",
@@ -320,7 +324,7 @@ class QueryAnswerChain:
                         "Reusing previous final answer.",
                         {"depth": 1, "ref": "retrieval:answer:cache_hit", "citation_count": len(cached["citation_ids"])},
                     )
-                return cached
+                return {**cached, "_cache_events": [{"stage": "answer", "status": "hit"}]}
 
         try:
             if reporter:
@@ -350,6 +354,7 @@ class QueryAnswerChain:
                     "Saved final answer for exact repeat questions.",
                     {"depth": 1, "ref": "retrieval:answer:cache_set", "citation_count": len(result["citation_ids"])},
                 )
+            result["_cache_events"] = [{"stage": "answer", "status": "miss"}, {"stage": "answer", "status": "set"}]
         if reporter:
             await reporter.report(
                 f"Selected {len(result['citation_ids'])} citation(s) to back the answer",
@@ -424,14 +429,31 @@ def build_query_result(query: str, chunks: list[dict[str, Any]], answer: dict[st
     """Build the route response shape expected by the UI."""
     citation_ids = answer.get("citation_ids") or answer.get("citations") or [chunk["id"] for chunk in chunks[:3]]
     cited_chunks = [chunk for chunk in chunks if chunk["id"] in set(citation_ids)]
+    cache_events = trace.get("cache_events") if isinstance(trace.get("cache_events"), list) else []
     return {
         "answer": answer["answer"],
         "citations": [_citation(chunk, index + 1) for index, chunk in enumerate(cited_chunks)],
         "source_chunks": [_public_chunk(chunk) for chunk in chunks],
         "directories": answer.get("directories", []),
         "notes": answer.get("notes", []),
-        "retrieval_trace": {**trace, "citation_count": len(cited_chunks)},
+        "retrieval_trace": {
+            **trace,
+            "cache_summary": _cache_summary(cache_events),
+            "citation_count": len(cited_chunks),
+        },
     }
+
+
+def _cache_summary(events: list[dict[str, Any]]) -> dict[str, str]:
+    summary: dict[str, str] = {}
+    for event in events:
+        stage = event.get("stage")
+        status = event.get("status")
+        if not isinstance(stage, str) or not isinstance(status, str):
+            continue
+        cache = event.get("cache")
+        summary[stage] = f"{cache}_{status}" if cache and cache != "exact" else status
+    return summary
 
 
 def _chunk_payload(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:

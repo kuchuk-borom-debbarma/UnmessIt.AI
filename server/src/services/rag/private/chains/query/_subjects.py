@@ -37,7 +37,8 @@ def subjects_node(json_client) -> callable:
         if reporter:
             await reporter.report("Looking up specific named topics...", {"depth": 1, "ref": "retrieval:subjects"})
             
-        subjects = await _identify_subjects(json_client, query, sub_queries, user_id)
+        cache_events: list[dict[str, Any]] = []
+        subjects = await _identify_subjects(json_client, query, sub_queries, user_id, cache_events)
         logger.info("query_subjects query_len=%s extracted=%s", len(query), len(subjects))
         
         if reporter:
@@ -46,12 +47,18 @@ def subjects_node(json_client) -> callable:
                 {"depth": 1, "ref": "retrieval:subjects:done", "subjects": subjects},
             )
             
-        return {"extracted_subjects": subjects}
+        return {"extracted_subjects": subjects, "cache_events": cache_events}
 
     return _node
 
 
-async def _identify_subjects(json_client, query: str, sub_queries: list[str], user_id: str | None) -> list[str]:
+async def _identify_subjects(
+    json_client,
+    query: str,
+    sub_queries: list[str],
+    user_id: str | None,
+    cache_events: list[dict[str, Any]] | None = None,
+) -> list[str]:
     """Ask the LLM for subjects the query refers to by description; fall back to [].
 
     CRITICAL INSIGHT:
@@ -70,14 +77,22 @@ async def _identify_subjects(json_client, query: str, sub_queries: list[str], us
     if exact_key:
         cached = _cached_subjects(await retrieval_cache.get_json(exact_key))
         if cached is not None:
+            if cache_events is not None:
+                cache_events.append({"stage": "subjects", "cache": "exact", "status": "hit"})
             return cached
+        if cache_events is not None:
+            cache_events.append({"stage": "subjects", "cache": "exact", "status": "miss"})
 
     semantic_key = _subjects_semantic_cache_key(query, sub_queries, user_id, system)
     if semantic_key:
         namespace, text = semantic_key
         cached = _cached_subjects(await asyncio.to_thread(retrieval_cache.get_semantic_json, user_id or "", namespace, text))
         if cached is not None:
+            if cache_events is not None:
+                cache_events.append({"stage": "subjects", "cache": "semantic", "status": "hit"})
             return cached
+        if cache_events is not None:
+            cache_events.append({"stage": "subjects", "cache": "semantic", "status": "miss"})
 
     try:
         data = await json_client.async_invoke_json(system, human, user_id=user_id)
@@ -89,6 +104,8 @@ async def _identify_subjects(json_client, query: str, sub_queries: list[str], us
         payload = {"subjects": result}
         if exact_key:
             await retrieval_cache.set_json(exact_key, payload)
+            if cache_events is not None:
+                cache_events.append({"stage": "subjects", "cache": "exact", "status": "set"})
         if semantic_key:
             namespace, text = semantic_key
             await asyncio.to_thread(
@@ -104,6 +121,8 @@ async def _identify_subjects(json_client, query: str, sub_queries: list[str], us
                     "prompt_version": _PROMPT_VERSION,
                 },
             )
+            if cache_events is not None:
+                cache_events.append({"stage": "subjects", "cache": "semantic", "status": "set"})
         return result
     except Exception as exc:
         logger.warning("query_subjects_failed error=%s", exc)
