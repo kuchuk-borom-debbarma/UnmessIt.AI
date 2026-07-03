@@ -5,6 +5,7 @@ import logging
 import re
 from typing import Any
 
+from src.infra import retrieval_cache
 from src.services.rag.models import ProgressReporter
 
 from ._graph import build_retrieval_graph
@@ -12,6 +13,7 @@ from ._search import finalize_chunks
 
 logger = logging.getLogger(__name__)
 _CITE_MARKER_RE = re.compile(r"\[\[cite:([^\]\s]+)\]\]?")
+_VERIFIER_CACHE_VERSION = "query_verifier:v1"
 
 
 class QueryEvidenceChain:
@@ -114,28 +116,18 @@ class QueryVerifierChain:
             )
 
         valid_ids = {chunk["id"] for chunk in chunks}
+        system = _verifier_system_prompt()
+        human = _verifier_human_prompt(query, chunks)
+        cache_key = _verifier_cache_key(query, user_id, attempt, system, human)
+        if cache_key:
+            cached = _cached_verifier_result(await retrieval_cache.get_json(cache_key), valid_ids)
+            if cached is not None:
+                return cached
+
         try:
             data = await self.json_client.async_invoke_json(
-                system=(
-                    "Judge whether retrieved evidence can answer the user's query without mixing unrelated contexts. "
-                    "Return only valid JSON. No markdown. "
-                    "Use only the provided compact chunk payloads. "
-                    "Classify chunks as on-topic when they match the user's requested subject, scope, qualifiers, and sense of ambiguous terms. "
-                    "Classify chunks as off-topic when they use a different sense, domain, event, entity, time, or scope than the query asks for. "
-                    "When the query explicitly asks to compare, connect, or contrast multiple subjects, chunks for each requested subject may be on-topic even if they come from different contexts. "
-                    "When the query is scoped to one context, do not keep chunks from another context just because words overlap. "
-                    "If some chunks support only part of a multi-part query, keep those chunks on-topic and mark missing parts in reason. "
-                    "Do not set status to insufficient when on-topic chunks can support a partial answer. "
-                    "If enough on-topic evidence exists, status is sufficient. "
-                    "If on-topic evidence is partial and a focused retry may find missing parts, status is needs_retry and retry_query must be focused. "
-                    "If no selected chunk can answer any part of the query and a retry is unlikely to help, status is insufficient. "
-                    "Do not reveal hidden reasoning; put a concise user-safe reason in reason."
-                ),
-                human=(
-                    f"QUERY:\n{query}\n\n"
-                    f"CHUNKS:\n{json.dumps(_chunk_payload(chunks), ensure_ascii=False)}\n\n"
-                    'Return JSON: {"status":"sufficient|needs_retry|insufficient","reason":"short reason","on_topic_ids":["source_chunk_id"],"off_topic_ids":["source_chunk_id"],"retry_query":"focused query or empty string"}'
-                ),
+                system=system,
+                human=human,
                 user_id=user_id,
             )
         except Exception as exc:
@@ -153,45 +145,116 @@ class QueryVerifierChain:
                 "retry_query": "",
             }
 
-        if not isinstance(data, dict):
-            data = {}
-        status = str(data.get("status") or "sufficient").strip().lower()
-        if status not in {"sufficient", "needs_retry", "insufficient"}:
-            status = "sufficient"
-        on_topic_ids = _valid_ids(data.get("on_topic_ids"), valid_ids)
-        off_topic_ids = _valid_ids(data.get("off_topic_ids"), valid_ids)
-        if on_topic_ids:
-            off_topic_ids = [chunk_id for chunk_id in off_topic_ids if chunk_id not in set(on_topic_ids)]
-        elif off_topic_ids:
-            off_topic = set(off_topic_ids)
-            on_topic_ids = [chunk["id"] for chunk in chunks if chunk["id"] not in off_topic]
-        elif status == "sufficient":
-            on_topic_ids = [chunk["id"] for chunk in chunks]
-
-        retry_query = str(data.get("retry_query") or "").strip()
-        if on_topic_ids and status == "insufficient":
-            status = "needs_retry" if retry_query else "sufficient"
-        reason = str(data.get("reason") or "").strip()[:500]
-        result = {
-            "status": status,
-            "reason": reason or "Evidence checked against the query scope.",
-            "on_topic_ids": on_topic_ids,
-            "off_topic_ids": off_topic_ids,
-            "retry_query": retry_query,
-        }
+        result = _normalize_verifier_result(data if isinstance(data, dict) else {}, chunks)
+        if cache_key and isinstance(data, dict):
+            await retrieval_cache.set_json(cache_key, result)
         if reporter:
             await reporter.report(
-                f"Approved {len(on_topic_ids)} notes as highly relevant, rejected {len(off_topic_ids)}.",
+                f"Approved {len(result['on_topic_ids'])} notes as highly relevant, rejected {len(result['off_topic_ids'])}.",
                 {
                     "depth": 1,
                     "ref": f"retrieval:verify:{attempt}:result",
-                    "status": status,
-                    "on_topic_count": len(on_topic_ids),
-                    "off_topic_count": len(off_topic_ids),
-                    "retry_query": retry_query,
+                    "status": result["status"],
+                    "on_topic_count": len(result["on_topic_ids"]),
+                    "off_topic_count": len(result["off_topic_ids"]),
+                    "retry_query": result["retry_query"],
                 },
             )
         return result
+
+
+def _verifier_system_prompt() -> str:
+    return (
+        "Judge whether retrieved evidence can answer the user's query without mixing unrelated contexts. "
+        "Return only valid JSON. No markdown. "
+        "Use only the provided compact chunk payloads. "
+        "Classify chunks as on-topic when they match the user's requested subject, scope, qualifiers, and sense of ambiguous terms. "
+        "Classify chunks as off-topic when they use a different sense, domain, event, entity, time, or scope than the query asks for. "
+        "When the query explicitly asks to compare, connect, or contrast multiple subjects, chunks for each requested subject may be on-topic even if they come from different contexts. "
+        "When the query is scoped to one context, do not keep chunks from another context just because words overlap. "
+        "If some chunks support only part of a multi-part query, keep those chunks on-topic and mark missing parts in reason. "
+        "Do not set status to insufficient when on-topic chunks can support a partial answer. "
+        "If enough on-topic evidence exists, status is sufficient. "
+        "If on-topic evidence is partial and a focused retry may find missing parts, status is needs_retry and retry_query must be focused. "
+        "If no selected chunk can answer any part of the query and a retry is unlikely to help, status is insufficient. "
+        "Do not reveal hidden reasoning; put a concise user-safe reason in reason."
+    )
+
+
+def _verifier_human_prompt(query: str, chunks: list[dict[str, Any]]) -> str:
+    return (
+        f"QUERY:\n{query}\n\n"
+        f"CHUNKS:\n{json.dumps(_chunk_payload(chunks), ensure_ascii=False)}\n\n"
+        'Return JSON: {"status":"sufficient|needs_retry|insufficient","reason":"short reason","on_topic_ids":["source_chunk_id"],"off_topic_ids":["source_chunk_id"],"retry_query":"focused query or empty string"}'
+    )
+
+
+def _verifier_cache_key(query: str, user_id: str | None, attempt: int, system: str, human: str) -> str | None:
+    signature = retrieval_cache.llm_settings_signature(user_id)
+    if not signature:
+        return None
+    return retrieval_cache.cache_key(_VERIFIER_CACHE_VERSION, user_id or "", attempt, signature, system, human, query)
+
+
+def _normalize_verifier_result(data: dict[str, Any], chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    valid_ids = {chunk["id"] for chunk in chunks}
+    status = str(data.get("status") or "sufficient").strip().lower()
+    if status not in {"sufficient", "needs_retry", "insufficient"}:
+        status = "sufficient"
+    on_topic_ids = _valid_ids(data.get("on_topic_ids"), valid_ids)
+    off_topic_ids = _valid_ids(data.get("off_topic_ids"), valid_ids)
+    if on_topic_ids:
+        off_topic_ids = [chunk_id for chunk_id in off_topic_ids if chunk_id not in set(on_topic_ids)]
+    elif off_topic_ids:
+        off_topic = set(off_topic_ids)
+        on_topic_ids = [chunk["id"] for chunk in chunks if chunk["id"] not in off_topic]
+    elif status == "sufficient":
+        on_topic_ids = [chunk["id"] for chunk in chunks]
+
+    retry_query = str(data.get("retry_query") or "").strip()
+    if on_topic_ids and status == "insufficient":
+        status = "needs_retry" if retry_query else "sufficient"
+    reason = str(data.get("reason") or "").strip()[:500]
+    return {
+        "status": status,
+        "reason": reason or "Evidence checked against the query scope.",
+        "on_topic_ids": on_topic_ids,
+        "off_topic_ids": off_topic_ids,
+        "retry_query": retry_query,
+    }
+
+
+def _cached_verifier_result(value: dict[str, Any] | None, valid_ids: set[str]) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    if value.get("status") not in {"sufficient", "needs_retry", "insufficient"}:
+        return None
+    if not isinstance(value.get("reason"), str) or not isinstance(value.get("retry_query"), str):
+        return None
+    on_topic_ids = _cached_ids(value.get("on_topic_ids"), valid_ids)
+    off_topic_ids = _cached_ids(value.get("off_topic_ids"), valid_ids)
+    if on_topic_ids is None or off_topic_ids is None:
+        return None
+    if set(on_topic_ids) & set(off_topic_ids):
+        return None
+    return {
+        "status": value["status"],
+        "reason": value["reason"][:500] or "Evidence checked against the query scope.",
+        "on_topic_ids": on_topic_ids,
+        "off_topic_ids": off_topic_ids,
+        "retry_query": value["retry_query"].strip(),
+    }
+
+
+def _cached_ids(value: Any, valid_ids: set[str]) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    result = []
+    for item in value:
+        if not isinstance(item, str) or item not in valid_ids or item in result:
+            return None
+        result.append(item)
+    return result
 
 
 class QueryAnswerChain:

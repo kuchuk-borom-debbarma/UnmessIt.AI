@@ -13,6 +13,7 @@ from src.services.rag.private.chains.recall.candidates import RecallCandidateCha
 from src.services.rag.private.chains.recall.index import RecallIndexChain
 from src.services.rag.private.chains.recall.normalizer import RecallNormalizerChain
 from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, QueryVerifierChain
+from src.services.rag.private.chains.query import _verifier_cache_key, _verifier_human_prompt, _verifier_system_prompt
 from src.services.rag.private.chains.query import _breakdown as breakdown_mod
 from src.services.rag.private.chains.query import _search as search_mod
 from src.services.rag.private.chains.query import _subjects as subjects_mod
@@ -115,6 +116,119 @@ async def test_query_verifier_keeps_partial_on_topic_evidence():
 
     assert result["status"] == "sufficient"
     assert result["on_topic_ids"] == ["chunk-supported"]
+
+
+async def test_query_verifier_exact_cache_skips_second_llm_call(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class CountingVerifierJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            return {
+                "status": "sufficient",
+                "reason": "Enough evidence.",
+                "on_topic_ids": ["chunk-1"],
+                "off_topic_ids": [],
+                "retry_query": "",
+            }
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+
+    first = await QueryVerifierChain(CountingVerifierJson()).run("Subject Alpha", chunks, "user-1")
+    second = await QueryVerifierChain(CountingVerifierJson()).run("Subject Alpha", chunks, "user-1")
+
+    assert first == second
+    assert len(calls) == 1
+
+
+def test_query_verifier_cache_key_changes_with_payload_attempt_and_settings(monkeypatch):
+    system = _verifier_system_prompt()
+    chunk_a = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+    chunk_b = [_source_chunk("chunk-1", "Changed compact evidence.")]
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    first = _verifier_cache_key("Subject Alpha", "user-1", 1, system, _verifier_human_prompt("Subject Alpha", chunk_a))
+    changed_payload = _verifier_cache_key("Subject Alpha", "user-1", 1, system, _verifier_human_prompt("Subject Alpha", chunk_b))
+    changed_attempt = _verifier_cache_key("Subject Alpha", "user-1", 2, system, _verifier_human_prompt("Subject Alpha", chunk_a))
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-b")
+    changed_settings = _verifier_cache_key("Subject Alpha", "user-1", 1, system, _verifier_human_prompt("Subject Alpha", chunk_a))
+
+    assert first != changed_payload
+    assert first != changed_attempt
+    assert first != changed_settings
+
+
+async def test_query_verifier_failure_fallback_is_not_cached(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class FailThenOkJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            if len(calls) == 1:
+                raise RuntimeError("down")
+            return {"status": "sufficient", "reason": "ok", "on_topic_ids": ["chunk-1"], "off_topic_ids": [], "retry_query": ""}
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+
+    first = await QueryVerifierChain(FailThenOkJson()).run("Subject Alpha", chunks, "user-1")
+    second = await QueryVerifierChain(FailThenOkJson()).run("Subject Alpha", chunks, "user-1")
+
+    assert first["reason"] == "Verifier unavailable; using ranked retrieval output."
+    assert second["reason"] == "ok"
+    assert len(calls) == 2
+
+
+async def test_query_verifier_ignores_invalid_cached_payload(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class CountingVerifierJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            return {"status": "sufficient", "reason": "fresh", "on_topic_ids": ["chunk-1"], "off_topic_ids": [], "retry_query": ""}
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+    key = _verifier_cache_key("Subject Alpha", "user-1", 1, _verifier_system_prompt(), _verifier_human_prompt("Subject Alpha", chunks))
+    retrieval_cache.get_memory_json_cache().set(key, {"status": "bad", "on_topic_ids": ["chunk-1"], "off_topic_ids": [], "retry_query": ""})
+
+    result = await QueryVerifierChain(CountingVerifierJson()).run("Subject Alpha", chunks, "user-1")
+
+    assert result["reason"] == "fresh"
+    assert len(calls) == 1
+
+
+async def test_query_verifier_cached_needs_retry_is_returned(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+
+    class RetryVerifierJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            return {
+                "status": "needs_retry",
+                "reason": "Need focused retry.",
+                "on_topic_ids": ["chunk-1"],
+                "off_topic_ids": [],
+                "retry_query": "Subject Alpha focused retry",
+            }
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+
+    await QueryVerifierChain(RetryVerifierJson()).run("Subject Alpha", chunks, "user-1")
+
+    class FailJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            raise AssertionError("LLM should not be called")
+
+    cached = await QueryVerifierChain(FailJson()).run("Subject Alpha", chunks, "user-1")
+
+    assert cached["status"] == "needs_retry"
+    assert cached["retry_query"] == "Subject Alpha focused retry"
 
 
 async def test_ingest_submits_durable_job(monkeypatch):
