@@ -50,7 +50,13 @@ class RecallDraftChain:
         if cache_key:
             cached = await retrieval_cache.get_json(cache_key)
             if cached is not None:
-                if on_progress: await on_progress("reusing cached extraction results")
+                logger.info(
+                    "recall_draft_cache_hit chunks=%s candidates=%s retry=%s",
+                    len(source_chunks),
+                    len(candidates),
+                    bool(errors),
+                )
+                if on_progress: await on_progress("reusing cached recall draft")
                 return cached
                 
         if on_progress: await on_progress(f"invoking LLM for {len(source_chunks)} chunk(s) & {len(candidates)} candidate(s)")
@@ -92,6 +98,13 @@ class RecallDraftChain:
         )
         if cache_key and isinstance(data, dict):
             await retrieval_cache.set_json(cache_key, data)
+            logger.info(
+                "recall_draft_cache_set chunks=%s candidates=%s retry=%s",
+                len(source_chunks),
+                len(candidates),
+                bool(errors),
+            )
+            if on_progress: await on_progress("cached recall draft")
         if not isinstance(data, dict):
             logger.info("recall_draft_response invalid_type=%s", type(data).__name__)
             return {}

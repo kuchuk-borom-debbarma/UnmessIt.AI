@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from src.infra import retrieval_cache
 from src.services.rag.models import SourceChunkDraft, SourceWindow
@@ -16,16 +16,24 @@ class SourceChunkDraftChain:
         """Keep the JSON client at the chain boundary."""
         self.json_client = json_client
 
-    async def run(self, window: SourceWindow, user_id: str) -> list[SourceChunkDraft]:
+    async def run(
+        self,
+        window: SourceWindow,
+        user_id: str,
+        on_progress: Callable[[str], Awaitable[None]] | None = None,
+    ) -> list[SourceChunkDraft]:
         """Return summary metadata while keeping source text selection deterministic."""
         llm_signature = retrieval_cache.llm_settings_signature(user_id)
         cache_key = retrieval_cache.cache_key("ingest_chunk_draft:v1", llm_signature, window["text"]) if llm_signature else None
-        
+
         if cache_key:
             cached = await retrieval_cache.get_json(cache_key)
             if cached is not None:
+                logger.info("source_chunk_draft_cache_hit text_chars=%s", len(window["text"]))
+                if on_progress:
+                    await on_progress("reusing cached source summary")
                 return [_draft(window, cached)]
-                
+
         try:
             data = await self.json_client.async_invoke_json(
                 "Summarize one source chunk and extract its main subjects. Return only JSON.",
@@ -40,6 +48,9 @@ class SourceChunkDraftChain:
             result = data if isinstance(data, dict) else {}
             if cache_key and isinstance(data, dict):
                 await retrieval_cache.set_json(cache_key, result)
+                logger.info("source_chunk_draft_cache_set text_chars=%s", len(window["text"]))
+                if on_progress:
+                    await on_progress("cached source summary")
             return [_draft(window, result)]
         except Exception as exc:
             # Durable ingest should retry provider/auth outages instead of saving guessed chunks.

@@ -71,6 +71,14 @@ class FakeJson:
         return self.invoke_json(system, human)
 
 
+class CaptureReporter:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict]] = []
+
+    async def report(self, message: str, details: dict | None = None) -> None:
+        self.events.append((message, details or {}))
+
+
 async def test_query_verifier_filters_off_scope_chunks_and_requests_retry():
     class FakeVerifierJson:
         async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
@@ -136,12 +144,21 @@ async def test_query_verifier_exact_cache_skips_second_llm_call(monkeypatch):
 
     monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
     chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+    reporter = CaptureReporter()
 
     first = await QueryVerifierChain(CountingVerifierJson()).run("Subject Alpha", chunks, "user-1")
-    second = await QueryVerifierChain(CountingVerifierJson()).run("Subject Alpha", chunks, "user-1")
+    second = await QueryVerifierChain(CountingVerifierJson()).run("Subject Alpha", chunks, "user-1", reporter=reporter)
 
     assert first == second
     assert len(calls) == 1
+    assert ("Reusing previous note review.", {
+        "depth": 1,
+        "ref": "retrieval:verify:1:cache_hit",
+        "status": "sufficient",
+        "on_topic_count": 1,
+        "off_topic_count": 0,
+        "retry_query": "",
+    }) in reporter.events
 
 
 def test_query_verifier_cache_key_changes_with_payload_attempt_and_settings(monkeypatch):
@@ -620,12 +637,18 @@ async def test_query_answer_exact_cache_skips_second_llm_call(monkeypatch):
 
     monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
     chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+    reporter = CaptureReporter()
 
     first = await QueryAnswerChain(CountingJson()).run("Subject Alpha", chunks, "user-1")
-    second = await QueryAnswerChain(CountingJson()).run("Subject Alpha", chunks, "user-1")
+    second = await QueryAnswerChain(CountingJson()).run("Subject Alpha", chunks, "user-1", reporter=reporter)
 
     assert first == second
     assert len(calls) == 1
+    assert ("Reusing previous final answer.", {
+        "depth": 1,
+        "ref": "retrieval:answer:cache_hit",
+        "citation_count": 1,
+    }) in reporter.events
 
 
 def test_query_answer_cache_key_changes_with_payload_and_settings(monkeypatch):
@@ -1352,8 +1375,8 @@ async def test_durable_runner_pause_stops_after_current_unit(monkeypatch):
     job = durability_repo.create_or_reuse_job("job-1", "hash-1", raw_id)
 
     class PausingDrafts(FakeDrafts):
-        async def run(self, window: dict, user_id: str) -> list[dict]:
-            result = await super().run(window, user_id)
+        async def run(self, window: dict, user_id: str, on_progress=None) -> list[dict]:
+            result = await super().run(window, user_id, on_progress)
             if window["text"] == "one":
                 durability_repo.pause(job["id"])
             return result
@@ -1498,7 +1521,7 @@ class FakeDrafts:
         self.fail_on = fail_on
         self.calls = []
 
-    async def run(self, window: dict, user_id: str) -> list[dict]:
+    async def run(self, window: dict, user_id: str, on_progress=None) -> list[dict]:
         self.calls.append(window["text"])
         if window["text"] == self.fail_on:
             raise RuntimeError("draft failed")

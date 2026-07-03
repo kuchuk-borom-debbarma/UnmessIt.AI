@@ -187,11 +187,19 @@ class DurableIngestRunner:
         parent_ref = f"{STAGE_SOURCE_CHUNKS}:{unit_key}"
         await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": _progress(f"Chunk {index + 1}/{total}: \"{snippet}\"", 2, parent_ref, STAGE_SOURCE_CHUNKS)})
         await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": _progress("Drafting summary", 3, f"{parent_ref}:draft", parent_ref)})
-        drafts: list[SourceChunkDraft] = await self.source_chunk_drafts.run(text_piece, user_id)
-        
+
+        async def on_draft_progress(msg: str) -> None:
+            await asyncio.to_thread(
+                repository.update_metadata,
+                job_id,
+                {"progress_message": _progress(msg, 3, f"{parent_ref}:draft:cache", f"{parent_ref}:draft")},
+            )
+
+        drafts: list[SourceChunkDraft] = await self.source_chunk_drafts.run(text_piece, user_id, on_draft_progress)
+
         await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": _progress("Assembling source chunk", 3, f"{parent_ref}:assemble", parent_ref)})
         chunks = await self.source_chunk_assembler.run(raw_input_id, raw_text, user_id, drafts, directory_path)
-        
+
         await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": _progress("Saving source chunk", 3, f"{parent_ref}:save", parent_ref)})
         processing_snapshot = _processing_snapshot(user_id)
         rotation_snapshot = get_last_llm_rotation_snapshot()

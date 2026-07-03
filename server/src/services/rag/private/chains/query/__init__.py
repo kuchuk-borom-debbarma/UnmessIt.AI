@@ -123,6 +123,25 @@ class QueryVerifierChain:
         if cache_key:
             cached = _cached_verifier_result(await retrieval_cache.get_json(cache_key), valid_ids)
             if cached is not None:
+                logger.info(
+                    "query_verifier_cache_hit attempt=%s status=%s on_topic=%s off_topic=%s",
+                    attempt,
+                    cached["status"],
+                    len(cached["on_topic_ids"]),
+                    len(cached["off_topic_ids"]),
+                )
+                if reporter:
+                    await reporter.report(
+                        "Reusing previous note review.",
+                        {
+                            "depth": 1,
+                            "ref": f"retrieval:verify:{attempt}:cache_hit",
+                            "status": cached["status"],
+                            "on_topic_count": len(cached["on_topic_ids"]),
+                            "off_topic_count": len(cached["off_topic_ids"]),
+                            "retry_query": cached["retry_query"],
+                        },
+                    )
                 return cached
 
         try:
@@ -149,6 +168,24 @@ class QueryVerifierChain:
         result = _normalize_verifier_result(data if isinstance(data, dict) else {}, chunks)
         if cache_key and isinstance(data, dict):
             await retrieval_cache.set_json(cache_key, result)
+            logger.info(
+                "query_verifier_cache_set attempt=%s status=%s on_topic=%s off_topic=%s",
+                attempt,
+                result["status"],
+                len(result["on_topic_ids"]),
+                len(result["off_topic_ids"]),
+            )
+            if reporter:
+                await reporter.report(
+                    "Saved note review for exact repeat questions.",
+                    {
+                        "depth": 1,
+                        "ref": f"retrieval:verify:{attempt}:cache_set",
+                        "status": result["status"],
+                        "on_topic_count": len(result["on_topic_ids"]),
+                        "off_topic_count": len(result["off_topic_ids"]),
+                    },
+                )
         if reporter:
             await reporter.report(
                 f"Approved {len(result['on_topic_ids'])} notes as highly relevant, rejected {len(result['off_topic_ids'])}.",
@@ -277,6 +314,12 @@ class QueryAnswerChain:
         if cache_key:
             cached = _cached_answer_result(await retrieval_cache.get_json(cache_key), {chunk["id"] for chunk in chunks})
             if cached is not None:
+                logger.info("query_answer_cache_hit citations=%s", len(cached["citation_ids"]))
+                if reporter:
+                    await reporter.report(
+                        "Reusing previous final answer.",
+                        {"depth": 1, "ref": "retrieval:answer:cache_hit", "citation_count": len(cached["citation_ids"])},
+                    )
                 return cached
 
         try:
@@ -301,6 +344,12 @@ class QueryAnswerChain:
         result = _normalize_answer_result(data if isinstance(data, dict) else {}, chunks)
         if cache_key and isinstance(data, dict) and str(data.get("answer") or "").strip():
             await retrieval_cache.set_json(cache_key, result)
+            logger.info("query_answer_cache_set citations=%s", len(result["citation_ids"]))
+            if reporter:
+                await reporter.report(
+                    "Saved final answer for exact repeat questions.",
+                    {"depth": 1, "ref": "retrieval:answer:cache_set", "citation_count": len(result["citation_ids"])},
+                )
         if reporter:
             await reporter.report(
                 f"Selected {len(result['citation_ids'])} citation(s) to back the answer",
