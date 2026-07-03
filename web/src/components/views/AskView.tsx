@@ -22,6 +22,23 @@ type Citation = {
 const CITE_MARKER_RE = /(\[\[cite:[^\]\s]+\]\]?)/g
 const CITE_MARKER_ONLY_RE = /^\[\[cite:([^\]\s]+)\]\]?$/
 const STRAY_CITE_MARKER_RE = /\[\[cite:[^\]\s]+(?:\]\])?/g
+const CACHE_LABELS: Record<string, string> = {
+  breakdown: 'Breakdown',
+  subjects: 'Subjects',
+  evidence: 'Evidence',
+  verifier: 'Verifier',
+  answer: 'Answer',
+}
+
+function cacheStatusLabel(status: string) {
+  return status.replace(/_/g, ' ')
+}
+
+function cacheStatusClass(status: string) {
+  if (status.includes('hit')) return 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+  if (status === 'set') return 'border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+  return 'border-zinc-500/20 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300'
+}
 
 function ToastMessage({ toast }: { toast: Toast }) {
   return (
@@ -496,6 +513,21 @@ export function AskView({ token }: { token: string }) {
                           <div className="text-lg font-black text-zinc-700 dark:text-zinc-300 mb-1 truncate w-full px-2">{String(result.retrieval_trace.mode || 'N/A').replace(/_/g, ' ')}</div>
                           <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Retrieval Mode</div>
                         </div>
+                        {result.retrieval_trace.cache_summary && Object.keys(result.retrieval_trace.cache_summary).length > 0 && (
+                          <div className="p-5 rounded-2xl bg-black/5 dark:bg-black/40 border border-black/10 dark:border-[#222] shadow-inner md:col-span-4">
+                            <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-3">Cache</div>
+                            <div className="flex flex-wrap gap-2">
+                              {Object.entries(result.retrieval_trace.cache_summary as Record<string, string>).map(([stage, status]) => (
+                                <span
+                                  key={stage}
+                                  className={`px-2.5 py-1 rounded-lg border text-xs font-semibold ${cacheStatusClass(status)}`}
+                                >
+                                  {CACHE_LABELS[stage] || stage}: {cacheStatusLabel(status)}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         {result.retrieval_trace.context_chars_before_packing && (
                           <div className="p-5 rounded-2xl bg-emerald-500/5 dark:bg-black/40 border border-emerald-500/20 dark:border-emerald-900/30 flex flex-col justify-center shadow-inner md:col-span-4">
                               <div className="flex justify-between items-end mb-3">
