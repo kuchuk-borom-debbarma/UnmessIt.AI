@@ -44,6 +44,7 @@ Keep the server boring, small, and easy to read.
 - Semantic retrieval caches are allowed only for query-planning outputs until a retrieval index version exists; they must be disposable and versioned by prompt plus settings.
 - Evidence-search caches must be exact-only, infra-backed, disposable, and keyed by the SQLite retrieval index version. Bump that version whenever source chunks, recall links/keys, note tags, directory metadata, trash/restore state, or raw inputs change.
 - Verifier caches must be exact-only and keyed by prompt text, LLM settings, attempt number, query, and compact evidence payload; never cache provider failure fallbacks.
+- Answer caches must be exact-only and keyed by prompt text, LLM settings, query, and compact verified evidence payload; never cache provider failure fallbacks.
 
 ## 6. Routes
 - Keep these URLs stable: `POST /ingest/`, `POST /api/retrieval/query`, `GET /notes/`, `POST /notes/`, `GET /directories/`, `GET /tags/`, `GET /configs/presets`, `GET /configs/processing`, `PUT /configs/processing`, `GET /configs/rotation`, `PUT /configs/rotation`.

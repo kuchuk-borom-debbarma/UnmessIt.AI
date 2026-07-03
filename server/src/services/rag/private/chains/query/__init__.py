@@ -14,6 +14,7 @@ from ._search import finalize_chunks
 logger = logging.getLogger(__name__)
 _CITE_MARKER_RE = re.compile(r"\[\[cite:([^\]\s]+)\]\]?")
 _VERIFIER_CACHE_VERSION = "query_verifier:v1"
+_ANSWER_CACHE_VERSION = "query_answer:v1"
 
 
 class QueryEvidenceChain:
@@ -270,6 +271,14 @@ class QueryAnswerChain:
                 await reporter.report("No notes found; skipping answer generation.", {"depth": 1, "ref": "retrieval:answer:empty"})
             return {"answer": "I could not find relevant source chunks for that query.", "citation_ids": []}
 
+        system = _answer_system_prompt()
+        human = _answer_human_prompt(query, chunks)
+        cache_key = _answer_cache_key(query, user_id, system, human)
+        if cache_key:
+            cached = _cached_answer_result(await retrieval_cache.get_json(cache_key), {chunk["id"] for chunk in chunks})
+            if cached is not None:
+                return cached
+
         try:
             if reporter:
                 await reporter.report(
@@ -277,30 +286,8 @@ class QueryAnswerChain:
                     {"depth": 1, "ref": "retrieval:answer:prompt", "source_chunk_count": len(chunks)},
                 )
             data = await self.json_client.async_invoke_json(
-                system=(
-                    "Answer the user query using only SOURCE_CHUNKS. "
-                    "Return only valid JSON. No markdown. "
-                    "SOURCE_CHUNKS are the only evidence; recall metadata is not evidence. "
-                    "Each source chunk contains a summary and focused snippets from saved text. "
-                    "If evidence supports only part of the query, answer the supported part first and briefly name what is missing. "
-                    "Do not refuse the whole query only because another requested part is missing. "
-                    "Do not mention SOURCE_CHUNKS, chunks, retrieval internals, or source ids in prose. "
-                    "For broad, timeline, comparison, similarity, or reasoning questions, synthesize across chunks when the facts for each side are present. "
-                    "Do not require a source to explicitly perform the comparison; compare the sourced facts yourself. "
-                    "When the user explicitly asks to compare or relate subjects, do not reject the comparison only because the subjects come from different contexts or sources. "
-                    "If chunks describe subject A and separate chunks describe subject B, infer similarities and differences from those facts instead of saying direct comparative analysis is unavailable. "
-                    "For attribute questions, collect small details from all relevant snippets before deciding the answer is missing. "
-                    "For attribute answers, preserve exact counts, labels, descriptors, and qualifiers when the snippets contain them. "
-                    "Use cautious wording for inference, but provide the inference when the evidence supports it. "
-                    "Embed source markers directly in the answer where they help verification, using [[cite:SOURCE_CHUNK_ID]] immediately after the supported claim. "
-                    "Do not show raw ids except inside [[cite:...]] markers. "
-                    "Citations must be source_chunk ids from SOURCE_CHUNKS."
-                ),
-                human=(
-                    f"QUERY:\n{query}\n\n"
-                    f"SOURCE_CHUNKS:\n{json.dumps(_chunk_payload(chunks), ensure_ascii=False)}\n\n"
-                    'Return JSON with keys: {"answer":"string with optional [[cite:source_chunk_id]] markers","citation_ids":["source_chunk_id"]}'
-                ),
+                system=system,
+                human=human,
                 user_id=user_id,
             )
             if reporter:
@@ -311,18 +298,77 @@ class QueryAnswerChain:
                 await reporter.report(f"Answer generation failed: {exc}", {"depth": 1, "ref": "retrieval:answer:error"})
             return {"answer": "I found relevant source chunks, but answer generation failed.", "citation_ids": []}
 
-        answer = str(data.get("answer") or "").strip()
-        valid_ids = {chunk["id"] for chunk in chunks}
-        marker_ids = [match.group(1) for match in _CITE_MARKER_RE.finditer(answer) if match.group(1) in valid_ids]
-        citation_ids = [str(item) for item in data.get("citation_ids", []) if str(item) in valid_ids]
-        citation_ids = list(dict.fromkeys([*citation_ids, *marker_ids]))[:6]
-        answer = _sanitize_answer_citations(answer, set(citation_ids))
+        result = _normalize_answer_result(data if isinstance(data, dict) else {}, chunks)
+        if cache_key and isinstance(data, dict) and str(data.get("answer") or "").strip():
+            await retrieval_cache.set_json(cache_key, result)
         if reporter:
             await reporter.report(
-                f"Selected {len(citation_ids)} citation(s) to back the answer",
-                {"depth": 1, "ref": "retrieval:answer:citations", "citation_ids": citation_ids},
+                f"Selected {len(result['citation_ids'])} citation(s) to back the answer",
+                {"depth": 1, "ref": "retrieval:answer:citations", "citation_ids": result["citation_ids"]},
             )
-        return {"answer": answer or "I found relevant source chunks, but no answer was generated.", "citation_ids": citation_ids}
+        return result
+
+
+def _answer_system_prompt() -> str:
+    return (
+        "Answer the user query using only SOURCE_CHUNKS. "
+        "Return only valid JSON. No markdown. "
+        "SOURCE_CHUNKS are the only evidence; recall metadata is not evidence. "
+        "Each source chunk contains a summary and focused snippets from saved text. "
+        "If evidence supports only part of the query, answer the supported part first and briefly name what is missing. "
+        "Do not refuse the whole query only because another requested part is missing. "
+        "Do not mention SOURCE_CHUNKS, chunks, retrieval internals, or source ids in prose. "
+        "For broad, timeline, comparison, similarity, or reasoning questions, synthesize across chunks when the facts for each side are present. "
+        "Do not require a source to explicitly perform the comparison; compare the sourced facts yourself. "
+        "When the user explicitly asks to compare or relate subjects, do not reject the comparison only because the subjects come from different contexts or sources. "
+        "If chunks describe subject A and separate chunks describe subject B, infer similarities and differences from those facts instead of saying direct comparative analysis is unavailable. "
+        "For attribute questions, collect small details from all relevant snippets before deciding the answer is missing. "
+        "For attribute answers, preserve exact counts, labels, descriptors, and qualifiers when the snippets contain them. "
+        "Use cautious wording for inference, but provide the inference when the evidence supports it. "
+        "Embed source markers directly in the answer where they help verification, using [[cite:SOURCE_CHUNK_ID]] immediately after the supported claim. "
+        "Do not show raw ids except inside [[cite:...]] markers. "
+        "Citations must be source_chunk ids from SOURCE_CHUNKS."
+    )
+
+
+def _answer_human_prompt(query: str, chunks: list[dict[str, Any]]) -> str:
+    return (
+        f"QUERY:\n{query}\n\n"
+        f"SOURCE_CHUNKS:\n{json.dumps(_chunk_payload(chunks), ensure_ascii=False)}\n\n"
+        'Return JSON with keys: {"answer":"string with optional [[cite:source_chunk_id]] markers","citation_ids":["source_chunk_id"]}'
+    )
+
+
+def _answer_cache_key(query: str, user_id: str | None, system: str, human: str) -> str | None:
+    signature = retrieval_cache.llm_settings_signature(user_id)
+    if not signature:
+        return None
+    return retrieval_cache.cache_key(_ANSWER_CACHE_VERSION, user_id or "", signature, system, human, query)
+
+
+def _normalize_answer_result(data: dict[str, Any], chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    answer = str(data.get("answer") or "").strip()
+    valid_ids = {chunk["id"] for chunk in chunks}
+    marker_ids = [match.group(1) for match in _CITE_MARKER_RE.finditer(answer) if match.group(1) in valid_ids]
+    citation_ids = [str(item) for item in data.get("citation_ids", []) if str(item) in valid_ids]
+    citation_ids = list(dict.fromkeys([*citation_ids, *marker_ids]))[:6]
+    answer = _sanitize_answer_citations(answer, set(citation_ids))
+    return {
+        "answer": answer or "I found relevant source chunks, but no answer was generated.",
+        "citation_ids": citation_ids,
+    }
+
+
+def _cached_answer_result(value: dict[str, Any] | None, valid_ids: set[str]) -> dict[str, Any] | None:
+    if not isinstance(value, dict) or not isinstance(value.get("answer"), str):
+        return None
+    citation_ids = _cached_ids(value.get("citation_ids"), valid_ids)
+    if citation_ids is None:
+        return None
+    answer = _sanitize_answer_citations(value["answer"].strip(), set(citation_ids))
+    if not answer:
+        return None
+    return {"answer": answer, "citation_ids": citation_ids}
 
 
 def build_query_result(query: str, chunks: list[dict[str, Any]], answer: dict[str, Any], trace: dict[str, Any]) -> dict[str, Any]:

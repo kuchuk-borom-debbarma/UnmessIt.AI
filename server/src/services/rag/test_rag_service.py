@@ -13,6 +13,7 @@ from src.services.rag.private.chains.recall.candidates import RecallCandidateCha
 from src.services.rag.private.chains.recall.index import RecallIndexChain
 from src.services.rag.private.chains.recall.normalizer import RecallNormalizerChain
 from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, QueryVerifierChain
+from src.services.rag.private.chains.query import _answer_cache_key, _answer_human_prompt, _answer_system_prompt
 from src.services.rag.private.chains.query import _verifier_cache_key, _verifier_human_prompt, _verifier_system_prompt
 from src.services.rag.private.chains.query import _breakdown as breakdown_mod
 from src.services.rag.private.chains.query import _search as search_mod
@@ -606,6 +607,118 @@ async def test_query_answer_prompt_allows_cross_context_comparison():
     )
 
     assert "different contexts or sources" in json_client.system
+
+
+async def test_query_answer_exact_cache_skips_second_llm_call(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class CountingJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            return {"answer": "Supported answer. [[cite:chunk-1]]", "citation_ids": []}
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+
+    first = await QueryAnswerChain(CountingJson()).run("Subject Alpha", chunks, "user-1")
+    second = await QueryAnswerChain(CountingJson()).run("Subject Alpha", chunks, "user-1")
+
+    assert first == second
+    assert len(calls) == 1
+
+
+def test_query_answer_cache_key_changes_with_payload_and_settings(monkeypatch):
+    system = _answer_system_prompt()
+    chunk_a = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+    chunk_b = [_source_chunk("chunk-1", "Changed evidence.")]
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    first = _answer_cache_key("Subject Alpha", "user-1", system, _answer_human_prompt("Subject Alpha", chunk_a))
+    changed_payload = _answer_cache_key("Subject Alpha", "user-1", system, _answer_human_prompt("Subject Alpha", chunk_b))
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-b")
+    changed_settings = _answer_cache_key("Subject Alpha", "user-1", system, _answer_human_prompt("Subject Alpha", chunk_a))
+
+    assert first != changed_payload
+    assert first != changed_settings
+
+
+async def test_query_answer_failure_fallback_is_not_cached(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class FailThenOkJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            if len(calls) == 1:
+                raise RuntimeError("down")
+            return {"answer": "Fresh answer. [[cite:chunk-1]]", "citation_ids": []}
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+
+    first = await QueryAnswerChain(FailThenOkJson()).run("Subject Alpha", chunks, "user-1")
+    second = await QueryAnswerChain(FailThenOkJson()).run("Subject Alpha", chunks, "user-1")
+
+    assert first["answer"] == "I found relevant source chunks, but answer generation failed."
+    assert second["answer"] == "Fresh answer. [[cite:chunk-1]]"
+    assert len(calls) == 2
+
+
+async def test_query_answer_ignores_invalid_cached_payload(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class CountingJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            return {"answer": "Fresh answer. [[cite:chunk-1]]", "citation_ids": []}
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+    key = _answer_cache_key("Subject Alpha", "user-1", _answer_system_prompt(), _answer_human_prompt("Subject Alpha", chunks))
+    retrieval_cache.get_memory_json_cache().set(key, {"answer": "bad", "citation_ids": ["not-real"]})
+
+    result = await QueryAnswerChain(CountingJson()).run("Subject Alpha", chunks, "user-1")
+
+    assert result["answer"] == "Fresh answer. [[cite:chunk-1]]"
+    assert len(calls) == 1
+
+
+async def test_query_answer_cached_payload_keeps_sanitized_citations(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+    key = _answer_cache_key("Subject Alpha", "user-1", _answer_system_prompt(), _answer_human_prompt("Subject Alpha", chunks))
+    retrieval_cache.get_memory_json_cache().set(
+        key,
+        {"answer": "Good [[cite:chunk-1]] bad [[cite:not-real]].", "citation_ids": ["chunk-1"]},
+    )
+
+    class FailJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            raise AssertionError("LLM should not be called")
+
+    result = await QueryAnswerChain(FailJson()).run("Subject Alpha", chunks, "user-1")
+
+    assert result["citation_ids"] == ["chunk-1"]
+    assert "[[cite:not-real]]" not in result["answer"]
+
+
+async def test_query_answer_empty_shortcut_is_not_cached(monkeypatch):
+    calls = []
+
+    async def fake_set_json(*args, **kwargs):
+        calls.append(args)
+
+    monkeypatch.setattr(retrieval_cache, "set_json", fake_set_json)
+
+    result = await QueryAnswerChain(FakeJson()).run("Subject Alpha", [], "user-1")
+
+    assert result["citation_ids"] == []
+    assert calls == []
 
 
 async def test_query_breakdown_expands_physical_attribute_queries_when_llm_underplans():
