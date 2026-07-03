@@ -49,13 +49,13 @@ class QueryEvidenceChain:
         trace_parts: list[dict[str, Any]] = result["trace_parts"]
         if reporter:
             await reporter.report(
-                "Merging sub-query evidence...",
+                "Combining and selecting the best notes...",
                 {"depth": 1, "ref": "retrieval:evidence:merge", "raw_chunk_count": len(raw_chunks), "sub_query_count": len(trace_parts)},
             )
         chunks, finalize_trace = finalize_chunks(raw_chunks, query)
         if reporter:
             await reporter.report(
-                f"Final context selected {len(chunks)} chunk(s); saved {finalize_trace.get('context_chars_saved', 0)} chars",
+                f"Selected {len(chunks)} best notes for reading.",
                 {"depth": 1, "ref": "retrieval:evidence:final", "source_chunk_ids": [chunk["id"] for chunk in chunks], **finalize_trace},
             )
         
@@ -109,7 +109,7 @@ class QueryVerifierChain:
 
         if reporter:
             await reporter.report(
-                "Verifying evidence against query scope...",
+                "Checking if notes answer the question...",
                 {"depth": 1, "ref": f"retrieval:verify:{attempt}", "source_chunk_count": len(chunks)},
             )
 
@@ -142,7 +142,7 @@ class QueryVerifierChain:
             logger.warning("query_verifier_failed error=%s", exc)
             if reporter:
                 await reporter.report(
-                    "Evidence verifier failed; continuing with ranked context.",
+                    "Verification skipped; continuing with selected notes.",
                     {"depth": 1, "ref": f"retrieval:verify:{attempt}:fallback", "error": str(exc)[:500]},
                 )
             return {
@@ -181,7 +181,7 @@ class QueryVerifierChain:
         }
         if reporter:
             await reporter.report(
-                f"Verifier marked {len(on_topic_ids)} on-topic chunk(s), {len(off_topic_ids)} off-topic.",
+                f"Approved {len(on_topic_ids)} notes as highly relevant, rejected {len(off_topic_ids)}.",
                 {
                     "depth": 1,
                     "ref": f"retrieval:verify:{attempt}:result",
@@ -204,13 +204,13 @@ class QueryAnswerChain:
         """Return an answer and source chunk ids used as citations."""
         if not chunks:
             if reporter:
-                await reporter.report("No evidence chunks found; skipping answer model call.", {"depth": 1, "ref": "retrieval:answer:empty"})
+                await reporter.report("No notes found; skipping answer generation.", {"depth": 1, "ref": "retrieval:answer:empty"})
             return {"answer": "I could not find relevant source chunks for that query.", "citation_ids": []}
 
         try:
             if reporter:
                 await reporter.report(
-                    "Building answer prompt from packed snippets...",
+                    "Synthesizing answer from verified notes...",
                     {"depth": 1, "ref": "retrieval:answer:prompt", "source_chunk_count": len(chunks)},
                 )
             data = await self.json_client.async_invoke_json(
@@ -241,7 +241,7 @@ class QueryAnswerChain:
                 user_id=user_id,
             )
             if reporter:
-                await reporter.report("Answer model returned JSON; validating citations...", {"depth": 1, "ref": "retrieval:answer:validate"})
+                await reporter.report("Validating citations...", {"depth": 1, "ref": "retrieval:answer:validate"})
         except Exception as exc:
             logger.warning("query_answer_failed error=%s", exc)
             if reporter:
@@ -256,7 +256,7 @@ class QueryAnswerChain:
         answer = _sanitize_answer_citations(answer, set(citation_ids))
         if reporter:
             await reporter.report(
-                f"Selected {len(citation_ids)} citation(s)",
+                f"Selected {len(citation_ids)} citation(s) to back the answer",
                 {"depth": 1, "ref": "retrieval:answer:citations", "citation_ids": citation_ids},
             )
         return {"answer": answer or "I found relevant source chunks, but no answer was generated.", "citation_ids": citation_ids}

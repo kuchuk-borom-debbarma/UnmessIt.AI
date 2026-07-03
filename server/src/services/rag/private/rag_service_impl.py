@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from uuid import uuid4
 
-from src.infra.progress import reset_progress_reporters, set_progress_reporters
+from src.infra.progress import reset_progress_reporters, set_progress_reporters, set_active_parent_ref
 from src.services.rag.models import IngestResult, QueryResult, ProgressReporter, NullProgressReporter
 from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, QueryVerifierChain, build_query_result
 from src.services.rag.private.chains.query._search import finalize_chunks
@@ -77,8 +77,11 @@ class RagServiceImpl:
 
         tokens = set_progress_reporters(async_report, sync_report)
         try:
-            await reporter.report("Normalizing query text...", {"depth": 0, "ref": "retrieval:normalize", "query_chars": len(query)})
-            await reporter.report("Searching source-backed evidence...", {
+            set_active_parent_ref(None)
+            await reporter.report("Preparing search...", {"depth": 0, "ref": "retrieval:normalize", "query_chars": len(query)})
+            
+            set_active_parent_ref("retrieval:evidence")
+            await reporter.report("Gathering relevant notes and context...", {
                 "depth": 0,
                 "ref": "retrieval:evidence",
                 "within_directories": within_directories or [],
@@ -89,14 +92,18 @@ class RagServiceImpl:
             })
             chunks, trace = await self.query_evidence.run(query, user_id, reporter, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
             # Evidence-search exact cache is inside QueryEvidenceChain, before verifier.
+            
+            set_active_parent_ref("retrieval:verify")
+            await reporter.report("Reviewing gathered information...", {"depth": 0, "ref": "retrieval:verify"})
             verification = await self.query_verifier.run(query, chunks, user_id, reporter, attempt=1)
             chunks = _verified_chunks(chunks, verification)
             trace["verification_attempts"] = [verification]
 
             retry_query = verification.get("retry_query") or ""
             if verification.get("status") == "needs_retry" and retry_query and retry_query.lower() != query.lower():
+                set_active_parent_ref("retrieval:retry")
                 await reporter.report(
-                    "Retrying retrieval with verifier-focused query...",
+                    "Refining search to find better answers...",
                     {"depth": 0, "ref": "retrieval:retry", "retry_query": retry_query},
                 )
                 retry_chunks, retry_trace = await self.query_evidence.run(
@@ -110,6 +117,9 @@ class RagServiceImpl:
                     within_tags_condition,
                 )
                 combined_chunks, combine_trace = finalize_chunks([*chunks, *retry_chunks], query)
+                
+                set_active_parent_ref("retrieval:verify:retry")
+                await reporter.report("Reviewing refined information...", {"depth": 0, "ref": "retrieval:verify:retry"})
                 retry_verification = await self.query_verifier.run(query, combined_chunks, user_id, reporter, attempt=2)
                 chunks = _verified_chunks(combined_chunks, retry_verification)
                 trace["verification_attempts"].append(retry_verification)
@@ -121,11 +131,15 @@ class RagServiceImpl:
             trace["verified_source_chunk_ids"] = [chunk["id"] for chunk in chunks]
             trace["verified_source_chunk_count"] = len(chunks)
 
-            await reporter.report("Generating answer from verified evidence...", {"depth": 0, "ref": "retrieval:answer", "source_chunk_count": len(chunks)})
+            set_active_parent_ref("retrieval:answer")
+            await reporter.report("Writing your final answer...", {"depth": 0, "ref": "retrieval:answer", "source_chunk_count": len(chunks)})
             answer = await self.query_answer.run(query, chunks, user_id, reporter)
+            
+            set_active_parent_ref(None)
             await reporter.report("Retrieval complete.", {"depth": 0, "ref": "retrieval:done", "citation_count": len(answer.get("citation_ids", []))})
         finally:
             reset_progress_reporters(tokens)
+            set_active_parent_ref(None)
         
         return build_query_result(query, chunks, answer, trace)
 

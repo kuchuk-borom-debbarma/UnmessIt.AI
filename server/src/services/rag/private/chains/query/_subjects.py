@@ -36,14 +36,14 @@ def subjects_node(json_client) -> callable:
         reporter = state.get("reporter")
         
         if reporter:
-            await reporter.report("Resolving implicit query subjects...", {"depth": 1, "ref": "retrieval:subjects"})
+            await reporter.report("Looking up specific named topics...", {"depth": 1, "ref": "retrieval:subjects"})
             
         subjects = await _identify_subjects(json_client, query, sub_queries, user_id)
         logger.info("query_subjects query_len=%s extracted=%s", len(query), len(subjects))
         
         if reporter:
             await reporter.report(
-                f"Found implicit subjects: {', '.join(subjects)}" if subjects else "No implicit subjects found.",
+                f"Found specific named topics: {', '.join(subjects)}" if subjects else "No specific named topics found.",
                 {"depth": 1, "ref": "retrieval:subjects:done", "subjects": subjects},
             )
             

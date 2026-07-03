@@ -54,13 +54,13 @@ def breakdown_node(json_client) -> callable:
         user_id = state.get("user_id")
         
         if reporter:
-            await reporter.report("Planning retrieval sub-queries...", {"depth": 1, "ref": "retrieval:plan", "query_chars": len(query)})
+            await reporter.report("Planning specific searches...", {"depth": 1, "ref": "retrieval:plan", "query_chars": len(query)})
         sub_queries = await _decompose(json_client, query, user_id)
         logger.info("query_breakdown query_len=%s sub_queries=%s", len(query), len(sub_queries))
         
         if reporter:
             await reporter.report(
-                f"Using {len(sub_queries)} retrieval pass(es).",
+                f"Planned {len(sub_queries)} specific search(es).",
                 {"depth": 1, "ref": "retrieval:plan:subqueries", "sub_queries": sub_queries},
             )
             

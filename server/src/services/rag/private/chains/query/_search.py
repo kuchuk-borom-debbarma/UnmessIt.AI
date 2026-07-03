@@ -249,33 +249,33 @@ async def _evidence_for(sub_query: str, global_query: str, user_id: str, extract
     # Vector search and lexical search can run in parallel; recall key lookup is cheap.
     async def _vector_path():
         if reporter:
-            await reporter.report("Vector source search...", {"depth": 3, "ref": f"{parent_ref}:vector", "parent_ref": parent_ref, "sub_query": sub_query})
+            await reporter.report("Searching by topic meaning...", {"depth": 3, "ref": f"{parent_ref}:vector", "parent_ref": parent_ref, "sub_query": sub_query})
         chunks, ids = await _vector_source_chunks(sub_query, user_id, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition, reporter, parent_ref)
         if reporter:
             await reporter.report(
-                f"Vector source search returned {len(ids)} hit(s)",
+                f"Topic meaning search returned {len(ids)} hit(s)",
                 {"depth": 3, "ref": f"{parent_ref}:vector:done", "parent_ref": f"{parent_ref}:vector", "sub_query": sub_query, "source_chunk_ids": ids},
             )
         return chunks, ids
 
     async def _lexical_path():
         if reporter:
-            await reporter.report("Lexical source search...", {"depth": 3, "ref": f"{parent_ref}:lexical", "parent_ref": parent_ref, "sub_query": sub_query})
+            await reporter.report("Searching by exact keywords...", {"depth": 3, "ref": f"{parent_ref}:lexical", "parent_ref": parent_ref, "sub_query": sub_query})
         chunks = await asyncio.to_thread(source_chunks.search, sub_query, user_id, 8, within_directories, excluding_directories, within_tags, excluding_tags, within_tags_condition)
         if reporter:
             await reporter.report(
-                f"Lexical source search returned {len(chunks)} chunk(s)",
+                f"Exact keyword search returned {len(chunks)} hit(s)",
                 {"depth": 3, "ref": f"{parent_ref}:lexical:done", "parent_ref": f"{parent_ref}:lexical", "sub_query": sub_query, "source_chunk_ids": [chunk["id"] for chunk in chunks]},
             )
         return chunks
 
     async def _recall_path():
         if reporter:
-            await reporter.report("Recall key search...", {"depth": 3, "ref": f"{parent_ref}:recall", "parent_ref": parent_ref, "sub_query": sub_query})
+            await reporter.report("Following connected ideas...", {"depth": 3, "ref": f"{parent_ref}:recall", "parent_ref": parent_ref, "sub_query": sub_query})
         keys = await _recall_keys(sub_query, user_id, extracted_subjects)
         if reporter:
             await reporter.report(
-                f"Recall key search returned {len(keys)} key(s)",
+                f"Connected ideas search returned {len(keys)} hit(s)",
                 {"depth": 3, "ref": f"{parent_ref}:recall:done", "parent_ref": f"{parent_ref}:recall", "sub_query": sub_query, "recall_keys": [{"id": key["id"], "name": key["name"]} for key in keys]},
             )
         return keys
@@ -337,7 +337,7 @@ async def _vector_source_chunks(query: str, user_id: str, within_directories: li
         logger.warning("query_source_vector_search_failed error=%s", exc)
         if reporter:
             await reporter.report(
-                "Vector source search failed; continuing with lexical and recall search.",
+                "Searching by topic meaning failed; continuing with exact keywords and connected ideas.",
                 {"depth": 3, "ref": f"{parent_ref}:vector:error", "parent_ref": f"{parent_ref}:vector", "error": str(exc)[:500]},
             )
         return [], []

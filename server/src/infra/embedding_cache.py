@@ -4,10 +4,14 @@ import hashlib
 import json
 from collections import OrderedDict
 from functools import lru_cache
+import logging
 from typing import Protocol
 from urllib.parse import urlsplit, urlunsplit
 
+from src.infra.progress import report_progress_sync
 from src.infra.redis import redis_url
+
+logger = logging.getLogger(__name__)
 
 try:
     from redis import Redis
@@ -93,8 +97,21 @@ class CachedEmbeddingFunction:
             else:
                 results[index] = cached
 
+        hits = len(texts) - len(misses)
+        if hits > 0:
+            logger.info("embedding_cache_hit count=%d", hits)
+            report_progress_sync(
+                f"Reused previously computed vectors for {hits} items.",
+                {"depth": 2, "ref": "cache:embedding:hit", "hits": hits},
+            )
+
         if misses:
             miss_keys = list(misses)
+            logger.info("embedding_cache_miss count=%d", len(misses))
+            report_progress_sync(
+                f"Computing search vectors for {len(misses)} new items...",
+                {"depth": 2, "ref": "cache:embedding:miss", "misses": len(misses)},
+            )
             embeddings = self.embedding_function(list(misses.values()))
             for key, embedding in zip(miss_keys, embeddings):
                 value = [float(item) for item in embedding]
@@ -102,6 +119,12 @@ class CachedEmbeddingFunction:
                 for index, candidate in enumerate(keys):
                     if candidate == key:
                         results[index] = value
+            
+            logger.info("embedding_cache_set count=%d", len(misses))
+            report_progress_sync(
+                f"Cached {len(misses)} new embeddings.",
+                {"depth": 2, "ref": "cache:embedding:set", "count": len(misses)},
+            )
 
         if any(result is None for result in results):
             raise RuntimeError("Embedding provider returned fewer vectors than requested.")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from collections import OrderedDict
 from functools import lru_cache
@@ -9,6 +10,9 @@ from typing import Any
 
 from src.infra import chroma
 from src.infra import redis
+from src.infra.progress import report_progress, report_progress_sync
+
+logger = logging.getLogger(__name__)
 
 
 TTL_SECONDS = 60 * 60 * 24
@@ -44,21 +48,32 @@ async def get_json(key: str) -> dict[str, Any] | None:
     memory = get_memory_json_cache()
     value = memory.get(key)
     if value is not None:
+        logger.info("retrieval_cache_hit source=memory key=%s", key)
+        await report_progress("Using previously cached results to save time.", {"depth": 2, "ref": "cache:retrieval:hit:memory", "key": key})
         return value
     try:
         value = await redis.get_json(key)
-    except Exception:
+    except Exception as exc:
+        logger.warning("retrieval_cache_redis_error error=%s", exc)
         return None
     if value is not None:
+        logger.info("retrieval_cache_hit source=redis key=%s", key)
+        await report_progress("Using previously cached results to save time.", {"depth": 2, "ref": "cache:retrieval:hit:redis", "key": key})
         memory.set(key, value)
+    else:
+        logger.info("retrieval_cache_miss key=%s", key)
+        await report_progress("No exact match found; starting full search.", {"depth": 2, "ref": "cache:retrieval:miss", "key": key})
     return value
 
 
 async def set_json(key: str, value: dict[str, Any]) -> None:
+    logger.info("retrieval_cache_set key=%s", key)
+    await report_progress("Cached retrieval JSON.", {"depth": 2, "ref": "cache:retrieval:set", "key": key})
     get_memory_json_cache().set(key, value)
     try:
         await redis.set_json(key, value, TTL_SECONDS)
-    except Exception:
+    except Exception as exc:
+        logger.warning("retrieval_cache_redis_set_error error=%s", exc)
         return
 
 
@@ -88,18 +103,25 @@ def get_semantic_json(user_id: str, namespace: str, text: str, threshold: float 
             n_results=1,
             include=["metadatas", "distances"],
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("semantic_cache_query_error error=%s", exc)
         return None
     distances = (results.get("distances") or [[]])[0]
     metadatas = (results.get("metadatas") or [[]])[0]
     if not distances or not metadatas:
+        logger.info("semantic_cache_miss namespace=%s reason=no_results text_len=%d", namespace, len(text))
+        report_progress_sync("New topic detected; starting full search.", {"depth": 2, "ref": "cache:semantic:miss:no_results", "namespace": namespace})
         return None
     if 1 - float(distances[0]) < threshold:
+        logger.info("semantic_cache_miss namespace=%s reason=below_threshold distance=%s threshold=%s", namespace, distances[0], threshold)
+        report_progress_sync("New topic detected; starting full search.", {"depth": 2, "ref": "cache:semantic:miss:below_threshold", "namespace": namespace, "distance": distances[0]})
         return None
     try:
         value = json.loads(metadatas[0].get("payload") or "{}")
     except (AttributeError, json.JSONDecodeError):
         return None
+    logger.info("semantic_cache_hit namespace=%s distance=%s", namespace, distances[0])
+    report_progress_sync("Found a highly similar previous question; reusing its answer!", {"depth": 2, "ref": "cache:semantic:hit", "namespace": namespace, "distance": distances[0]})
     return value if isinstance(value, dict) else None
 
 
@@ -107,13 +129,16 @@ def set_semantic_json(user_id: str, namespace: str, text: str, value: dict[str, 
     if not user_id or not namespace or not text:
         return
     item_id = hashlib.sha256(f"{namespace}:{text}".encode("utf-8")).hexdigest()
+    logger.info("semantic_cache_set namespace=%s text_len=%d", namespace, len(text))
+    report_progress_sync("Cached semantic JSON.", {"depth": 2, "ref": "cache:semantic:set", "namespace": namespace})
     try:
         chroma.semantic_cache_collection(user_id, namespace).upsert(
             ids=[item_id],
             documents=[text],
             metadatas=[{"payload": json.dumps(value, ensure_ascii=False)}],
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("semantic_cache_set_error error=%s", exc)
         return
 
 
