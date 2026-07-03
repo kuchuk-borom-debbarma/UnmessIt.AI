@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from src.infra.sqlite import get_connection
+from src.repositories import retrieval_index
 from src.services.rag.models import RecallIndex
 
 
@@ -285,6 +286,7 @@ def save_index(index: RecallIndex, user_id: str) -> int:
             ),
         )
         saved_links += cursor.rowcount
+    retrieval_index.bump(user_id, conn)
     conn.commit()
     return saved_links
 

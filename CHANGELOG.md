@@ -14,3 +14,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Query breakdown now uses an exact memory/Redis cache so repeated retrieval queries can skip the planning LLM call.
 - Subject extraction now uses exact memory/Redis caching for repeated query-planning inputs.
 - Subject extraction can reuse strict semantic cache hits when prompt, LLM, and embedding settings match.
+- Evidence search now uses an exact memory/Redis cache invalidated by a durable SQLite retrieval index version.

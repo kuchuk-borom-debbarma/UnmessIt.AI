@@ -5,7 +5,9 @@ import logging
 import re
 from typing import Any
 
-from src.repositories import recall, recall_key_vectors, source_chunk_vectors, source_chunks
+from src.infra import retrieval_cache
+from src.infra.settings import get_user_embedding_settings
+from src.repositories import recall, recall_key_vectors, retrieval_index, source_chunk_vectors, source_chunks
 
 from ._state import QueryState
 
@@ -15,6 +17,7 @@ MAX_EVIDENCE_CHUNKS = 12
 MAX_SNIPPETS_PER_CHUNK = 3
 MAX_SNIPPET_CHARS = 420
 _CONTEXT_CHARS_PER_PASS = 6000
+_EVIDENCE_CACHE_VERSION = "evidence-search-v1"
 
 _ATTRIBUTE_TRIGGERS = {
     "appearance", "appearances", "attribute", "attributes", "body", "build",
@@ -82,6 +85,29 @@ async def search_node(state: QueryState) -> dict[str, Any]:
     within_tags = state.get("within_tags") or []
     excluding_tags = state.get("excluding_tags") or []
     within_tags_condition = state.get("within_tags_condition", "any")
+    index_version = await asyncio.to_thread(retrieval_index.get_version, user_id)
+    embedding_signature = await asyncio.to_thread(_embedding_settings_signature, user_id)
+    cache_key = _evidence_cache_key(
+        state.get("query", ""),
+        state["sub_queries"],
+        extracted_subjects,
+        user_id,
+        index_version,
+        embedding_signature,
+        within_directories,
+        excluding_directories,
+        within_tags,
+        excluding_tags,
+        within_tags_condition,
+    )
+    cached = _valid_evidence_cache(await retrieval_cache.get_json(cache_key), index_version)
+    if cached is not None:
+        if reporter:
+            await reporter.report(
+                "Using cached evidence search results.",
+                {"depth": 1, "ref": "retrieval:search:cache_hit", "parent_ref": "retrieval:search", "retrieval_index_version": index_version},
+            )
+        return cached
 
     async def _search_and_report(index: int, sq: str):
         search_ref = f"retrieval:search:{index}"
@@ -119,6 +145,12 @@ async def search_node(state: QueryState) -> dict[str, Any]:
         all_chunks.extend(chunks)
         trace_parts.append(trace_part)
         
+    await retrieval_cache.set_json(cache_key, {
+        "cache_version": _EVIDENCE_CACHE_VERSION,
+        "retrieval_index_version": index_version,
+        "chunks": all_chunks,
+        "trace_parts": trace_parts,
+    })
     return {"chunks": all_chunks, "trace_parts": trace_parts}
 
 
@@ -141,6 +173,75 @@ def finalize_chunks(raw_chunks: list[dict[str, Any]], query: str) -> tuple[list[
 
 
 # ── internal helpers ─────────────────────────────────────────────────────────
+
+
+def _evidence_cache_key(
+    query: str,
+    sub_queries: list[str],
+    subjects: list[str],
+    user_id: str,
+    index_version: int,
+    embedding_signature: str,
+    within_directories: list[str],
+    excluding_directories: list[str],
+    within_tags: list[str],
+    excluding_tags: list[str],
+    within_tags_condition: str,
+) -> str:
+    return retrieval_cache.cache_key(
+        "evidence_search",
+        _EVIDENCE_CACHE_VERSION,
+        user_id,
+        query,
+        sub_queries,
+        subjects,
+        index_version,
+        embedding_signature,
+        {
+            "within_directories": _stable_list(within_directories),
+            "excluding_directories": _stable_list(excluding_directories),
+            "within_tags": _stable_list(within_tags),
+            "excluding_tags": _stable_list(excluding_tags),
+            "within_tags_condition": within_tags_condition,
+        },
+    )
+
+
+def _valid_evidence_cache(value: dict[str, Any] | None, index_version: int) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    if value.get("cache_version") != _EVIDENCE_CACHE_VERSION:
+        return None
+    if value.get("retrieval_index_version") != index_version:
+        return None
+    chunks = value.get("chunks")
+    trace_parts = value.get("trace_parts")
+    if not isinstance(chunks, list) or not isinstance(trace_parts, list):
+        return None
+    if any(not isinstance(chunk, dict) or not chunk.get("id") for chunk in chunks):
+        return None
+    if any(not isinstance(trace, dict) for trace in trace_parts):
+        return None
+    return {"chunks": chunks, "trace_parts": trace_parts}
+
+
+def _embedding_settings_signature(user_id: str) -> str:
+    try:
+        settings = get_user_embedding_settings(user_id)
+    except Exception:
+        return "embedding-settings:none"
+    return "|".join([
+        settings.embedding_provider,
+        settings.embedding_model,
+        settings.embedding_base_url or "",
+        str(settings.chunk_size),
+        str(settings.chunk_overlap),
+        str(settings.embedding_batch_size),
+    ])
+
+
+def _stable_list(values: list[str]) -> list[str]:
+    return sorted({str(value) for value in values if str(value)})
 
 
 async def _evidence_for(sub_query: str, global_query: str, user_id: str, extracted_subjects: list[str], within_directories: list[str], excluding_directories: list[str], within_tags: list[str], excluding_tags: list[str], within_tags_condition: str, reporter=None, parent_ref: str = "retrieval:search") -> tuple[list[dict[str, Any]], dict[str, Any]]:

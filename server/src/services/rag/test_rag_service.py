@@ -8,12 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from src.repositories import config_presets, dev, raw_inputs, recall, recall_key_vectors, source_chunk_vectors, source_chunks
+from src.repositories import config_presets, dev, notes, raw_inputs, recall, recall_key_vectors, retrieval_index, source_chunk_vectors, source_chunks, tags
 from src.services.rag.private.chains.recall.candidates import RecallCandidateChain
 from src.services.rag.private.chains.recall.index import RecallIndexChain
 from src.services.rag.private.chains.recall.normalizer import RecallNormalizerChain
 from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, QueryVerifierChain
 from src.services.rag.private.chains.query import _breakdown as breakdown_mod
+from src.services.rag.private.chains.query import _search as search_mod
 from src.services.rag.private.chains.query import _subjects as subjects_mod
 from src.services.rag.private.chains.query._breakdown import _decompose
 from src.services.rag.private.chains.query._search import _rank_chunks, _snippets
@@ -324,6 +325,75 @@ async def test_query_context_packer_ranks_and_falls_back(monkeypatch):
     lexical_chunk = next(c for c in chunks if c["id"] == "lexical")
     assert lexical_chunk["_snippets"][0] == "fallback summary"
     assert trace["context_chars_saved"] >= 0
+
+
+async def test_evidence_cache_hit_skips_second_search(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    conn = _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(retrieval_index, "get_connection", lambda: conn)
+    monkeypatch.setattr(search_mod, "_embedding_settings_signature", lambda user_id: "embedding:v1")
+    monkeypatch.setattr(retrieval_cache.redis, "get_json", _raise_async)
+    monkeypatch.setattr(retrieval_cache.redis, "set_json", _raise_async)
+    calls = []
+
+    async def fake_evidence(*args, **kwargs):
+        calls.append(args[0])
+        return [_source_chunk("chunk-1", "Attack Titan evidence")], {"sub_query": args[0], "baseline_lengths": {"chunk-1": 21}}
+
+    monkeypatch.setattr(search_mod, "_evidence_for", fake_evidence)
+    state = _search_state()
+
+    first = await search_mod.search_node(state)
+    second = await search_mod.search_node(state)
+
+    assert calls == ["Attack Titan"]
+    assert first == second
+
+
+async def test_evidence_cache_key_changes_for_filters_user_version_and_embedding(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    conn = _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(retrieval_index, "get_connection", lambda: conn)
+    signature = {"value": "embedding:v1"}
+    monkeypatch.setattr(search_mod, "_embedding_settings_signature", lambda user_id: signature["value"])
+    calls = []
+
+    async def fake_evidence(*args, **kwargs):
+        calls.append(args[0])
+        return [_source_chunk(f"chunk-{len(calls)}", "Attack Titan evidence")], {"sub_query": args[0], "baseline_lengths": {}}
+
+    monkeypatch.setattr(search_mod, "_evidence_for", fake_evidence)
+
+    await search_mod.search_node(_search_state())
+    await search_mod.search_node(_search_state(within_tags=["tag-1"]))
+    await search_mod.search_node(_search_state(within_directories=["/dir/"]))
+    await search_mod.search_node(_search_state(user_id="user-2"))
+    retrieval_index.bump("user-1")
+    await search_mod.search_node(_search_state())
+    signature["value"] = "embedding:v2"
+    await search_mod.search_node(_search_state())
+
+    assert len(calls) == 6
+
+
+async def test_evidence_cache_ignores_corrupt_redis_payload(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    conn = _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(retrieval_index, "get_connection", lambda: conn)
+    monkeypatch.setattr(search_mod, "_embedding_settings_signature", lambda user_id: "embedding:v1")
+    monkeypatch.setattr(retrieval_cache.redis, "get_json", lambda key: _async_value({"chunks": "bad", "trace_parts": []}))
+    calls = []
+
+    async def fake_evidence(*args, **kwargs):
+        calls.append(args[0])
+        return [_source_chunk("chunk-1", "Attack Titan evidence")], {"sub_query": args[0], "baseline_lengths": {}}
+
+    monkeypatch.setattr(search_mod, "_evidence_for", fake_evidence)
+
+    result = await search_mod.search_node(_search_state())
+
+    assert calls == ["Attack Titan"]
+    assert result["chunks"][0]["id"] == "chunk-1"
 
 
 def test_query_snippets_expand_physical_terms():
@@ -658,11 +728,11 @@ def test_query_subjects_semantic_cache_key_changes_with_signatures(monkeypatch):
     assert first[0] != third[0]
 
 
-def test_subject_cache_todo_sits_before_verifier_boundary():
+def test_evidence_cache_comment_sits_before_verifier_boundary():
     source = inspect.getsource(RagServiceImpl.query)
 
-    assert "TODO: evidence-search cache belongs here, before verifier" in source
-    assert source.index("TODO: evidence-search cache") < source.index("self.query_verifier.run")
+    assert "Evidence-search exact cache is inside QueryEvidenceChain, before verifier." in source
+    assert source.index("Evidence-search exact cache") < source.index("self.query_verifier.run")
 
 
 async def test_normalizer_reuses_single_exact_name_or_alias_match(monkeypatch):
@@ -827,6 +897,46 @@ def test_source_chunk_lexical_search_filters_directories_and_tag_ids(monkeypatch
     assert [row["id"] for row in rows] == ["chunk-1"]
 
 
+def test_retrieval_index_version_bumps_for_source_and_recall_changes(monkeypatch):
+    conn = _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(retrieval_index, "get_connection", lambda: conn)
+    conn.execute("INSERT INTO raw_inputs (id, job_id, content, user_id) VALUES ('raw-1', 'note-1', 'text', 'user-1')")
+
+    assert retrieval_index.get_version("user-1") == 0
+    source_chunks.save_many([_source_chunk("chunk-1", "Grisha text")])
+    assert retrieval_index.get_version("user-1") == 1
+    assert source_chunks.update_directory_path("raw-1", "/dir/") is True
+    assert retrieval_index.get_version("user-1") == 2
+
+    recall.save_index({
+        "recall_keys": [{"id": "key-1", "name": "Grisha", "kind": "entity", "kind_label": None, "aliases": [], "summary": "", "metadata": {}}],
+        "recall_links": [{"id": "link-1", "recall_key_id": "key-1", "source_chunk_id": "chunk-1", "relation": "about", "relation_label": "", "confidence": 1, "reason": "", "metadata": {}}],
+        "analysis": {},
+    }, "user-1")
+
+    assert retrieval_index.get_version("user-1") == 3
+
+
+def test_retrieval_index_version_bumps_for_filters_and_lifecycle(monkeypatch):
+    conn = _memory_db()
+    for module in (notes, tags, raw_inputs, retrieval_index):
+        monkeypatch.setattr(module, "get_connection", lambda conn=conn: conn)
+
+    note_id = notes.create("text", "user-1")
+    tag_id = tags.create("Important", "user-1")
+    version = retrieval_index.get_version("user-1")
+
+    tags.add_to_note(note_id, tag_id)
+    notes.update(note_id, "text", "user-1", directory_id=None)
+    notes.delete(note_id, "user-1")
+    notes.restore(note_id, "user-1")
+    raw_id = raw_inputs.save("note-1", "text", "user-1")
+    raw_inputs.soft_delete(raw_id)
+    raw_inputs.restore(raw_id)
+
+    assert retrieval_index.get_version("user-1") == version + 6
+
+
 def test_recall_repository_reused_key_preserves_name_and_updates_summary(monkeypatch):
     conn = _memory_db()
     monkeypatch.setattr(recall, "get_connection", lambda: conn)
@@ -891,6 +1001,7 @@ def test_dev_wipe_clears_durability_sqlite_lookup_and_vectors(monkeypatch):
 
     dev.wipe_all()
 
+    assert retrieval_index.get_version("user-1") == 2
     for table in ("ingest_checkpoints", "ingest_jobs", "recall_links", "recall_key_terms", "recall_keys_fts", "recall_keys", "source_chunks", "raw_inputs"):
         assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
     assert conn.execute("SELECT name FROM sqlite_master WHERE name = 'vector_reset_called'").fetchone()
@@ -1101,6 +1212,33 @@ def _candidate(key_id: str, name: str, source: str) -> dict:
     }
 
 
+def _search_state(**overrides) -> dict:
+    state = {
+        "query": "Attack Titan",
+        "sub_queries": ["Attack Titan"],
+        "extracted_subjects": ["Grisha"],
+        "user_id": "user-1",
+        "reporter": None,
+        "within_directories": [],
+        "excluding_directories": [],
+        "within_tags": [],
+        "excluding_tags": [],
+        "within_tags_condition": "any",
+        "chunks": [],
+        "trace_parts": [],
+    }
+    state.update(overrides)
+    return state
+
+
+async def _raise_async(*args, **kwargs):
+    raise RuntimeError("redis disabled")
+
+
+async def _async_value(value):
+    return value
+
+
 def _memory_db():
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -1112,7 +1250,7 @@ def _memory_db():
 
 def _patch_memory_db(monkeypatch):
     conn = _memory_db()
-    for module in (raw_inputs, source_chunks, recall, durability_repo, config_presets):
+    for module in (raw_inputs, source_chunks, recall, retrieval_index, durability_repo, config_presets):
         monkeypatch.setattr(module, "get_connection", lambda conn=conn: conn)
     config_presets.save({"name": "test"}, "user-1")
     return conn

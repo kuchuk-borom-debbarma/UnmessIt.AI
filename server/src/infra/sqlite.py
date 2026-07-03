@@ -64,6 +64,13 @@ def init_db() -> None:
     _add_column_if_missing(conn, "source_chunks", "directory_path", "TEXT")
     conn.executescript(
         """
+        CREATE TABLE IF NOT EXISTS user_retrieval_index_versions (
+            user_id TEXT PRIMARY KEY,
+            version INTEGER NOT NULL DEFAULT 0,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS user_processing_settings (
             user_id TEXT PRIMARY KEY,
             embedding_provider TEXT NOT NULL DEFAULT 'openai',

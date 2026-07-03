@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from src.infra.sqlite import get_connection
-from src.repositories import recall, raw_inputs, source_chunk_vectors, source_chunks
+from src.repositories import recall, raw_inputs, retrieval_index, source_chunk_vectors, source_chunks
 
 
 def memory_view(user_id: str | None = None) -> dict:
@@ -36,6 +36,8 @@ def wipe_all() -> None:
     conn.execute("DELETE FROM recall_keys")
     conn.execute("DELETE FROM source_chunks")
     conn.execute("DELETE FROM raw_inputs")
+    for user_id in user_ids:
+        retrieval_index.bump(user_id, conn)
     conn.commit()
     for user_id in user_ids:
         source_chunk_vectors.reset(user_id)

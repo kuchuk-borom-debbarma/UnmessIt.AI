@@ -42,6 +42,7 @@ Keep the server boring, small, and easy to read.
 - Embedding cache belongs in `src/infra/`, may use in-memory plus Redis layers, and must stay disposable; never make Redis the source of truth for vectors.
 - Exact retrieval LLM caches belong in `src/infra/`, must include prompt text and model/settings signatures in their keys, and must never cache provider failures.
 - Semantic retrieval caches are allowed only for query-planning outputs until a retrieval index version exists; they must be disposable and versioned by prompt plus settings.
+- Evidence-search caches must be exact-only, infra-backed, disposable, and keyed by the SQLite retrieval index version. Bump that version whenever source chunks, recall links/keys, note tags, directory metadata, trash/restore state, or raw inputs change.
 
 ## 6. Routes
 - Keep these URLs stable: `POST /ingest/`, `POST /api/retrieval/query`, `GET /notes/`, `POST /notes/`, `GET /directories/`, `GET /tags/`, `GET /configs/presets`, `GET /configs/processing`, `PUT /configs/processing`, `GET /configs/rotation`, `PUT /configs/rotation`.

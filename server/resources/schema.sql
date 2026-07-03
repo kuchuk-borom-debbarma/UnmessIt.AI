@@ -168,6 +168,13 @@ CREATE INDEX IF NOT EXISTS idx_recall_links_source_chunk ON recall_links(source_
 CREATE INDEX IF NOT EXISTS idx_recall_links_created_at ON recall_links(created_at);
 CREATE INDEX IF NOT EXISTS idx_recall_links_event_time ON recall_links(event_time);
 
+CREATE TABLE IF NOT EXISTS user_retrieval_index_versions (
+    user_id TEXT PRIMARY KEY,
+    version INTEGER NOT NULL DEFAULT 0,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 -- ==============================================================
 -- UNMESSIT AI: Notes and Organization Schema
 -- ==============================================================
