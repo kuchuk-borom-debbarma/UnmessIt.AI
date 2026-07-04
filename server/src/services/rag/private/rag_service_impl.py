@@ -5,9 +5,10 @@ from uuid import uuid4
 
 from src.infra.progress import reset_progress_reporters, set_progress_reporters, set_active_parent_ref
 from src.services.rag.models import IngestResult, QueryResult, ProgressReporter, NullProgressReporter
-from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, QueryVerifierChain, build_query_result
+from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, QueryVerifierChain, SemanticCacheVerifierChain, build_query_result
 from src.services.rag.private.chains.query._search import finalize_chunks
 from src.services.rag.private.pipeline.ingest import get_durable_ingest
+from src.infra import retrieval_cache
 
 
 class RagServiceImpl:
@@ -28,6 +29,7 @@ class RagServiceImpl:
         self.query_evidence = QueryEvidenceChain(json_client)
         self.query_verifier = QueryVerifierChain(json_client)
         self.query_answer = QueryAnswerChain(json_client)
+        self.semantic_verifier = SemanticCacheVerifierChain(json_client)
 
     async def resume_pending_jobs(self) -> None:
         """Resume durable jobs after app startup."""
@@ -78,6 +80,22 @@ class RagServiceImpl:
         tokens = set_progress_reporters(async_report, sync_report)
         try:
             set_active_parent_ref(None)
+            await reporter.report("Checking for identical past questions...", {"depth": 0, "ref": "retrieval:cache_lookup"})
+            
+            cached_match = await retrieval_cache.get_semantic_query_result(user_id, query, threshold=0.95, emit_progress=False)
+            if cached_match:
+                cached_payload, cached_query, distance = cached_match
+                is_safe = await self.semantic_verifier.run(
+                    new_query=query,
+                    cached_query=cached_query,
+                    cached_answer=cached_payload.get("answer", ""),
+                    user_id=user_id,
+                    reporter=reporter
+                )
+                if is_safe:
+                    await reporter.report("Retrieval complete (Cache Hit).", {"depth": 0, "ref": "retrieval:done"})
+                    return cached_payload
+
             await reporter.report("Preparing search...", {"depth": 0, "ref": "retrieval:normalize", "query_chars": len(query)})
             
             set_active_parent_ref("retrieval:evidence")
@@ -141,6 +159,10 @@ class RagServiceImpl:
             
             set_active_parent_ref(None)
             result = build_query_result(query, chunks, answer, trace)
+            
+            # Save the full result to the semantic cache
+            await retrieval_cache.set_semantic_query_result(user_id, query, result)
+            
             await reporter.report(
                 "Retrieval complete.",
                 {

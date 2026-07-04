@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -163,6 +164,74 @@ def set_semantic_json(user_id: str, namespace: str, text: str, value: dict[str, 
         )
     except Exception as exc:
         logger.warning("semantic_cache_set_error error=%s", exc)
+        return
+
+
+async def get_semantic_query_result(user_id: str, text: str, threshold: float = SEMANTIC_THRESHOLD, emit_progress: bool = True) -> tuple[dict[str, Any], str, float] | None:
+    """Return (payload, original_text, distance) if a semantically similar query result exists."""
+    if not user_id or not text:
+        return None
+        
+    namespace = "query_result"
+    try:
+        results = await asyncio.to_thread(
+            chroma.semantic_cache_collection(user_id, namespace).query,
+            query_texts=[text],
+            n_results=1,
+            include=["documents", "metadatas", "distances"],
+        )
+    except Exception as exc:
+        logger.warning("semantic_cache_query_error error=%s", exc)
+        return None
+        
+    distances = (results.get("distances") or [[]])[0]
+    documents = (results.get("documents") or [[]])[0]
+    metadatas = (results.get("metadatas") or [[]])[0]
+    
+    if not distances or not metadatas or not documents:
+        return None
+        
+    distance = float(distances[0])
+    if 1 - distance < threshold:
+        return None
+        
+    redis_key = metadatas[0].get("redis_key")
+    if not redis_key:
+        return None
+        
+    value = await redis.get_json(redis_key)
+    if not isinstance(value, dict):
+        return None
+        
+    return value, documents[0], distance
+
+
+async def set_semantic_query_result(user_id: str, text: str, value: dict[str, Any]) -> None:
+    """Store the query result payload in Redis and index its text in ChromaDB."""
+    if not user_id or not text:
+        return
+        
+    namespace = "query_result"
+    item_id = hashlib.sha256(f"{namespace}:{text}".encode("utf-8")).hexdigest()
+    redis_key = f"unmessit:semantic_cache:{user_id}:{item_id}"
+    
+    # Store large payload in redis for 7 days
+    try:
+        await redis.set_json(redis_key, value, 60 * 60 * 24 * 7)
+    except Exception as exc:
+        logger.warning("semantic_cache_redis_set_error error=%s", exc)
+        return
+        
+    # Store embedding in chroma
+    try:
+        await asyncio.to_thread(
+            chroma.semantic_cache_collection(user_id, namespace).upsert,
+            ids=[item_id],
+            documents=[text],
+            metadatas=[{"redis_key": redis_key}],
+        )
+    except Exception as exc:
+        logger.warning("semantic_cache_chroma_set_error error=%s", exc)
         return
 
 

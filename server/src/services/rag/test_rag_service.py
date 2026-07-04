@@ -917,10 +917,9 @@ async def test_query_answer_sanitizes_invalid_and_malformed_citation_markers():
         ],
         user_id="user-1",
     )
-
     assert result["citation_ids"] == ["chunk-1", "chunk-2"]
-    assert "[[cite:chunk-2]]" in result["answer"]
-    assert "not-real" not in result["answer"]
+    assert "[cite](chunk-2)" in result["answer"]
+    assert "[cite](not-real)" not in result["answer"]
 
 
 async def test_query_answer_prompt_allows_cross_context_comparison():
@@ -1006,7 +1005,7 @@ async def test_query_answer_failure_fallback_is_not_cached(monkeypatch):
     second = await QueryAnswerChain(FailThenOkJson()).run("Subject Alpha", chunks, "user-1")
 
     assert first["answer"] == "I found relevant source chunks, but answer generation failed."
-    assert second["answer"] == "Fresh answer. [[cite:chunk-1]]"
+    assert second["answer"] == "Fresh answer. [cite](chunk-1)"
     assert len(calls) == 2
 
 
@@ -1026,7 +1025,7 @@ async def test_query_answer_ignores_invalid_cached_payload(monkeypatch):
 
     result = await QueryAnswerChain(CountingJson()).run("Subject Alpha", chunks, "user-1")
 
-    assert result["answer"] == "Fresh answer. [[cite:chunk-1]]"
+    assert result["answer"] == "Fresh answer. [cite](chunk-1)"
     assert len(calls) == 1
 
 

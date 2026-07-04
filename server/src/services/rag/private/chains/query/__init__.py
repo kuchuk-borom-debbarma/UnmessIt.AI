@@ -10,6 +10,7 @@ from src.services.rag.models import ProgressReporter
 
 from ._graph import build_retrieval_graph
 from ._search import finalize_chunks
+from ._semantic_verifier import SemanticCacheVerifierChain
 
 logger = logging.getLogger(__name__)
 _CITE_MARKER_RE = re.compile(r"\[\[cite:([^\]\s]+)\]\]?")
@@ -383,9 +384,8 @@ def _answer_system_prompt() -> str:
         "For attribute questions, collect small details from all relevant snippets before deciding the answer is missing. "
         "For attribute answers, preserve exact counts, labels, descriptors, and qualifiers when the snippets contain them. "
         "Use cautious wording for inference, but provide the inference when the evidence supports it. "
-        "Embed source markers directly in the answer where they help verification, using exactly the format [[cite:SOURCE_CHUNK_ID]] immediately after the supported claim. "
-        "Do not format citations as markdown links (e.g. avoid [cite](...)). Use the raw [[cite:...]] format. "
-        "Do not show raw ids except inside [[cite:...]] markers. "
+        "Embed source markers directly in the answer where they help verification, using markdown links: [cite](SOURCE_CHUNK_ID). "
+        "Do not show raw ids except inside the citation link. "
         "Citations must be source_chunk ids from SOURCE_CHUNKS."
     )
 
@@ -394,7 +394,7 @@ def _answer_human_prompt(query: str, chunks: list[dict[str, Any]]) -> str:
     return (
         f"QUERY:\n{query}\n\n"
         f"SOURCE_CHUNKS:\n{json.dumps(_chunk_payload(chunks), ensure_ascii=False)}\n\n"
-        'Return JSON with keys: {"answer":"markdown string with optional [[cite:source_chunk_id]] markers","citation_ids":["source_chunk_id"]}'
+        'Return JSON with keys: {"answer":"markdown string with optional [cite](source_chunk_id) markers","citation_ids":["source_chunk_id"]}'
     )
 
 
@@ -407,14 +407,23 @@ def _answer_cache_key(query: str, user_id: str | None, system: str, human: str) 
 
 def _normalize_answer_result(data: dict[str, Any], chunks: list[dict[str, Any]]) -> dict[str, Any]:
     answer = str(data.get("answer") or "").strip()
-    # If the LLM ignored instructions and formatted citations as markdown links, try to salvage them
-    answer = re.sub(r'\[cite\]\(([^)]+)\)', r'[[cite:\1]]', answer)
-    answer = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', lambda m: f"[[cite:{m.group(2)}]]" if "cite" in m.group(1).lower() else m.group(0), answer)
     
     valid_ids = {chunk["id"] for chunk in chunks}
-    marker_ids = [match.group(1) for match in _CITE_MARKER_RE.finditer(answer) if match.group(1) in valid_ids]
+    
+    # Support both legacy [[cite:id]] and modern [cite](id)
+    marker_ids: list[str] = []
+    for match in _CITE_MARKER_RE.finditer(answer):
+        marker_ids.append(match.group(1))
+        
+    for match in re.finditer(r'\[([^\]]+)\]\(([^)\s]+)\)', answer):
+        if "cite" in match.group(1).lower() or match.group(2) in valid_ids:
+            marker_ids.append(match.group(2))
+            
+    marker_ids = [m for m in marker_ids if m in valid_ids]
+    
     citation_ids = [str(item) for item in data.get("citation_ids", []) if str(item) in valid_ids]
     citation_ids = list(dict.fromkeys([*citation_ids, *marker_ids]))[:6]
+    
     answer = _sanitize_answer_citations(answer, set(citation_ids))
     return {
         "answer": answer or "I found relevant source chunks, but no answer was generated.",
@@ -554,11 +563,18 @@ def _valid_ids(value: Any, valid_ids: set[str]) -> list[str]:
 
 
 def _sanitize_answer_citations(answer: str, citation_ids: set[str]) -> str:
-    def replace(match: re.Match[str]) -> str:
+    def replace_legacy(match: re.Match[str]) -> str:
         chunk_id = match.group(1)
-        return f"[[cite:{chunk_id}]]" if chunk_id in citation_ids else ""
+        return f"[cite]({chunk_id})" if chunk_id in citation_ids else ""
+        
+    def replace_markdown(match: re.Match[str]) -> str:
+        text, chunk_id = match.group(1), match.group(2)
+        if "cite" in text.lower() or chunk_id in citation_ids:
+            return f"[{text}]({chunk_id})" if chunk_id in citation_ids else ""
+        return match.group(0)
 
-    cleaned = _CITE_MARKER_RE.sub(replace, answer)
+    cleaned = _CITE_MARKER_RE.sub(replace_legacy, answer)
+    cleaned = re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', replace_markdown, cleaned)
     cleaned = re.sub(r"[ \t]+([,.;:])", r"\1", cleaned)
     cleaned = re.sub(r"([,;:])(?:[ \t]*[,;:])+", r"\1", cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
