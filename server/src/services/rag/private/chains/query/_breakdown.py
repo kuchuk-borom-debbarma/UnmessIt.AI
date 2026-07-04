@@ -89,6 +89,7 @@ async def _decompose(json_client, query: str, user_id: str, cache_events: list[d
             system,
             human,
             user_id=user_id,
+            stage="retrieval.query_breakdown",
         )
         sub_queries = data.get("sub_queries") if isinstance(data, dict) else None
         if not isinstance(sub_queries, list) or not sub_queries:
@@ -136,7 +137,7 @@ def _breakdown_human_prompt(query: str) -> str:
 
 
 def _breakdown_cache_key(query: str, user_id: str | None, system: str, human: str) -> str | None:
-    signature = retrieval_cache.llm_settings_signature(user_id)
+    signature = retrieval_cache.llm_settings_signature(user_id, "retrieval.query_breakdown")
     if not signature:
         return None
     return retrieval_cache.cache_key("query_breakdown:v1", signature, system, human, query)

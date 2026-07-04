@@ -11,10 +11,11 @@ from langchain_core.output_parsers import JsonOutputParser
 from langchain_openai import ChatOpenAI
 
 from src.infra.rate_limit import RateLimitedModel, get_limiter
-from src.infra.settings import Settings, get_user_setting_candidates, get_user_settings
+from src.infra.settings import Settings, get_user_llm_setting_candidates, get_user_llm_settings
 from src.infra.progress import report_progress, set_last_llm_rotation_snapshot, report_progress_sync
 
 logger = logging.getLogger(__name__)
+get_user_setting_candidates = get_user_llm_setting_candidates
 
 
 class JsonLLMClient:
@@ -28,18 +29,18 @@ class JsonLLMClient:
         """Allow tests to inject a fake `llm` without touching LangChain."""
         self.llm = llm
 
-    def invoke_json(self, system: str, human: str, user_id: str) -> dict[str, Any]:
+    def invoke_json(self, system: str, human: str, user_id: str, stage: str | None = None) -> dict[str, Any]:
         """Invoke the chat model and parse a JSON object."""
         if self.llm:
-            return self._invoke_with_settings(self.llm, get_user_settings(user_id), system, human)
+            return self._invoke_with_settings(self.llm, get_user_llm_settings(user_id, stage), system, human)
 
         errors = []
-        candidates = list(get_user_setting_candidates(user_id))
+        candidates = list(get_user_llm_setting_candidates(user_id, stage) if stage else get_user_setting_candidates(user_id))
 
         for index, settings in enumerate(candidates, start=1):
             report_progress_sync(
                 f"LLM config {index}/{len(candidates)} selected: {settings.preset_name}",
-                {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "attempt": index, "total": len(candidates)},
+                {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "stage": stage, "attempt": index, "total": len(candidates)},
             )
             try:
                 result = self._invoke_with_settings(_get_chat_llm(settings.llm_cache_key()), settings, system, human)
@@ -81,18 +82,18 @@ class JsonLLMClient:
                 messages = _repair_messages(content, str(exc))
         raise ValueError(f"LLM returned invalid JSON: {last_error}")
 
-    async def async_invoke_json(self, system: str, human: str, user_id: str) -> dict[str, Any]:
+    async def async_invoke_json(self, system: str, human: str, user_id: str, stage: str | None = None) -> dict[str, Any]:
         """Async variant: awaits ainvoke() so the event loop stays free during LLM I/O."""
         if self.llm:
-            return await self._async_invoke_with_settings(self.llm, get_user_settings(user_id), system, human)
+            return await self._async_invoke_with_settings(self.llm, get_user_llm_settings(user_id, stage), system, human)
 
         errors = []
-        candidates = list(get_user_setting_candidates(user_id))
+        candidates = list(get_user_llm_setting_candidates(user_id, stage) if stage else get_user_setting_candidates(user_id))
 
         for index, settings in enumerate(candidates, start=1):
             await report_progress(
                 f"LLM config {index}/{len(candidates)} selected: {settings.preset_name}",
-                {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "attempt": index, "total": len(candidates)},
+                {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "stage": stage, "attempt": index, "total": len(candidates)},
             )
             try:
                 result = await self._async_invoke_with_settings(_get_chat_llm(settings.llm_cache_key()), settings, system, human)

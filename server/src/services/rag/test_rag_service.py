@@ -29,6 +29,7 @@ from src.services.rag.private.durability import events as durability_events
 from src.services.rag.private.durability import repository as durability_repo
 from src.services.rag.private.durability.models import STAGE_SOURCE_CHUNKS, STATUS_ABORTED, STATUS_FAILED, STATUS_QUEUED, STATUS_WAITING_RETRY
 from src.services.rag.private.durability.runner import DurableIngestRunner
+from src.services.rag.private.durability import runner as runner_mod
 from src.services.rag.private.pipeline.ingest import submit_ingest_job, get_durable_ingest
 from src.services.rag.private.rag_service_impl import RagServiceImpl
 from src.infra import retrieval_cache
@@ -150,7 +151,7 @@ async def test_query_verifier_exact_cache_skips_second_llm_call(monkeypatch):
                 "retry_query": "",
             }
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
     chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
     reporter = CaptureReporter()
 
@@ -176,12 +177,12 @@ def test_query_verifier_cache_key_changes_with_payload_attempt_and_settings(monk
     chunk_a = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
     chunk_b = [_source_chunk("chunk-1", "Changed compact evidence.")]
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
     first = _verifier_cache_key("Subject Alpha", "user-1", 1, system, _verifier_human_prompt("Subject Alpha", chunk_a))
     changed_payload = _verifier_cache_key("Subject Alpha", "user-1", 1, system, _verifier_human_prompt("Subject Alpha", chunk_b))
     changed_attempt = _verifier_cache_key("Subject Alpha", "user-1", 2, system, _verifier_human_prompt("Subject Alpha", chunk_a))
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-b")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-b")
     changed_settings = _verifier_cache_key("Subject Alpha", "user-1", 1, system, _verifier_human_prompt("Subject Alpha", chunk_a))
 
     assert first != changed_payload
@@ -200,7 +201,7 @@ async def test_query_verifier_failure_fallback_is_not_cached(monkeypatch):
                 raise RuntimeError("down")
             return {"status": "sufficient", "reason": "ok", "on_topic_ids": ["chunk-1"], "off_topic_ids": [], "retry_query": ""}
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
     chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
 
     first = await QueryVerifierChain(FailThenOkJson()).run("Subject Alpha", chunks, "user-1")
@@ -220,7 +221,7 @@ async def test_query_verifier_ignores_invalid_cached_payload(monkeypatch):
             calls.append(human)
             return {"status": "sufficient", "reason": "fresh", "on_topic_ids": ["chunk-1"], "off_topic_ids": [], "retry_query": ""}
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
     chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
     key = _verifier_cache_key("Subject Alpha", "user-1", 1, _verifier_system_prompt(), _verifier_human_prompt("Subject Alpha", chunks))
     retrieval_cache.get_memory_json_cache().set(key, {"status": "bad", "on_topic_ids": ["chunk-1"], "off_topic_ids": [], "retry_query": ""})
@@ -244,7 +245,7 @@ async def test_query_verifier_cached_needs_retry_is_returned(monkeypatch):
                 "retry_query": "Subject Alpha focused retry",
             }
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
     chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
 
     await QueryVerifierChain(RetryVerifierJson()).run("Subject Alpha", chunks, "user-1")
@@ -950,7 +951,7 @@ async def test_query_answer_exact_cache_skips_second_llm_call(monkeypatch):
             calls.append(human)
             return {"answer": "Supported answer. [[cite:chunk-1]]", "citation_ids": []}
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
     chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
     reporter = CaptureReporter()
 
@@ -973,11 +974,11 @@ def test_query_answer_cache_key_changes_with_payload_and_settings(monkeypatch):
     chunk_a = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
     chunk_b = [_source_chunk("chunk-1", "Changed evidence.")]
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
     first = _answer_cache_key("Subject Alpha", "user-1", system, _answer_human_prompt("Subject Alpha", chunk_a))
     changed_payload = _answer_cache_key("Subject Alpha", "user-1", system, _answer_human_prompt("Subject Alpha", chunk_b))
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-b")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-b")
     changed_settings = _answer_cache_key("Subject Alpha", "user-1", system, _answer_human_prompt("Subject Alpha", chunk_a))
 
     assert first != changed_payload
@@ -995,7 +996,7 @@ async def test_query_answer_failure_fallback_is_not_cached(monkeypatch):
                 raise RuntimeError("down")
             return {"answer": "Fresh answer. [[cite:chunk-1]]", "citation_ids": []}
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
     chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
 
     first = await QueryAnswerChain(FailThenOkJson()).run("Subject Alpha", chunks, "user-1")
@@ -1015,7 +1016,7 @@ async def test_query_answer_ignores_invalid_cached_payload(monkeypatch):
             calls.append(human)
             return {"answer": "Fresh answer. [[cite:chunk-1]]", "citation_ids": []}
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
     chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
     key = _answer_cache_key("Subject Alpha", "user-1", _answer_system_prompt(), _answer_human_prompt("Subject Alpha", chunks))
     retrieval_cache.get_memory_json_cache().set(key, {"answer": "bad", "citation_ids": ["not-real"]})
@@ -1029,7 +1030,7 @@ async def test_query_answer_ignores_invalid_cached_payload(monkeypatch):
 async def test_query_answer_cached_payload_keeps_sanitized_citations(monkeypatch):
     retrieval_cache.get_memory_json_cache.cache_clear()
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
     chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
     key = _answer_cache_key("Subject Alpha", "user-1", _answer_system_prompt(), _answer_human_prompt("Subject Alpha", chunks))
     retrieval_cache.get_memory_json_cache().set(
@@ -1160,7 +1161,7 @@ async def test_query_breakdown_cache_skips_second_llm_call(monkeypatch):
             calls.append(human)
             return {"sub_queries": ["original", "cached expansion"]}
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "settings-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "settings-a")
 
     first = await breakdown_mod._decompose(CountingJson(), "original", "user-1")
     second = await breakdown_mod._decompose(CountingJson(), "original", "user-1")
@@ -1180,7 +1181,7 @@ async def test_query_breakdown_cache_misses_when_settings_change(monkeypatch):
             calls.append(human)
             return {"sub_queries": ["original", f"call {len(calls)}"]}
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: next(signatures))
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: next(signatures))
 
     first = await breakdown_mod._decompose(CountingJson(), "original", "user-1")
     second = await breakdown_mod._decompose(CountingJson(), "original", "user-1")
@@ -1199,7 +1200,7 @@ async def test_query_subjects_exact_cache_skips_second_llm_call(monkeypatch):
             calls.append(human)
             return {"subjects": ["Subject Alpha"]}
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
     monkeypatch.setattr(subjects_mod, "_subjects_semantic_cache_key", lambda *args: None)
 
     first = await subjects_mod._identify_subjects(CountingJson(), "query", ["query"], "user-1")
@@ -1219,7 +1220,7 @@ async def test_query_subjects_exact_cache_stores_empty_subjects(monkeypatch):
             calls.append(human)
             return {"subjects": []}
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
     monkeypatch.setattr(subjects_mod, "_subjects_semantic_cache_key", lambda *args: None)
 
     assert await subjects_mod._identify_subjects(EmptyJson(), "query", ["query"], "user-1") == []
@@ -1238,7 +1239,7 @@ async def test_query_subjects_failure_fallback_is_not_cached(monkeypatch):
                 raise RuntimeError("down")
             return {"subjects": ["Subject Alpha"]}
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
     monkeypatch.setattr(subjects_mod, "_subjects_semantic_cache_key", lambda *args: None)
 
     assert await subjects_mod._identify_subjects(FailThenOkJson(), "query", ["query"], "user-1") == []
@@ -1279,14 +1280,14 @@ async def test_query_subjects_semantic_miss_calls_llm(monkeypatch):
 
 
 def test_query_subjects_semantic_cache_key_changes_with_signatures(monkeypatch):
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
     monkeypatch.setattr(subjects_mod, "_embedding_settings_signature", lambda user_id: "embed-a")
     first = subjects_mod._subjects_semantic_cache_key("query", ["sub"], "user-1", "system")
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-b")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-b")
     second = subjects_mod._subjects_semantic_cache_key("query", ["sub"], "user-1", "system")
 
-    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id: "llm-a")
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
     monkeypatch.setattr(subjects_mod, "_embedding_settings_signature", lambda user_id: "embed-b")
     third = subjects_mod._subjects_semantic_cache_key("query", ["sub"], "user-1", "system")
 
@@ -1629,6 +1630,7 @@ async def test_durable_runner_aborts_job_missing_raw_input(monkeypatch):
 
 async def test_durable_source_chunks_resume_from_next_unfinished_piece(monkeypatch):
     _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(runner_mod, "INGEST_PARALLELISM", 1)
     monkeypatch.setattr(recall_key_vectors, "exists", lambda key_id, user_id: True)
     monkeypatch.setattr(source_chunk_vectors, "exists", lambda chunk_id, user_id: True)
 
@@ -1668,6 +1670,7 @@ async def test_durable_source_chunks_resume_from_next_unfinished_piece(monkeypat
 async def test_durable_runner_batches_vector_embeddings(monkeypatch):
     conn = _patch_memory_db(monkeypatch)
     calls = {"recall": [], "source": []}
+    monkeypatch.setattr(runner_mod, "INGEST_PARALLELISM", 1)
     monkeypatch.setattr("src.services.rag.private.durability.runner.get_user_settings", lambda user_id: type("Settings", (), {"embedding_batch_size": 100})())
     monkeypatch.setattr(recall_key_vectors, "exists", lambda key_id, user_id: False)
     monkeypatch.setattr(source_chunk_vectors, "exists", lambda chunk_id, user_id: False)
@@ -1685,8 +1688,26 @@ async def test_durable_runner_batches_vector_embeddings(monkeypatch):
     assert conn.execute("SELECT COUNT(*) FROM ingest_checkpoints WHERE stage = 'source_vectors' AND status = 'complete'").fetchone()[0] == 2
 
 
-async def test_durable_runner_pause_stops_after_current_unit(monkeypatch):
+async def test_bounded_gather_caps_parallel_units(monkeypatch):
+    monkeypatch.setattr(runner_mod, "INGEST_PARALLELISM", 2)
+    active = 0
+    peak = 0
+
+    async def unit():
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+
+    await runner_mod._bounded_gather([unit for _ in range(5)])
+
+    assert peak == 2
+
+
+async def test_durable_runner_pause_stops_after_current_inflight_unit(monkeypatch):
     _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(runner_mod, "INGEST_PARALLELISM", 1)
 
     raw_id = raw_inputs.save_or_reuse("job-1", "one two", "user-1", "hash-1")
     job = durability_repo.create_or_reuse_job("job-1", "hash-1", raw_id)

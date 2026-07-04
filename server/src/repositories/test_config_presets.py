@@ -4,7 +4,8 @@ import sqlite3
 from pathlib import Path
 
 from src.infra.settings import get_user_embedding_setting_candidates, get_user_llm_setting_candidates, get_user_setting_candidates
-from src.repositories import config_presets
+from src.infra import retrieval_cache
+from src.repositories import config_presets, config_profiles
 
 
 def _db(monkeypatch):
@@ -14,6 +15,7 @@ def _db(monkeypatch):
     conn.executescript(schema.read_text())
     conn.execute("INSERT INTO users (id, identifier, password_hash) VALUES ('user-1', 'u', 'h')")
     monkeypatch.setattr(config_presets, "get_connection", lambda: conn)
+    monkeypatch.setattr(config_profiles, "get_connection", lambda: conn)
     get_user_setting_candidates.cache_clear()
     get_user_llm_setting_candidates.cache_clear()
     get_user_embedding_setting_candidates.cache_clear()
@@ -93,3 +95,40 @@ def test_activating_specific_config_disables_rotation(monkeypatch):
     assert config_presets.get_rotation_config("user-1")["llm"]["enabled"] is False
     assert config_presets.get_rotation_config("user-1")["embedding"]["enabled"] is False
     assert get_user_setting_candidates("user-1")[0].preset_name == "second"
+
+
+def test_stage_specific_llm_config_resolution(monkeypatch):
+    _db(monkeypatch)
+    fast = config_profiles.save_llm({"name": "fast", "llm_model": "gpt-fast"}, "user-1")
+    smart = config_profiles.save_llm({"name": "smart", "llm_model": "gpt-smart"}, "user-1")
+
+    config_profiles.save_stage("user-1", "retrieval.query_breakdown", "llm", False, [], fast)
+    config_profiles.save_stage("user-1", "retrieval.answer", "llm", False, [], smart)
+
+    assert get_user_llm_setting_candidates("user-1", "retrieval.query_breakdown")[0].llm_model == "gpt-fast"
+    assert get_user_llm_setting_candidates("user-1", "retrieval.answer")[0].llm_model == "gpt-smart"
+
+
+def test_stage_rotation_is_isolated(monkeypatch):
+    _db(monkeypatch)
+    first = config_profiles.save_llm({"name": "first", "llm_model": "gpt-first"}, "user-1")
+    second = config_profiles.save_llm({"name": "second", "llm_model": "gpt-second"}, "user-1")
+
+    config_profiles.save_stage("user-1", "retrieval.verifier", "llm", True, [second, first], first)
+    config_profiles.save_stage("user-1", "retrieval.answer", "llm", False, [], first)
+
+    assert [item.llm_model for item in get_user_llm_setting_candidates("user-1", "retrieval.verifier")] == ["gpt-second", "gpt-first"]
+    assert [item.llm_model for item in get_user_llm_setting_candidates("user-1", "retrieval.answer")] == ["gpt-first"]
+
+
+def test_stage_signature_changes_with_config(monkeypatch):
+    _db(monkeypatch)
+    first = config_profiles.save_llm({"name": "first", "llm_model": "gpt-first"}, "user-1")
+    second = config_profiles.save_llm({"name": "second", "llm_model": "gpt-second"}, "user-1")
+
+    config_profiles.save_stage("user-1", "retrieval.answer", "llm", False, [], first)
+    before = retrieval_cache.llm_settings_signature("user-1", "retrieval.answer")
+    config_profiles.save_stage("user-1", "retrieval.answer", "llm", False, [], second)
+    after = retrieval_cache.llm_settings_signature("user-1", "retrieval.answer")
+
+    assert before != after

@@ -102,6 +102,7 @@ Prompts should be boring, standard, explicit, and portable across domains. A goo
 - Query-planning output participates in exact and semantic evidence-search cache keys, so prompt changes that affect sub-query or subject wording should be deliberate and covered by retrieval cache tests.
 - Verifier prompt text participates in exact verifier cache keys, so verifier prompt changes invalidate cached verifier decisions automatically.
 - Answer prompt text participates in exact answer cache keys, so answer prompt changes invalidate cached final answers automatically.
+- Stage-specific model routing must not change prompt contracts. Prompts should stay portable across configured stage models, with cache keys/signatures handling model changes outside the prompt text.
 
 ## 11. Provider-Native Prompt Caching
 

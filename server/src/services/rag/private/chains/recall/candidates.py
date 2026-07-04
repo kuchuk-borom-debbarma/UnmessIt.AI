@@ -139,7 +139,7 @@ def _chunk_payload(source_chunks: list[SourceChunk]) -> list[dict[str, Any]]:
 
 def _embedding_settings_signature(user_id: str) -> str:
     try:
-        settings = get_user_embedding_settings(user_id)
+        settings = get_user_embedding_settings(user_id, "ingest.recall_key_vectors")
     except Exception:
         return "embedding-settings:none"
     return "|".join([

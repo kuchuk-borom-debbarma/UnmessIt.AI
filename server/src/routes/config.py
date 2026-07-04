@@ -10,7 +10,7 @@ from src.infra.settings import parse_retry_backoff_seconds
 from src.infra.langchain_json import _get_chat_llm
 from src.infra.chroma import _embedding_function_for_key
 from src.routes.auth_utils import get_current_user_id
-from src.repositories import config_presets
+from src.repositories import config_presets, config_profiles
 
 router = APIRouter(prefix="/configs", tags=["Config"])
 
@@ -59,6 +59,51 @@ class ProcessingSettingsPayload(BaseModel):
     @classmethod
     def valid_backoff(cls, value: str) -> str:
         return ",".join(str(item) for item in parse_retry_backoff_seconds(value))
+
+
+class LLMConfigPayload(BaseModel):
+    name: str = "LLM"
+    llm_provider: str = "openai"
+    llm_model: str = "gpt-4o"
+    llm_base_url: str | None = None
+    llm_api_key: str | None = None
+    llm_temperature: float = 0.0
+    llm_max_retries: int = 2
+    llm_max_tokens: int | None = None
+    llm_rate_limit_per_minute: int = 0
+
+    @field_validator("llm_provider")
+    @classmethod
+    def openai_only(cls, value: str) -> str:
+        normalized = value.lower()
+        if normalized != "openai":
+            raise ValueError("Only OpenAI provider is supported")
+        return normalized
+
+
+class EmbeddingConfigPayload(BaseModel):
+    name: str = "Embedding"
+    embedding_provider: str = "openai"
+    embedding_model: str = "text-embedding-3-small"
+    embedding_base_url: str | None = None
+    embedding_api_key: str | None = None
+    embedding_rate_limit_per_minute: int = 0
+    embedding_batch_size: int = 100
+
+    @field_validator("embedding_provider")
+    @classmethod
+    def openai_only(cls, value: str) -> str:
+        normalized = value.lower()
+        if normalized != "openai":
+            raise ValueError("Only OpenAI provider is supported")
+        return normalized
+
+
+class StageConfigPayload(BaseModel):
+    kind: Literal["llm", "embedding"]
+    enabled: bool = False
+    config_ids: list[str] = Field(default_factory=list)
+    active_config_id: str | None = None
 
 
 class RotationLanePayload(BaseModel):
@@ -113,6 +158,78 @@ def list_presets(user_id: str = Depends(get_current_user_id)) -> list[dict[str, 
         preset["llm_is_active"] = 1 if not rotation["llm"].get("enabled") and preset["id"] == rotation["llm"].get("active_preset_id") else 0
         preset["embedding_is_active"] = 1 if not rotation["embedding"].get("enabled") and preset["id"] == rotation["embedding"].get("active_preset_id") else 0
     return presets
+
+
+@router.get("/llm")
+def list_llm_configs(user_id: str = Depends(get_current_user_id)) -> list[dict[str, Any]]:
+    return [_public_llm_config(item) for item in config_profiles.list_llm(user_id)]
+
+
+@router.post("/llm")
+def create_llm_config(payload: LLMConfigPayload, user_id: str = Depends(get_current_user_id)) -> dict[str, str]:
+    return {"id": config_profiles.save_llm(payload.model_dump(exclude_unset=True), user_id)}
+
+
+@router.put("/llm/{config_id}")
+def update_llm_config(config_id: str, payload: LLMConfigPayload, user_id: str = Depends(get_current_user_id)) -> dict[str, str]:
+    existing = config_profiles.get_llm(config_id, user_id)
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LLM config not found")
+    data = payload.model_dump(exclude_unset=True)
+    data["id"] = config_id
+    if not data.get("llm_api_key"):
+        data["llm_api_key"] = existing.get("llm_api_key", "")
+    return {"id": config_profiles.save_llm(data, user_id)}
+
+
+@router.delete("/llm/{config_id}")
+def delete_llm_config(config_id: str, user_id: str = Depends(get_current_user_id)) -> dict[str, str]:
+    if config_profiles.delete_llm(config_id, user_id):
+        return {"status": "ok"}
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LLM config not found")
+
+
+@router.get("/embedding")
+def list_embedding_configs(user_id: str = Depends(get_current_user_id)) -> list[dict[str, Any]]:
+    return [_public_embedding_config(item) for item in config_profiles.list_embedding(user_id)]
+
+
+@router.post("/embedding")
+def create_embedding_config(payload: EmbeddingConfigPayload, user_id: str = Depends(get_current_user_id)) -> dict[str, str]:
+    return {"id": config_profiles.save_embedding(payload.model_dump(exclude_unset=True), user_id)}
+
+
+@router.put("/embedding/{config_id}")
+def update_embedding_config(config_id: str, payload: EmbeddingConfigPayload, user_id: str = Depends(get_current_user_id)) -> dict[str, str]:
+    existing = config_profiles.get_embedding(config_id, user_id)
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Embedding config not found")
+    data = payload.model_dump(exclude_unset=True)
+    data["id"] = config_id
+    if not data.get("embedding_api_key"):
+        data["embedding_api_key"] = existing.get("embedding_api_key", "")
+    return {"id": config_profiles.save_embedding(data, user_id)}
+
+
+@router.delete("/embedding/{config_id}")
+def delete_embedding_config(config_id: str, user_id: str = Depends(get_current_user_id)) -> dict[str, str]:
+    if config_profiles.delete_embedding(config_id, user_id):
+        return {"status": "ok"}
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Embedding config not found")
+
+
+@router.get("/stages")
+def get_stage_configs(user_id: str = Depends(get_current_user_id)) -> dict[str, Any]:
+    return _stage_response(user_id)
+
+
+@router.put("/stages/{stage}")
+def update_stage_config(stage: str, payload: StageConfigPayload, user_id: str = Depends(get_current_user_id)) -> dict[str, Any]:
+    try:
+        config_profiles.save_stage(user_id, stage, payload.kind, payload.enabled, payload.config_ids, payload.active_config_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return _stage_response(user_id)
 
 
 @router.get("/processing")
@@ -288,6 +405,26 @@ def _rotation_response(user_id: str) -> dict[str, Any]:
         "llm": {**config["llm"], "presets": llm_presets},
         "embedding": {**config["embedding"], "presets": embedding_presets},
     }
+
+
+def _stage_response(user_id: str) -> dict[str, Any]:
+    return {
+        **config_profiles.get_stages(user_id),
+        "llm_configs": [_public_llm_config(item) for item in config_profiles.list_llm(user_id)],
+        "embedding_configs": [_public_embedding_config(item) for item in config_profiles.list_embedding(user_id)],
+    }
+
+
+def _public_llm_config(config: dict[str, Any]) -> dict[str, Any]:
+    clean = dict(config)
+    clean.pop("llm_api_key", None)
+    return clean
+
+
+def _public_embedding_config(config: dict[str, Any]) -> dict[str, Any]:
+    clean = dict(config)
+    clean.pop("embedding_api_key", None)
+    return clean
 
 
 def _public_preset(preset: dict[str, Any]) -> dict[str, Any]:

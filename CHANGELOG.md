@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Document ingestion now uses exact memory/Redis caching for `SourceChunkDraftChain` (summaries) and `RecallDraftChain` (entities) to skip re-running expensive LLM calls on identical text blocks.
 - Recall candidate lookup during ingest now uses exact memory/Redis caching to skip repeated SQLite and vector candidate searches before the recall-draft LLM.
 - Retrieval analysis now reports source-context engineering as raw-to-engineered prompt compression, including zero context when verifier and answer both hit cache.
+- AI configuration is now split into named LLM configs and named embedding configs with per-stage single or fallback-rotation routing.
+- Ingestion now runs independent source chunk and recall units with bounded parallelism while preserving durable per-unit checkpoints.
 
 ### Changed
 - Refactored Server-Sent Events (SSE) progress reporting to use a centralized context variable (`_active_parent_ref`) for cleaner nested UI representations.

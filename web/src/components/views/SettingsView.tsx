@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { api } from '../../lib/api'
-import type { ConfigTestResult, Preset, ProcessingSettings, RotationConfig, RotationLane } from '../../lib/api'
+import type { ConfigTestResult, EmbeddingConfig, LLMConfig, Preset, ProcessingSettings, RotationConfig, RotationLane, StageConfig, StageRoute } from '../../lib/api'
 import { useConfig } from '../../lib/context/useConfig'
 import { cn } from '../../lib/utils'
 import { useVersionCheck } from '../../lib/useVersionCheck'
@@ -42,6 +42,9 @@ type ConfigDraft = {
 
 type Toast = { tone: 'success' | 'danger'; message: string }
 type LaneName = 'llm' | 'embedding'
+type SplitKind = 'llm' | 'embedding'
+type LlmDraft = Omit<LLMConfig, 'id'> & { llm_api_key: string }
+type EmbeddingDraft = Omit<EmbeddingConfig, 'id'> & { embedding_api_key: string }
 
 const defaultProcessing: ProcessingSettings = {
   embedding_batch_size: 100,
@@ -75,6 +78,51 @@ const defaultRotation: RotationConfig = {
   embedding: { enabled: false, preset_ids: [], active_preset_id: null, presets: [] },
 }
 
+const defaultStageConfig: StageConfig = {
+  llm: {},
+  embedding: {},
+  llm_configs: [],
+  embedding_configs: [],
+}
+
+const defaultLlmDraft: LlmDraft = {
+  name: 'OpenAI answers',
+  llm_provider: 'openai',
+  llm_model: 'gpt-4o',
+  llm_base_url: '',
+  llm_api_key: '',
+  llm_temperature: 0,
+  llm_max_retries: 2,
+  llm_max_tokens: undefined,
+  llm_rate_limit_per_minute: 0,
+}
+
+const defaultEmbeddingDraft: EmbeddingDraft = {
+  name: 'OpenAI embeddings',
+  embedding_provider: 'openai',
+  embedding_model: 'text-embedding-3-small',
+  embedding_base_url: '',
+  embedding_api_key: '',
+  embedding_rate_limit_per_minute: 0,
+  embedding_batch_size: 100,
+}
+
+const LLM_STAGE_LABELS: Record<string, string> = {
+  'ingest.source_chunk_draft': 'Ingest source summaries',
+  'ingest.recall_draft': 'Ingest recall extraction',
+  'retrieval.query_breakdown': 'Query breakdown',
+  'retrieval.subject_extraction': 'Subject extraction',
+  'retrieval.verifier': 'Verifier',
+  'retrieval.answer': 'Answer',
+}
+
+const EMBEDDING_STAGE_LABELS: Record<string, string> = {
+  'ingest.source_chunk_vectors': 'Source chunk indexing',
+  'ingest.recall_key_vectors': 'Recall key indexing',
+  'retrieval.vector_search': 'Retrieval vector search',
+  'retrieval.semantic_cache': 'Semantic caches',
+}
+
 function ToastMessage({ toast }: { toast: Toast }) {
   return (
     <motion.div
@@ -96,11 +144,18 @@ function ToastMessage({ toast }: { toast: Toast }) {
 export function SettingsView({ token }: { token: string }) {
   const { checkConfig } = useConfig()
   const [presets, setPresets] = useState<Preset[]>([])
+  const [llmConfigs, setLlmConfigs] = useState<LLMConfig[]>([])
+  const [embeddingConfigs, setEmbeddingConfigs] = useState<EmbeddingConfig[]>([])
+  const [stageConfig, setStageConfig] = useState<StageConfig>(defaultStageConfig)
   const [processing, setProcessing] = useState<ProcessingSettings>(defaultProcessing)
   const [rotation, setRotation] = useState<RotationConfig>(defaultRotation)
   const [draft, setDraft] = useState<ConfigDraft>(defaultConfig)
+  const [llmDraft, setLlmDraft] = useState<LlmDraft>(defaultLlmDraft)
+  const [embeddingDraft, setEmbeddingDraft] = useState<EmbeddingDraft>(defaultEmbeddingDraft)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [splitEditing, setSplitEditing] = useState<{ kind: SplitKind; id: string | null } | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
+  const [splitModalOpen, setSplitModalOpen] = useState<SplitKind | null>(null)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [showLoading, setShowLoading] = useState(false)
@@ -120,14 +175,20 @@ export function SettingsView({ token }: { token: string }) {
 
   const load = useCallback(async () => {
     try {
-      const [presetData, processingData, rotationData] = await Promise.all([
+      const [presetData, processingData, rotationData, llmData, embeddingData, stageData] = await Promise.all([
         api<Preset[]>('/api/v1/configs/presets', { token }),
         api<ProcessingSettings>('/api/v1/configs/processing', { token }),
         api<RotationConfig>('/api/v1/configs/rotation', { token }),
+        api<LLMConfig[]>('/api/v1/configs/llm', { token }),
+        api<EmbeddingConfig[]>('/api/v1/configs/embedding', { token }),
+        api<StageConfig>('/api/v1/configs/stages', { token }),
       ])
       setPresets(presetData)
       setProcessing(processingData)
       setRotation(normalizeRotation(rotationData))
+      setLlmConfigs(llmData)
+      setEmbeddingConfigs(embeddingData)
+      setStageConfig(stageData)
     } catch (err) {
       setToast({ tone: 'danger', message: err instanceof Error ? err.message : 'Settings load failed' })
     } finally {
@@ -143,6 +204,25 @@ export function SettingsView({ token }: { token: string }) {
     setDraft(defaultConfig)
     setEditingId(null)
     setModalOpen(true)
+  }
+
+  const openNewSplitConfig = (kind: SplitKind) => {
+    setSplitEditing({ kind, id: null })
+    if (kind === 'llm') setLlmDraft(defaultLlmDraft)
+    else setEmbeddingDraft(defaultEmbeddingDraft)
+    setSplitModalOpen(kind)
+  }
+
+  const openEditSplitConfig = (kind: SplitKind, config: LLMConfig | EmbeddingConfig) => {
+    setSplitEditing({ kind, id: config.id })
+    if (kind === 'llm') {
+      const llm = config as LLMConfig
+      setLlmDraft({ ...llm, llm_base_url: llm.llm_base_url || '', llm_api_key: '' })
+    } else {
+      const embedding = config as EmbeddingConfig
+      setEmbeddingDraft({ ...embedding, embedding_base_url: embedding.embedding_base_url || '', embedding_api_key: '' })
+    }
+    setSplitModalOpen(kind)
   }
 
   const openEditConfig = (preset: Preset) => {
@@ -229,6 +309,54 @@ export function SettingsView({ token }: { token: string }) {
       setToast({ tone: 'success', message: 'Processing settings saved.' })
     } catch (err) {
       setToast({ tone: 'danger', message: err instanceof Error ? err.message : 'Processing save failed' })
+    }
+  }
+
+  const saveSplitConfig = async () => {
+    if (!splitModalOpen) return
+    setToast(null)
+    const editing = splitEditing?.id
+    const path = splitModalOpen === 'llm' ? '/api/v1/configs/llm' : '/api/v1/configs/embedding'
+    const payload = splitModalOpen === 'llm' ? llmPayload(llmDraft) : embeddingPayload(embeddingDraft)
+    try {
+      await api<{ id: string }>(editing ? `${path}/${editing}` : path, {
+        method: editing ? 'PUT' : 'POST',
+        token,
+        body: JSON.stringify(payload),
+      })
+      setToast({ tone: 'success', message: splitModalOpen === 'llm' ? 'LLM config saved.' : 'Embedding config saved.' })
+      setSplitModalOpen(null)
+      setSplitEditing(null)
+      await load()
+      await checkConfig()
+    } catch (err) {
+      setToast({ tone: 'danger', message: err instanceof Error ? err.message : 'Config save failed' })
+    }
+  }
+
+  const deleteSplitConfig = async (kind: SplitKind, id: string) => {
+    if (!confirm(`Delete ${kind} config?`)) return
+    try {
+      await api(`/api/v1/configs/${kind}/${id}`, { method: 'DELETE', token })
+      await load()
+      await checkConfig()
+      setToast({ tone: 'success', message: 'Config deleted.' })
+    } catch (err) {
+      setToast({ tone: 'danger', message: err instanceof Error ? err.message : 'Config delete failed' })
+    }
+  }
+
+  const saveStage = async (stage: string, route: StageRoute) => {
+    try {
+      await api(`/api/v1/configs/stages/${stage}`, {
+        method: 'PUT',
+        token,
+        body: JSON.stringify(route),
+      })
+      await load()
+      setToast({ tone: 'success', message: 'Stage routing saved.' })
+    } catch (err) {
+      setToast({ tone: 'danger', message: err instanceof Error ? err.message : 'Stage routing save failed' })
     }
   }
 
@@ -322,6 +450,53 @@ export function SettingsView({ token }: { token: string }) {
             <strong>{currentVersion}</strong>
             <small>current local build</small>
           </div>
+        </div>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-2">
+        <SplitConfigList
+          kind="llm"
+          title="LLM Configs"
+          configs={llmConfigs}
+          modelOf={(config) => (config as LLMConfig).llm_model}
+          onNew={() => openNewSplitConfig('llm')}
+          onEdit={(config) => openEditSplitConfig('llm', config)}
+          onDelete={(id) => void deleteSplitConfig('llm', id)}
+        />
+        <SplitConfigList
+          kind="embedding"
+          title="Embedding Configs"
+          configs={embeddingConfigs}
+          modelOf={(config) => (config as EmbeddingConfig).embedding_model}
+          onNew={() => openNewSplitConfig('embedding')}
+          onEdit={(config) => openEditSplitConfig('embedding', config)}
+          onDelete={(id) => void deleteSplitConfig('embedding', id)}
+        />
+      </section>
+
+      <section className="bento-card p-6 md:p-8">
+        <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-foreground">Stage Routing</h2>
+          </div>
+        </div>
+        <StageRouting
+          title="LLM stages"
+          labels={LLM_STAGE_LABELS}
+          routes={stageConfig.llm}
+          configs={llmConfigs}
+          modelOf={(config) => config.llm_model}
+          onSave={(stage, route) => void saveStage(stage, route)}
+        />
+        <div className="mt-6">
+          <StageRouting
+            title="Embedding stages"
+            labels={EMBEDDING_STAGE_LABELS}
+            routes={stageConfig.embedding}
+            configs={embeddingConfigs}
+            modelOf={(config) => config.embedding_model}
+            onSave={(stage, route) => void saveStage(stage, route)}
+          />
         </div>
       </section>
 
@@ -513,6 +688,18 @@ export function SettingsView({ token }: { token: string }) {
             onChange={setDraft}
           />
         )}
+        {splitModalOpen && (
+          <SplitConfigModal
+            kind={splitModalOpen}
+            editing={Boolean(splitEditing?.id)}
+            llmDraft={llmDraft}
+            embeddingDraft={embeddingDraft}
+            onLlmChange={setLlmDraft}
+            onEmbeddingChange={setEmbeddingDraft}
+            onClose={() => setSplitModalOpen(null)}
+            onSave={saveSplitConfig}
+          />
+        )}
       </AnimatePresence>
       
       <div className="mt-8 text-center text-sm font-medium text-muted-foreground/60 flex items-center justify-center gap-2">
@@ -561,6 +748,125 @@ function LaneModeCard({
           <div className="flex items-center gap-2 text-sm font-bold text-foreground"><RotateCw size={16} /> Rotation</div>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">Try checked presets in order.</p>
         </button>
+      </div>
+    </div>
+  )
+}
+
+function SplitConfigList<T extends LLMConfig | EmbeddingConfig>({
+  title,
+  configs,
+  modelOf,
+  onNew,
+  onEdit,
+  onDelete,
+}: {
+  kind: SplitKind
+  title: string
+  configs: T[]
+  modelOf: (config: T) => string
+  onNew: () => void
+  onEdit: (config: T) => void
+  onDelete: (id: string) => void
+}) {
+  return (
+    <section className="bento-card p-6 md:p-8">
+      <div className="mb-5 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-bold text-foreground">{title}</h2>
+          <p className="mt-1 text-sm font-medium text-muted-foreground">Named configs used by stage routing.</p>
+        </div>
+        <button className="premium-btn premium-btn-secondary h-10 gap-2 px-3" onClick={onNew}>
+          <Plus size={16} /> New
+        </button>
+      </div>
+      <div className="space-y-3">
+        {configs.map((config) => (
+          <div key={config.id} className="flex items-center gap-3 rounded-lg border border-border/60 bg-card/35 p-3">
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-bold text-foreground">{config.name}</div>
+              <div className="truncate font-mono text-xs text-muted-foreground">{modelOf(config)}</div>
+            </div>
+            <button className="icon-btn text-amber-400" onClick={() => onEdit(config)} aria-label="Edit config"><Pencil size={16} /></button>
+            <button className="icon-btn text-red-400 hover:bg-red-500/10" onClick={() => onDelete(config.id)} aria-label="Delete config"><Trash2 size={16} /></button>
+          </div>
+        ))}
+        {configs.length === 0 && <div className="rounded-lg border border-border/60 p-6 text-center text-sm text-muted-foreground">No configs yet.</div>}
+      </div>
+    </section>
+  )
+}
+
+function StageRouting<T extends LLMConfig | EmbeddingConfig>({
+  title,
+  labels,
+  routes,
+  configs,
+  modelOf,
+  onSave,
+}: {
+  title: string
+  labels: Record<string, string>
+  routes: Record<string, StageRoute>
+  configs: T[]
+  modelOf: (config: T) => string
+  onSave: (stage: string, route: StageRoute) => void
+}) {
+  return (
+    <div>
+      <h3 className="mb-3 text-sm font-extrabold uppercase tracking-[0.14em] text-muted-foreground">{title}</h3>
+      <div className="grid gap-3 md:grid-cols-2">
+        {Object.entries(labels).map(([stage, label]) => {
+          const route = routes[stage] || { stage, kind: title.startsWith('LLM') ? 'llm' : 'embedding', enabled: false, config_ids: [], active_config_id: configs[0]?.id }
+          return (
+            <div key={stage} className="rounded-lg border border-border/60 bg-card/30 p-3">
+              <div className="mb-3">
+                <div className="text-sm font-bold text-foreground">{label}</div>
+                <div className="font-mono text-[11px] text-muted-foreground">{stage}</div>
+              </div>
+              <div className="grid gap-2">
+                <select
+                  className="premium-input bg-transparent"
+                  value={route.enabled ? 'rotation' : 'single'}
+                  onChange={(event) => onSave(stage, { ...route, enabled: event.target.value === 'rotation' })}
+                >
+                  <option value="single">Single config</option>
+                  <option value="rotation">Fallback rotation</option>
+                </select>
+                {!route.enabled ? (
+                  <select
+                    className="premium-input bg-transparent"
+                    value={route.active_config_id || ''}
+                    onChange={(event) => onSave(stage, { ...route, enabled: false, active_config_id: event.target.value })}
+                  >
+                    {configs.map((config) => <option key={config.id} value={config.id}>{config.name} - {modelOf(config)}</option>)}
+                  </select>
+                ) : (
+                  <div className="space-y-2">
+                    {configs.map((config) => {
+                      const checked = route.config_ids.includes(config.id)
+                      return (
+                        <label key={config.id} className="flex items-center gap-2 rounded-md border border-border/50 px-3 py-2 text-xs font-semibold text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(event) => {
+                              const config_ids = event.target.checked
+                                ? [...route.config_ids, config.id].filter(unique)
+                                : route.config_ids.filter((id) => id !== config.id)
+                              onSave(stage, { ...route, enabled: true, config_ids })
+                            }}
+                          />
+                          {config.name} <span className="font-mono opacity-70">{modelOf(config)}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -790,6 +1096,81 @@ function ConfigModal({
   )
 }
 
+function SplitConfigModal({
+  kind,
+  editing,
+  llmDraft,
+  embeddingDraft,
+  onLlmChange,
+  onEmbeddingChange,
+  onClose,
+  onSave,
+}: {
+  kind: SplitKind
+  editing: boolean
+  llmDraft: LlmDraft
+  embeddingDraft: EmbeddingDraft
+  onLlmChange: (draft: LlmDraft) => void
+  onEmbeddingChange: (draft: EmbeddingDraft) => void
+  onClose: () => void
+  onSave: () => void
+}) {
+  const isLlm = kind === 'llm'
+  return (
+    <motion.div
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-background/80 p-4 backdrop-blur-md"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      <motion.div
+        role="dialog"
+        aria-modal="true"
+        aria-label={editing ? `Edit ${kind} config` : `Create ${kind} config`}
+        className="w-full max-w-2xl rounded-lg border border-border bg-card p-6 shadow-2xl md:p-8"
+        initial={{ opacity: 0, y: 18, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 18, scale: 0.98 }}
+      >
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-bold">{editing ? 'Edit' : 'Create'} {isLlm ? 'LLM' : 'Embedding'} Config</h2>
+            <p className="mt-1 text-sm font-medium text-muted-foreground">Named config for stage routing and fallback rotation.</p>
+          </div>
+          <button className="icon-btn" onClick={onClose} aria-label="Close modal"><X size={18} /></button>
+        </div>
+
+        {isLlm ? (
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Name"><input className="premium-input bg-transparent" value={llmDraft.name} onChange={(e) => onLlmChange({ ...llmDraft, name: e.target.value })} /></Field>
+            <Field label="Model"><input className="premium-input bg-transparent" value={llmDraft.llm_model} onChange={(e) => onLlmChange({ ...llmDraft, llm_model: e.target.value })} /></Field>
+            <Field label="API key"><SecretInput value={llmDraft.llm_api_key} placeholder={editing ? 'Leave blank to keep existing key' : 'sk-...'} onChange={(value) => onLlmChange({ ...llmDraft, llm_api_key: value })} /></Field>
+            <Field label="Base URL"><input className="premium-input bg-transparent" value={llmDraft.llm_base_url || ''} onChange={(e) => onLlmChange({ ...llmDraft, llm_base_url: e.target.value })} /></Field>
+            <Field label="Temperature"><input type="number" step="0.1" className="premium-input bg-transparent" value={llmDraft.llm_temperature} onChange={(e) => onLlmChange({ ...llmDraft, llm_temperature: Number(e.target.value) || 0 })} /></Field>
+            <Field label="Rate limit"><input type="number" className="premium-input bg-transparent" value={llmDraft.llm_rate_limit_per_minute} onChange={(e) => onLlmChange({ ...llmDraft, llm_rate_limit_per_minute: Number(e.target.value) || 0 })} /></Field>
+          </div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Name"><input className="premium-input bg-transparent" value={embeddingDraft.name} onChange={(e) => onEmbeddingChange({ ...embeddingDraft, name: e.target.value })} /></Field>
+            <Field label="Model"><input className="premium-input bg-transparent" value={embeddingDraft.embedding_model} onChange={(e) => onEmbeddingChange({ ...embeddingDraft, embedding_model: e.target.value })} /></Field>
+            <Field label="API key"><SecretInput value={embeddingDraft.embedding_api_key} placeholder={editing ? 'Leave blank to keep existing key' : 'sk-...'} onChange={(value) => onEmbeddingChange({ ...embeddingDraft, embedding_api_key: value })} /></Field>
+            <Field label="Base URL"><input className="premium-input bg-transparent" value={embeddingDraft.embedding_base_url || ''} onChange={(e) => onEmbeddingChange({ ...embeddingDraft, embedding_base_url: e.target.value })} /></Field>
+            <Field label="Batch size"><input type="number" className="premium-input bg-transparent" value={embeddingDraft.embedding_batch_size} onChange={(e) => onEmbeddingChange({ ...embeddingDraft, embedding_batch_size: Number(e.target.value) || 100 })} /></Field>
+            <Field label="Rate limit"><input type="number" className="premium-input bg-transparent" value={embeddingDraft.embedding_rate_limit_per_minute} onChange={(e) => onEmbeddingChange({ ...embeddingDraft, embedding_rate_limit_per_minute: Number(e.target.value) || 0 })} /></Field>
+          </div>
+        )}
+
+        <div className="mt-8 flex justify-end gap-3 border-t border-border/60 pt-5">
+          <button className="premium-btn premium-btn-secondary h-11 px-5" onClick={onClose}>Cancel</button>
+          <button className="premium-btn premium-btn-primary h-11 gap-2 px-5" onClick={onSave}>
+            <Save size={17} /> Save Config
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
 function Field({ label, helpText, children }: { label: string; helpText?: string; children: ReactNode }) {
   return (
     <label className="block relative">
@@ -838,6 +1219,23 @@ function configPayload(draft: ConfigDraft) {
     llm_base_url: draft.llm_base_url || null,
     llm_api_key: draft.llm_api_key || null,
     llm_max_tokens: draft.llm_max_tokens || null,
+    embedding_base_url: draft.embedding_base_url || null,
+    embedding_api_key: draft.embedding_api_key || null,
+  }
+}
+
+function llmPayload(draft: LlmDraft) {
+  return {
+    ...draft,
+    llm_base_url: draft.llm_base_url || null,
+    llm_api_key: draft.llm_api_key || null,
+    llm_max_tokens: draft.llm_max_tokens || null,
+  }
+}
+
+function embeddingPayload(draft: EmbeddingDraft) {
+  return {
+    ...draft,
     embedding_base_url: draft.embedding_base_url || null,
     embedding_api_key: draft.embedding_api_key || null,
   }

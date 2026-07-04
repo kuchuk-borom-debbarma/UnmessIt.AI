@@ -164,9 +164,9 @@ def _text_part(value: object) -> str:
     return str(value or "")
 
 
-def llm_settings_signature(user_id: str | None) -> str | None:
+def llm_settings_signature(user_id: str | None, stage: str | None = None) -> str | None:
     try:
-        candidates = get_user_llm_setting_candidates(user_id or "")
+        candidates = get_user_llm_setting_candidates(user_id or "", stage)
     except Exception:
         return None
     safe = [

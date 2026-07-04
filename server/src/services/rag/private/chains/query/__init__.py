@@ -151,6 +151,7 @@ class QueryVerifierChain:
                 system=system,
                 human=human,
                 user_id=user_id,
+                stage="retrieval.verifier",
             )
         except Exception as exc:
             logger.warning("query_verifier_failed error=%s", exc)
@@ -232,7 +233,7 @@ def _verifier_human_prompt(query: str, chunks: list[dict[str, Any]]) -> str:
 
 
 def _verifier_cache_key(query: str, user_id: str | None, attempt: int, system: str, human: str) -> str | None:
-    signature = retrieval_cache.llm_settings_signature(user_id)
+    signature = retrieval_cache.llm_settings_signature(user_id, "retrieval.verifier")
     if not signature:
         return None
     return retrieval_cache.cache_key(_VERIFIER_CACHE_VERSION, user_id or "", attempt, signature, system, human, query)
@@ -336,6 +337,7 @@ class QueryAnswerChain:
                 system=system,
                 human=human,
                 user_id=user_id,
+                stage="retrieval.answer",
             )
             if reporter:
                 await reporter.report("Validating citations...", {"depth": 1, "ref": "retrieval:answer:validate"})
@@ -394,7 +396,7 @@ def _answer_human_prompt(query: str, chunks: list[dict[str, Any]]) -> str:
 
 
 def _answer_cache_key(query: str, user_id: str | None, system: str, human: str) -> str | None:
-    signature = retrieval_cache.llm_settings_signature(user_id)
+    signature = retrieval_cache.llm_settings_signature(user_id, "retrieval.answer")
     if not signature:
         return None
     return retrieval_cache.cache_key(_ANSWER_CACHE_VERSION, user_id or "", signature, system, human, query)

@@ -30,9 +30,9 @@ def _get_client():
 
 
 @lru_cache(maxsize=100)
-def _collection(user_id: str, processing_hash: str):
+def _collection(user_id: str, processing_hash: str, stage: str):
     """Create or reuse the persistent Chroma collection for a specific user."""
-    embedding_function = RotatingEmbeddingFunction(user_id)
+    embedding_function = RotatingEmbeddingFunction(user_id, stage)
     client = _get_client()
     collection_name = f"statements_{_name_part(user_id)}_{processing_hash[:8]}"
     try:
@@ -45,11 +45,11 @@ def _collection(user_id: str, processing_hash: str):
         return client.create_collection(collection_name, embedding_function=embedding_function)
 
 
-def upsert(ids: list[str], texts: list[str], metadatas: list[dict[str, Any]], user_id: str) -> None:
+def upsert(ids: list[str], texts: list[str], metadatas: list[dict[str, Any]], user_id: str, stage: str = "ingest.source_chunk_vectors") -> None:
     """Insert or replace vector documents."""
     if not ids:
         return
-    collection = _user_collection(user_id)
+    collection = _collection_for(user_id, stage)
     set_last_embedding_rotation_snapshot(None)
     collection.upsert(ids=ids, documents=texts, metadatas=metadatas)
     snapshot = get_last_embedding_rotation_snapshot()
@@ -60,32 +60,32 @@ def upsert(ids: list[str], texts: list[str], metadatas: list[dict[str, Any]], us
         )
 
 
-def collection(user_id: str):
+def collection(user_id: str, stage: str = "retrieval.vector_search"):
     """Return the configured Chroma collection for repository-level maintenance."""
-    return _user_collection(user_id)
+    return _collection_for(user_id, stage)
 
 
-def existing_ids(ids: list[str], user_id: str) -> set[str]:
+def existing_ids(ids: list[str], user_id: str, stage: str = "ingest.source_chunk_vectors") -> set[str]:
     """Return vector IDs already present in the collection."""
     if not ids:
         return set()
-    result = _user_collection(user_id).get(ids=ids)
+    result = _collection_for(user_id, stage).get(ids=ids)
     return set(result.get("ids") or [])
 
 
-def delete(ids: list[str], user_id: str) -> None:
+def delete(ids: list[str], user_id: str, stage: str = "ingest.source_chunk_vectors") -> None:
     """Delete vector documents by ID."""
     if not ids:
         return
-    _user_collection(user_id).delete(ids=ids)
+    _collection_for(user_id, stage).delete(ids=ids)
 
 
-def search(query: str, user_id: str, top_k: int = 8, where: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def search(query: str, user_id: str, top_k: int = 8, where: dict[str, Any] | None = None, stage: str = "retrieval.vector_search") -> list[dict[str, Any]]:
     """Return normalized search hits from Chroma's nested result shape."""
     kwargs = {"query_texts": [query], "n_results": top_k}
     if where:
         kwargs["where"] = where
-    results = _user_collection(user_id).query(**kwargs)
+    results = _collection_for(user_id, stage).query(**kwargs)
     if not results["ids"] or not results["ids"][0]:
         return []
 
@@ -116,13 +116,21 @@ def reset(user_id: str) -> None:
             except Exception:
                 pass
     _collection.cache_clear()
-    _user_collection(user_id)
+    _user_collection(user_id, "retrieval.vector_search")
 
 
-def _user_collection(user_id: str):
-    settings = get_user_settings(user_id)
+def _user_collection(user_id: str, stage: str):
+    settings = get_user_settings(user_id, stage)
     digest = hashlib.sha256(settings.processing_signature().encode("utf-8")).hexdigest()
-    return _collection(user_id, digest)
+    return _collection(user_id, digest, stage)
+
+
+def _collection_for(user_id: str, stage: str):
+    try:
+        return _user_collection(user_id, stage)
+    except TypeError:
+        # Compatibility for tests that monkeypatch _user_collection(user_id).
+        return _user_collection(user_id)
 
 
 @lru_cache(maxsize=100)
@@ -131,7 +139,7 @@ def semantic_cache_collection(user_id: str, namespace: str):
     name_hash = hashlib.sha256(f"{user_id}:{namespace}".encode("utf-8")).hexdigest()[:24]
     return _get_client().get_or_create_collection(
         f"retrieval_cache_{name_hash}",
-        embedding_function=RotatingEmbeddingFunction(user_id),
+        embedding_function=RotatingEmbeddingFunction(user_id, "retrieval.semantic_cache"),
         metadata={"hnsw:space": "cosine"},
     )
 
@@ -143,14 +151,15 @@ class RotatingEmbeddingFunction(chromadb.EmbeddingFunction):
     def name() -> str:
         return "RotatingEmbeddingFunction"
 
-    def __init__(self, user_id: str) -> None:
+    def __init__(self, user_id: str, stage: str = "retrieval.vector_search") -> None:
         self.user_id = user_id
+        self.stage = stage
 
     def get_config(self) -> dict:
         return {"user_id": self.user_id}
 
     def __call__(self, input):
-        candidates = get_user_setting_candidates(self.user_id)
+        candidates = get_user_setting_candidates(self.user_id, self.stage)
         errors = []
         for index, settings in enumerate(candidates, start=1):
             report_progress_sync(

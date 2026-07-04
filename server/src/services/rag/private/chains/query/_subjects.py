@@ -95,7 +95,7 @@ async def _identify_subjects(
             cache_events.append({"stage": "subjects", "cache": "semantic", "status": "miss"})
 
     try:
-        data = await json_client.async_invoke_json(system, human, user_id=user_id)
+        data = await json_client.async_invoke_json(system, human, user_id=user_id, stage="retrieval.subject_extraction")
         subjects = data.get("subjects") if isinstance(data, dict) else None
         if not isinstance(subjects, list):
             return []
@@ -150,14 +150,14 @@ def _subjects_human_prompt(query: str, sub_queries: list[str]) -> str:
 
 
 def _subjects_exact_cache_key(query: str, sub_queries: list[str], user_id: str | None, system: str, human: str) -> str | None:
-    signature = retrieval_cache.llm_settings_signature(user_id)
+    signature = retrieval_cache.llm_settings_signature(user_id, "retrieval.subject_extraction")
     if not signature:
         return None
     return retrieval_cache.cache_key(_PROMPT_VERSION, user_id or "", signature, system, human, query, sub_queries)
 
 
 def _subjects_semantic_cache_key(query: str, sub_queries: list[str], user_id: str | None, system: str) -> tuple[str, str] | None:
-    llm_signature = retrieval_cache.llm_settings_signature(user_id)
+    llm_signature = retrieval_cache.llm_settings_signature(user_id, "retrieval.subject_extraction")
     embedding_signature = _embedding_settings_signature(user_id)
     if not llm_signature or not embedding_signature:
         return None
@@ -168,7 +168,7 @@ def _subjects_semantic_cache_key(query: str, sub_queries: list[str], user_id: st
 
 def _embedding_settings_signature(user_id: str | None) -> str | None:
     try:
-        settings = get_user_embedding_settings(user_id or "")
+        settings = get_user_embedding_settings(user_id or "", "retrieval.semantic_cache")
     except Exception:
         return None
     safe = {

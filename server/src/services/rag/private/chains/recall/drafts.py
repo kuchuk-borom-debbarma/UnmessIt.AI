@@ -38,7 +38,7 @@ class RecallDraftChain:
         )
         
         payload = _chunk_payload(source_chunks)
-        llm_signature = retrieval_cache.llm_settings_signature(user_id)
+        llm_signature = retrieval_cache.llm_settings_signature(user_id, "ingest.recall_draft")
         cache_key = retrieval_cache.cache_key(
             "ingest_recall_draft:v1",
             llm_signature,
@@ -95,6 +95,7 @@ class RecallDraftChain:
                 f"SOURCE_CHUNKS:\n{json.dumps(payload, ensure_ascii=False)}"
             ),
             user_id=user_id,
+            stage="ingest.recall_draft",
         )
         if cache_key and isinstance(data, dict):
             await retrieval_cache.set_json(cache_key, data)

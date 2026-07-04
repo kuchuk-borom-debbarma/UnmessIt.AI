@@ -310,6 +310,7 @@ def save(preset: dict[str, Any], user_id: str) -> str:
         ),
     )
     conn.commit()
+    _mirror_split_configs(preset_id, preset, user_id)
     
     _clear_settings_cache()
     return preset_id
@@ -389,6 +390,7 @@ def delete(preset_id: str, user_id: str) -> bool:
         if next_preset:
             conn.execute("UPDATE user_config_presets SET is_active = 1 WHERE id = ?", (next_preset["id"],))
     conn.commit()
+    _delete_split_configs(preset_id, user_id)
 
     config = get_rotation_config(user_id)
     fallback_id = (get_active(user_id) or {}).get("id")
@@ -402,6 +404,80 @@ def delete(preset_id: str, user_id: str) -> bool:
 
     _clear_settings_cache()
     return True
+
+
+def _mirror_split_configs(preset_id: str, preset: dict[str, Any], user_id: str) -> None:
+    conn = get_connection()
+    existing_llm = conn.execute("SELECT llm_api_key FROM user_llm_configs WHERE id = ? AND user_id = ?", (f"llm-{preset_id}", user_id)).fetchone()
+    existing_embedding = conn.execute("SELECT embedding_api_key FROM user_embedding_configs WHERE id = ? AND user_id = ?", (f"emb-{preset_id}", user_id)).fetchone()
+    conn.execute(
+        """
+        INSERT INTO user_llm_configs (
+            id, user_id, name, llm_provider, llm_model, llm_base_url, llm_api_key,
+            llm_temperature, llm_max_retries, llm_max_tokens, llm_rate_limit_per_minute
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            name=excluded.name,
+            llm_provider=excluded.llm_provider,
+            llm_model=excluded.llm_model,
+            llm_base_url=excluded.llm_base_url,
+            llm_api_key=excluded.llm_api_key,
+            llm_temperature=excluded.llm_temperature,
+            llm_max_retries=excluded.llm_max_retries,
+            llm_max_tokens=excluded.llm_max_tokens,
+            llm_rate_limit_per_minute=excluded.llm_rate_limit_per_minute,
+            updated_at=CURRENT_TIMESTAMP
+        """,
+        (
+            f"llm-{preset_id}",
+            user_id,
+            preset.get("name", "Default"),
+            preset.get("llm_provider", "openai"),
+            preset.get("llm_model", "gpt-4o"),
+            preset.get("llm_base_url"),
+            preset.get("llm_api_key", existing_llm["llm_api_key"] if existing_llm else ""),
+            float(preset.get("llm_temperature", 0)),
+            int(preset.get("llm_max_retries", 2)),
+            int(preset["llm_max_tokens"]) if preset.get("llm_max_tokens") is not None else None,
+            int(preset.get("llm_rate_limit_per_minute", 0)),
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO user_embedding_configs (
+            id, user_id, name, embedding_provider, embedding_model, embedding_base_url,
+            embedding_api_key, embedding_rate_limit_per_minute, embedding_batch_size
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            name=excluded.name,
+            embedding_provider=excluded.embedding_provider,
+            embedding_model=excluded.embedding_model,
+            embedding_base_url=excluded.embedding_base_url,
+            embedding_api_key=excluded.embedding_api_key,
+            embedding_rate_limit_per_minute=excluded.embedding_rate_limit_per_minute,
+            embedding_batch_size=excluded.embedding_batch_size,
+            updated_at=CURRENT_TIMESTAMP
+        """,
+        (
+            f"emb-{preset_id}",
+            user_id,
+            preset.get("name", "Default"),
+            preset.get("embedding_provider", "openai"),
+            preset.get("embedding_model", "text-embedding-3-small"),
+            preset.get("embedding_base_url"),
+            preset.get("embedding_api_key", existing_embedding["embedding_api_key"] if existing_embedding else ""),
+            int(preset.get("embedding_rate_limit_per_minute", 0)),
+            int(preset.get("embedding_batch_size", 100)),
+        ),
+    )
+    conn.commit()
+
+
+def _delete_split_configs(preset_id: str, user_id: str) -> None:
+    conn = get_connection()
+    conn.execute("DELETE FROM user_llm_configs WHERE id = ? AND user_id = ?", (f"llm-{preset_id}", user_id))
+    conn.execute("DELETE FROM user_embedding_configs WHERE id = ? AND user_id = ?", (f"emb-{preset_id}", user_id))
+    conn.commit()
 
 
 def _presets_by_order(user_id: str, preset_ids: list[str]) -> list[dict[str, Any]]:

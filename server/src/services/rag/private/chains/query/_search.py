@@ -237,7 +237,7 @@ def _valid_evidence_cache(value: dict[str, Any] | None, index_version: int) -> d
 
 def _embedding_settings_signature(user_id: str) -> str:
     try:
-        settings = get_user_embedding_settings(user_id)
+        settings = get_user_embedding_settings(user_id, "retrieval.vector_search")
     except Exception:
         return "embedding-settings:none"
     return "|".join([

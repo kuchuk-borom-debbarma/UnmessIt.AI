@@ -23,7 +23,7 @@ class SourceChunkDraftChain:
         on_progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> list[SourceChunkDraft]:
         """Return summary metadata while keeping source text selection deterministic."""
-        llm_signature = retrieval_cache.llm_settings_signature(user_id)
+        llm_signature = retrieval_cache.llm_settings_signature(user_id, "ingest.source_chunk_draft")
         cache_key = retrieval_cache.cache_key("ingest_chunk_draft:v1", llm_signature, window["text"]) if llm_signature else None
 
         if cache_key:
@@ -44,6 +44,7 @@ class SourceChunkDraftChain:
                     f"SOURCE_TEXT:\n{window['text']}"
                 ),
                 user_id=user_id,
+                stage="ingest.source_chunk_draft",
             )
             result = data if isinstance(data, dict) else {}
             if cache_key and isinstance(data, dict):
