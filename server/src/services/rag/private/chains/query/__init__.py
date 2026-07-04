@@ -407,6 +407,10 @@ def _answer_cache_key(query: str, user_id: str | None, system: str, human: str) 
 
 def _normalize_answer_result(data: dict[str, Any], chunks: list[dict[str, Any]]) -> dict[str, Any]:
     answer = str(data.get("answer") or "").strip()
+    # If the LLM ignored instructions and formatted citations as markdown links, try to salvage them
+    answer = re.sub(r'\[cite\]\(([^)]+)\)', r'[[cite:\1]]', answer)
+    answer = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', lambda m: f"[[cite:{m.group(2)}]]" if "cite" in m.group(1).lower() else m.group(0), answer)
+    
     valid_ids = {chunk["id"] for chunk in chunks}
     marker_ids = [match.group(1) for match in _CITE_MARKER_RE.finditer(answer) if match.group(1) in valid_ids]
     citation_ids = [str(item) for item in data.get("citation_ids", []) if str(item) in valid_ids]
