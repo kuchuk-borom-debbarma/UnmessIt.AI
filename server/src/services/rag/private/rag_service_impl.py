@@ -90,31 +90,50 @@ class RagServiceImpl:
         try:
             set_active_parent_ref(None)
             await reporter.report("Checking for identical past questions...", {"depth": 0, "ref": "retrieval:cache_lookup"})
-            
+
+            # ── 1. Exact cache (hash lookup, ~1ms, no embedding) ──────────────
+            exact_cache_key = _query_exact_cache_key(query, user_id)
+            if exact_cache_key:
+                exact_cached = await retrieval_cache.get_json(exact_cache_key)
+                if isinstance(exact_cached, dict):
+                    summary = exact_cached.setdefault("retrieval_trace", {}).setdefault("cache_summary", {})
+                    for stage in summary:
+                        summary[stage] = "skip"
+                    summary["query"] = "exact_hit"
+                    await reporter.report("Retrieval complete (Exact Cache Hit).", {"depth": 0, "ref": "retrieval:done"})
+                    return exact_cached
+
+            # ── 2. Semantic cache (embedding + vector search) ─────────────────
             cached_match = await retrieval_cache.get_semantic_query_result(user_id, query, threshold=0.95, emit_progress=False)
             if cached_match:
                 cached_payload, cached_query, distance = cached_match
-                is_safe = await self.semantic_verifier.run(
-                    new_query=query,
-                    cached_query=cached_query,
-                    cached_answer=cached_payload.get("answer", ""),
-                    user_id=user_id,
-                    reporter=reporter
-                )
+                # Skip the LLM verifier for near-exact matches (distance ≈ 0 means identical query).
+                # Only run the verifier for genuinely similar-but-different queries.
+                _EXACT_MATCH_EPSILON = 0.02
+                if distance is not None and abs(distance) < _EXACT_MATCH_EPSILON:
+                    is_safe = True
+                else:
+                    is_safe = await self.semantic_verifier.run(
+                        new_query=query,
+                        cached_query=cached_query,
+                        cached_answer=cached_payload.get("answer", ""),
+                        user_id=user_id,
+                        reporter=reporter
+                    )
                 if is_safe:
                     await reporter.report("Retrieval complete (Cache Hit).", {"depth": 0, "ref": "retrieval:done"})
-                    
+
                     if "retrieval_trace" not in cached_payload:
                         cached_payload["retrieval_trace"] = {}
                     if "cache_summary" not in cached_payload["retrieval_trace"]:
                         cached_payload["retrieval_trace"]["cache_summary"] = {}
-                    
+
                     # Override existing stages to "skip"
                     summary = cached_payload["retrieval_trace"]["cache_summary"]
                     for stage in summary:
                         summary[stage] = "skip"
                     summary["semantic_query"] = "semantic_hit"
-                    
+
                     return cached_payload
 
             await reporter.report("Preparing search...", {"depth": 0, "ref": "retrieval:normalize", "query_chars": len(query)})
@@ -182,7 +201,9 @@ class RagServiceImpl:
             trace["llm_saved_metrics"] = llm_saved_metrics
             result = build_query_result(query, chunks, answer, trace)
             
-            # Save the full result to the semantic cache
+            # Save the full result to both exact cache (instant next hit) and semantic cache (fuzzy)
+            if exact_cache_key:
+                await retrieval_cache.set_json(exact_cache_key, result)
             await retrieval_cache.set_semantic_query_result(user_id, query, result)
             
             await reporter.report(
@@ -211,3 +232,15 @@ def _verified_chunks(chunks: list[dict], verification: dict) -> list[dict]:
     if off_topic_ids:
         return [chunk for chunk in chunks if chunk["id"] not in off_topic_ids]
     return chunks
+
+
+def _query_exact_cache_key(query: str, user_id: str | None) -> str | None:
+    """Deterministic cache key for the top-level query result.
+
+    Keyed on query text + LLM settings so changing model/temperature
+    correctly invalidates the cached answer.
+    """
+    signature = retrieval_cache.llm_settings_signature(user_id)
+    if not signature:
+        return None
+    return retrieval_cache.cache_key("query_result:v1", user_id or "", signature, query)

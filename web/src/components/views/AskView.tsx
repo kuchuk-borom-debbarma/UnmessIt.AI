@@ -338,7 +338,83 @@ function InlineAnswer({ answer, citations }: { answer: string; citations: Citati
   )
 }
 
+function FlowStepList({ steps }: { steps: FlowStep[] }) {
+  const iconFor = (step: FlowStep) => {
+    if (step.type === 'cache') return <Zap size={14} className="text-amber-500" />
+    if (step.type === 'llm') return <Cpu size={14} className="text-blue-500" />
+    return <Database size={14} className="text-zinc-500" />
+  }
+
+  const colorFor = (step: FlowStep) => {
+    if (step.type === 'cache') return 'border-amber-400/60 bg-amber-50/40 dark:bg-amber-900/10'
+    if (step.type === 'llm') return 'border-blue-400/60 bg-blue-50/40 dark:bg-blue-900/10'
+    return 'border-zinc-300/60 dark:border-zinc-700/60 bg-black/5 dark:bg-white/5'
+  }
+
+  const lineColorFor = (step: FlowStep) => {
+    if (step.type === 'cache') return 'bg-amber-400/50'
+    if (step.type === 'llm') return 'bg-blue-400/50'
+    return 'bg-zinc-400/40'
+  }
+
+  return (
+    <div className="flex flex-col gap-0">
+      <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-3">Retrieval Pipeline</div>
+      {steps.map((step, i) => (
+        <div key={step.id} className="flex gap-3">
+          {/* Timeline line + dot */}
+          <div className="flex flex-col items-center">
+            <div className={cn('w-6 h-6 rounded-full border flex items-center justify-center flex-shrink-0 z-10', colorFor(step))}>
+              {iconFor(step)}
+            </div>
+            {i < steps.length - 1 && (
+              <div className={cn('w-0.5 flex-1 mt-1 mb-1', lineColorFor(step))} />
+            )}
+          </div>
+
+          {/* Content */}
+          <div className={cn('flex-1 rounded-xl border px-4 py-3 mb-2', colorFor(step))}>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 leading-tight">{step.title}</span>
+              <div className="flex items-center gap-2 flex-wrap">
+                {step.status === 'hit' && (
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 flex items-center gap-1">
+                    <CheckCircle size={9} /> Cache Hit
+                  </span>
+                )}
+                {step.duration_ms != null && (
+                  <span className="text-[10px] font-mono text-zinc-500 dark:text-zinc-400 flex items-center gap-1">
+                    <Clock size={9} /> {step.duration_ms}ms
+                  </span>
+                )}
+                {step.model_used && (
+                  <span className="text-[10px] font-mono text-blue-500/80 dark:text-blue-400/70">{step.model_used}</span>
+                )}
+              </div>
+            </div>
+            {step.metrics && (
+              <div className="mt-1.5 flex gap-3 flex-wrap">
+                <span className="text-[10px] text-zinc-500">↑ {step.metrics.prompt_tokens} prompt</span>
+                <span className="text-[10px] text-zinc-500">↓ {step.metrics.completion_tokens} completion</span>
+                <span className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-400">= {step.metrics.total_tokens} total tokens</span>
+              </div>
+            )}
+            {step.type === 'cache' && step.details?.sub_queries && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {(step.details.sub_queries as string[]).map((sq, j) => (
+                  <span key={j} className="text-[10px] px-2 py-0.5 rounded-md bg-white/70 dark:bg-zinc-900/60 border border-black/10 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400">{sq}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function AskView({ token }: { token: string }) {
+
   const {
     query, setQuery, loading, showTrace, setShowTrace, showFilters, setShowFilters,
     terminalOpen, setTerminalOpen,

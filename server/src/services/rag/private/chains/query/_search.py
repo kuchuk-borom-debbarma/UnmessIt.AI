@@ -480,8 +480,13 @@ async def _semantic_evidence_candidates(
     packed_chunks, old_sub_query = _valid_semantic_evidence_payload(payload, index_version, embedding_signature, filters_signature)
     
     if packed_chunks and old_sub_query and json_client:
-        verifier = SemanticSubQueryVerifierChain(json_client)
-        is_safe = await verifier.run(sub_query, old_sub_query, user_id, reporter)
+        # Skip LLM verifier for near-exact matches (same sub-query text reused).
+        _EXACT_MATCH_EPSILON = 0.02
+        if distance is not None and abs(distance) < _EXACT_MATCH_EPSILON:
+            is_safe = True
+        else:
+            verifier = SemanticSubQueryVerifierChain(json_client)
+            is_safe = await verifier.run(sub_query, old_sub_query, user_id, reporter)
         if is_safe:
             logger.info(
                 "semantic_evidence_cache_hit namespace=%s distance=%s candidates=%s index_version=%s",
