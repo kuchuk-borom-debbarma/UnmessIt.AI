@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from collections import OrderedDict
 from functools import lru_cache
 import logging
@@ -34,20 +35,27 @@ class EmbeddingCache(Protocol):
 class MemoryEmbeddingCache:
     def __init__(self, max_items: int = MEMORY_MAX_ITEMS) -> None:
         self.max_items = max_items
-        self._values: OrderedDict[str, list[float]] = OrderedDict()
+        self._values: OrderedDict[str, tuple[list[float], float]] = OrderedDict()
 
     def get(self, key: str) -> list[float] | None:
-        value = self._values.get(key)
-        if value is None:
+        item = self._values.get(key)
+        if item is None:
             return None
         self._values.move_to_end(key)
-        return value
+        return item[0]
 
     def set(self, key: str, value: list[float]) -> None:
-        self._values[key] = value
+        self._values[key] = (value, time.time())
         self._values.move_to_end(key)
         while len(self._values) > self.max_items:
             self._values.popitem(last=False)
+
+    def cleanup_stale(self, ttl_seconds: int) -> int:
+        now = time.time()
+        stale_keys = [k for k, v in self._values.items() if now - v[1] > ttl_seconds]
+        for k in stale_keys:
+            self._values.pop(k, None)
+        return len(stale_keys)
 
 
 class RedisEmbeddingCache:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import hashlib
 import json
+import time
 from functools import lru_cache
 from typing import Any
 
@@ -140,8 +141,29 @@ def semantic_cache_collection(user_id: str, namespace: str):
     return _get_client().get_or_create_collection(
         f"retrieval_cache_{name_hash}",
         embedding_function=RotatingEmbeddingFunction(user_id, "retrieval.semantic_cache"),
-        metadata={"hnsw:space": "cosine"},
+        metadata={"hnsw:space": "cosine", "created_at": time.time()},
     )
+
+
+def cleanup_stale_semantic_collections(ttl_seconds: int) -> int:
+    """Delete disposable Chroma collections older than ttl_seconds."""
+    client = _get_client()
+    now = time.time()
+    deleted_count = 0
+    for collection_obj in client.list_collections():
+        name = getattr(collection_obj, "name", str(collection_obj))
+        if name.startswith("retrieval_cache_"):
+            try:
+                c = client.get_collection(name)
+                created_at = float(c.metadata.get("created_at", 0)) if c.metadata else 0.0
+                if now - created_at > ttl_seconds:
+                    client.delete_collection(name)
+                    deleted_count += 1
+            except Exception as exc:
+                logger.warning("cleanup_stale_semantic_collections_error name=%s error=%s", name, exc)
+    if deleted_count > 0:
+        semantic_cache_collection.cache_clear()
+    return deleted_count
 
 
 class RotatingEmbeddingFunction(chromadb.EmbeddingFunction):

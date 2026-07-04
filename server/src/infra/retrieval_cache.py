@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 from collections import OrderedDict
 from functools import lru_cache
 from typing import Any
@@ -24,20 +25,27 @@ SEMANTIC_THRESHOLD = 0.96
 class MemoryJsonCache:
     def __init__(self, max_items: int = MEMORY_MAX_ITEMS) -> None:
         self.max_items = max_items
-        self._values: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._values: OrderedDict[str, tuple[dict[str, Any], float]] = OrderedDict()
 
     def get(self, key: str) -> dict[str, Any] | None:
-        value = self._values.get(key)
-        if value is None:
+        item = self._values.get(key)
+        if item is None:
             return None
         self._values.move_to_end(key)
-        return value
+        return item[0]
 
     def set(self, key: str, value: dict[str, Any]) -> None:
-        self._values[key] = value
+        self._values[key] = (value, time.time())
         self._values.move_to_end(key)
         while len(self._values) > self.max_items:
             self._values.popitem(last=False)
+
+    def cleanup_stale(self, ttl_seconds: int) -> int:
+        now = time.time()
+        stale_keys = [k for k, v in self._values.items() if now - v[1] > ttl_seconds]
+        for k in stale_keys:
+            self._values.pop(k, None)
+        return len(stale_keys)
 
 
 @lru_cache(maxsize=1)

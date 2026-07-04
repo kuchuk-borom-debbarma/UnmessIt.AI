@@ -18,6 +18,7 @@ class QueryState(TypedDict):
     extracted_subjects: list[str]
     user_id: str
     reporter: ProgressReporter | None
+    json_client: Any | None
     within_directories: list[str]
     excluding_directories: list[str]
     within_tags: list[str]

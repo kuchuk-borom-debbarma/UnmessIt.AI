@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import re
 from typing import Any
@@ -20,6 +22,9 @@ _CONTEXT_CHARS_PER_PASS = 6000
 _EVIDENCE_CACHE_VERSION = "evidence-search-v1"
 _SEMANTIC_EVIDENCE_CACHE_VERSION = "evidence-semantic-candidates-v1"
 _SEMANTIC_EVIDENCE_THRESHOLD = 0.98
+_CONTEXT_COMPACTOR_CACHE_VERSION = "context-engineering-llm:v1"
+_LLM_CONTEXT_MIN_RAW_CHARS = 9000
+_LLM_CONTEXT_MAX_PACKED_CHARS = 4500
 
 _ATTRIBUTE_TRIGGERS = {
     "appearance", "appearances", "attribute", "attributes", "body", "build",
@@ -142,6 +147,7 @@ async def search_node(state: QueryState) -> dict[str, Any]:
             index_version,
             embedding_signature,
             filters_signature,
+            state.get("json_client"),
             reporter,
             search_ref,
         )
@@ -283,6 +289,7 @@ async def _evidence_for(
     index_version: int,
     embedding_signature: str,
     filters_signature: dict[str, Any],
+    json_client=None,
     reporter=None,
     parent_ref: str = "retrieval:search",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -359,10 +366,19 @@ async def _evidence_for(
     baseline_lengths = {chunk["id"]: len(str(chunk.get("text", ""))) for chunk in top_chunks}
     
     combined_query = f"{global_query} {sub_query}".strip()
-    chunks, pack_trace = _pack_context(combined_query, top_chunks, budget=_CONTEXT_CHARS_PER_PASS)
+    chunks, pack_trace = await _pack_context(
+        combined_query,
+        top_chunks,
+        user_id=user_id,
+        json_client=json_client,
+        reporter=reporter,
+        parent_ref=parent_ref,
+        budget=_CONTEXT_CHARS_PER_PASS,
+    )
     context = pack_trace["context_engineering"]
     logger.info(
-        "context_engineering source=fresh raw_chars=%s packed_chars=%s saved_chars=%s chunks=%s",
+        "context_engineering source=%s raw_chars=%s packed_chars=%s saved_chars=%s chunks=%s",
+        context["source"],
         context["raw_chars"],
         context["packed_chars"],
         context["saved_chars"],
@@ -374,6 +390,7 @@ async def _evidence_for(
             {"depth": 3, "ref": f"{parent_ref}:context", "parent_ref": parent_ref, "sub_query": sub_query, **pack_trace},
         )
 
+    context_cache_events = pack_trace.pop("cache_events", [])
     trace_part = {
         "sub_query": sub_query,
         "extracted_subjects": extracted_subjects,
@@ -386,7 +403,7 @@ async def _evidence_for(
         "source_chunk_count": len(chunks),
         "baseline_lengths": baseline_lengths,
         **pack_trace,
-        "cache_events": semantic_events,
+        "cache_events": [*semantic_events, *context_cache_events],
     }
     semantic_events.extend(await _set_semantic_evidence_candidates(
         sub_query,
@@ -667,9 +684,13 @@ def _rank_chunks(
     return ranked, reasons
 
 
-def _pack_context(
+async def _pack_context(
     query: str,
     chunks: list[dict[str, Any]],
+    user_id: str | None = None,
+    json_client=None,
+    reporter=None,
+    parent_ref: str = "retrieval:search",
     budget: int = _CONTEXT_CHARS_PER_PASS,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Attach focused snippets so the answer prompt skips unrelated text."""
@@ -686,11 +707,45 @@ def _pack_context(
         packed.append(next_chunk)
         if after_chars >= budget:
             break
-            
+
+    source = "deterministic"
+    cache_events: list[dict[str, str]] = []
+    if _should_llm_compact(before_chars, after_chars, packed, json_client):
+        cache_key = _context_compactor_cache_key(query, user_id, packed)
+        cached = _valid_context_compactor_cache(await retrieval_cache.get_json(cache_key), packed) if cache_key else None
+        if cached is not None:
+            packed, after_chars, snippet_counts = _apply_compacted_snippets(packed, cached)
+            source = "llm_cache"
+            cache_events.append({"stage": "context_engineering", "status": "hit"})
+            logger.info("context_engineering_cache_hit chunks=%s packed_chars=%s", len(packed), after_chars)
+            if reporter:
+                await reporter.report(
+                    "Reusing previous context compression.",
+                    {"depth": 3, "ref": f"{parent_ref}:context:cache_hit", "parent_ref": f"{parent_ref}:context", "chunk_count": len(packed), "packed_chars": after_chars},
+                )
+        else:
+            if cache_key:
+                cache_events.append({"stage": "context_engineering", "status": "miss"})
+            compacted = await _llm_compact_context(query, packed, user_id or "", json_client, reporter, parent_ref)
+            if compacted:
+                packed, after_chars, snippet_counts = _apply_compacted_snippets(packed, compacted)
+                source = "llm"
+                if cache_key:
+                    await retrieval_cache.set_json(cache_key, _context_compactor_payload(compacted))
+                    cache_events.append({"stage": "context_engineering", "status": "set"})
+                    logger.info("context_engineering_cache_set chunks=%s packed_chars=%s", len(packed), after_chars)
+            elif cache_key:
+                cache_events.append({"stage": "context_engineering", "status": "fallback"})
+    elif reporter:
+        await reporter.report(
+            "Selected compact snippets without LLM compression.",
+            {"depth": 3, "ref": f"{parent_ref}:context:deterministic", "parent_ref": f"{parent_ref}:context", "chunk_count": len(packed)},
+        )
+
     saved_chars = max(before_chars - after_chars, 0)
     context = {
         "ran": True,
-        "source": "fresh",
+        "source": source,
         "raw_chars": before_chars,
         "packed_chars": after_chars,
         "saved_chars": saved_chars,
@@ -704,7 +759,152 @@ def _pack_context(
         "context_chars_saved": saved_chars,
         "context_engineering": context,
         "selected_snippet_counts": snippet_counts,
+        "cache_events": cache_events,
     }
+
+
+def _should_llm_compact(before_chars: int, after_chars: int, packed: list[dict[str, Any]], json_client) -> bool:
+    if not json_client or not packed:
+        return False
+    if before_chars >= _LLM_CONTEXT_MIN_RAW_CHARS:
+        return True
+    return after_chars >= _LLM_CONTEXT_MAX_PACKED_CHARS
+
+
+def _context_compactor_cache_key(query: str, user_id: str | None, chunks: list[dict[str, Any]]) -> str | None:
+    signature = retrieval_cache.llm_settings_signature(user_id, "retrieval.context_engineering")
+    if not signature:
+        return None
+    chunk_signature = [
+        {
+            "id": chunk.get("id"),
+            "text_hash": hashlib.sha256(str(chunk.get("text", "")).encode("utf-8")).hexdigest(),
+            "summary_hash": hashlib.sha256(str(chunk.get("summary", "")).encode("utf-8")).hexdigest(),
+        }
+        for chunk in chunks
+    ]
+    return retrieval_cache.cache_key(_CONTEXT_COMPACTOR_CACHE_VERSION, user_id or "", signature, query, chunk_signature)
+
+
+async def _llm_compact_context(
+    query: str,
+    chunks: list[dict[str, Any]],
+    user_id: str,
+    json_client,
+    reporter,
+    parent_ref: str,
+) -> dict[str, list[str]] | None:
+    if reporter:
+        await reporter.report(
+            "Compressing large context with LLM.",
+            {"depth": 3, "ref": f"{parent_ref}:context:llm", "parent_ref": f"{parent_ref}:context", "chunk_count": len(chunks)},
+        )
+    try:
+        data = await json_client.async_invoke_json(
+            system=_context_compactor_system_prompt(),
+            human=_context_compactor_human_prompt(query, chunks),
+            user_id=user_id,
+            stage="retrieval.context_engineering",
+        )
+    except Exception as exc:
+        logger.info("context_engineering_llm_fallback error=%s", str(exc)[:200])
+        if reporter:
+            await reporter.report(
+                "Context compression unavailable; using deterministic snippets.",
+                {"depth": 3, "ref": f"{parent_ref}:context:llm:fallback", "parent_ref": f"{parent_ref}:context:llm"},
+            )
+        return None
+    compacted = _valid_context_compactor_cache(data, chunks)
+    if not compacted:
+        logger.info("context_engineering_llm_invalid chunks=%s", len(chunks))
+        return None
+    if reporter:
+        await reporter.report(
+            "Compressed context for verifier and answer.",
+            {
+                "depth": 3,
+                "ref": f"{parent_ref}:context:llm:done",
+                "parent_ref": f"{parent_ref}:context:llm",
+                "chunk_count": len(compacted),
+                "snippet_count": sum(len(snippets) for snippets in compacted.values()),
+            },
+        )
+    return compacted
+
+
+def _context_compactor_system_prompt() -> str:
+    return (
+        "Compress retrieved source chunks for verifier and answer prompts. "
+        "Return only valid JSON. No markdown. "
+        "Use only exact text copied from each SOURCE_CHUNK text or summary. "
+        "Keep passages that directly help answer the query, including qualifiers, counts, dates, and contrasting details. "
+        "Do not paraphrase, infer, add facts, or combine chunks. "
+        "If a chunk has no useful passage, return an empty snippets list for that chunk."
+    )
+
+
+def _context_compactor_human_prompt(query: str, chunks: list[dict[str, Any]]) -> str:
+    payload = [
+        {
+            "id": chunk["id"],
+            "summary": str(chunk.get("summary", ""))[:1200],
+            "text": str(chunk.get("text", ""))[:3500],
+        }
+        for chunk in chunks
+    ]
+    return (
+        f"QUERY:\n{query}\n\n"
+        f"SOURCE_CHUNKS:\n{json.dumps(payload, ensure_ascii=False)}\n\n"
+        f"Return JSON: {{\"chunks\":[{{\"id\":\"source_chunk_id\",\"snippets\":[\"exact copied passage up to {MAX_SNIPPET_CHARS} chars\"]}}]}}"
+    )
+
+
+def _valid_context_compactor_cache(value: Any, chunks: list[dict[str, Any]]) -> dict[str, list[str]] | None:
+    if not isinstance(value, dict) or not isinstance(value.get("chunks"), list):
+        return None
+    by_id = {str(chunk.get("id")): chunk for chunk in chunks}
+    compacted: dict[str, list[str]] = {}
+    for item in value["chunks"]:
+        if not isinstance(item, dict):
+            return None
+        chunk_id = str(item.get("id") or "")
+        if chunk_id not in by_id or not isinstance(item.get("snippets"), list):
+            return None
+        text = str(by_id[chunk_id].get("text", ""))
+        summary = str(by_id[chunk_id].get("summary", ""))
+        snippets = []
+        for snippet in item["snippets"][:MAX_SNIPPETS_PER_CHUNK]:
+            if not isinstance(snippet, str):
+                return None
+            clean = " ".join(snippet.strip().split())
+            if not clean:
+                continue
+            if clean not in text and clean not in summary:
+                continue
+            snippets.append(clean[:MAX_SNIPPET_CHARS])
+        compacted[chunk_id] = list(dict.fromkeys(snippets))
+    return compacted if compacted else None
+
+
+def _context_compactor_payload(compacted: dict[str, list[str]]) -> dict[str, Any]:
+    return {"chunks": [{"id": chunk_id, "snippets": snippets} for chunk_id, snippets in compacted.items()]}
+
+
+def _apply_compacted_snippets(
+    packed: list[dict[str, Any]],
+    compacted: dict[str, list[str]],
+) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
+    after_chars = 0
+    snippet_counts: dict[str, int] = {}
+    next_packed = []
+    for chunk in packed:
+        next_chunk = dict(chunk)
+        snippets = compacted.get(str(chunk.get("id"))) or next_chunk.get("_snippets") or []
+        next_chunk["_snippets"] = snippets
+        snippet_counts[str(chunk["id"])] = len(snippets)
+        after_chars += len(str(chunk.get("summary", ""))) + sum(len(str(snippet)) for snippet in snippets)
+        next_packed.append(next_chunk)
+    return next_packed, after_chars, snippet_counts
 
 
 def _empty_context_engineering(source: str) -> dict[str, Any]:
@@ -734,12 +934,14 @@ def _aggregate_context_engineering(trace_parts: list[dict[str, Any]]) -> dict[st
     chunk_count = 0
     snippet_count = 0
     ran = False
+    sources: set[str] = set()
     for trace in trace_parts:
         selected_snippet_counts.update(trace.get("selected_snippet_counts") or {})
         context = trace.get("context_engineering") or {}
         if not context.get("ran"):
             continue
         ran = True
+        sources.add(str(context.get("source") or "deterministic"))
         raw_chars += int(context.get("raw_chars") or 0)
         packed_chars += int(context.get("packed_chars") or 0)
         chunk_count += int(context.get("chunk_count") or 0)
@@ -749,7 +951,7 @@ def _aggregate_context_engineering(trace_parts: list[dict[str, Any]]) -> dict[st
     saved_chars = max(raw_chars - packed_chars, 0)
     context = {
         "ran": True,
-        "source": "fresh",
+        "source": sources.pop() if len(sources) == 1 else "mixed",
         "raw_chars": raw_chars,
         "packed_chars": packed_chars,
         "saved_chars": saved_chars,

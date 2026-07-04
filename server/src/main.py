@@ -20,6 +20,7 @@ from src.services.rag.rag_service import get_rag_service
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Resume durable ingest jobs when the API process starts."""
+    from src.infra.cron import start_cache_crons, stop_cache_crons
     from src.infra.events import start_event_bus, stop_event_bus
     from src.infra.sse import get_sse_service
     from src.services.rag.private.durability.events import register_ingest_job_sse_bridge
@@ -28,10 +29,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     if sse_start:
         await sse_start()
     register_ingest_job_sse_bridge()
+    start_cache_crons()
     await get_rag_service().resume_pending_jobs()
     try:
         yield
     finally:
+        await stop_cache_crons()
         sse_stop = getattr(get_sse_service(), "stop", None)
         if sse_stop:
             await sse_stop()

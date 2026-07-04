@@ -38,6 +38,7 @@ class QueryEvidenceChain:
             "cache_events": [],
             "user_id": user_id,
             "reporter": reporter,
+            "json_client": self.json_client,
             "within_directories": within_directories or [],
             "excluding_directories": excluding_directories or [],
             "within_tags": within_tags or [],
