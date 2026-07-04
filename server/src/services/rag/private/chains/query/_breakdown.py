@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -8,6 +9,7 @@ from typing import Any
 from src.infra import retrieval_cache
 
 from ._state import QueryState
+from ._sub_query_verifier import SemanticSubQueryVerifierChain
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +75,8 @@ async def _decompose(json_client, query: str, user_id: str, cache_events: list[d
     """Ask the LLM to break the query into focused sub-queries; fall back on failure."""
     system = _breakdown_system_prompt()
     human = _breakdown_human_prompt(query)
+
+    # ── 1. Exact cache ─────────────────────────────────────────────────────────
     cache_key = _breakdown_cache_key(query, user_id, system, human)
     if cache_key:
         cached = await retrieval_cache.get_json(cache_key)
@@ -84,6 +88,39 @@ async def _decompose(json_client, query: str, user_id: str, cache_events: list[d
         if cache_events is not None:
             cache_events.append({"stage": "breakdown", "status": "miss"})
 
+    # ── 2. Semantic cache ───────────────────────────────────────────────────────
+    semantic_key = _breakdown_semantic_cache_key(query, user_id, system)
+    if semantic_key:
+        namespace, text = semantic_key
+        match = await asyncio.to_thread(
+            retrieval_cache.get_semantic_json_match,
+            user_id or "",
+            namespace,
+            text,
+        )
+        if match:
+            payload, distance = match
+            cached_sub_queries = _cached_sub_queries(payload)
+            cached_query = payload.get("query", "") if isinstance(payload, dict) else ""
+            if cached_sub_queries and cached_query:
+                # Skip verifier for near-identical queries (distance ≈ 0)
+                _EXACT_MATCH_EPSILON = 0.02
+                if distance is not None and abs(distance) < _EXACT_MATCH_EPSILON:
+                    is_safe = True
+                elif json_client:
+                    verifier = SemanticSubQueryVerifierChain(json_client)
+                    is_safe = await verifier.run(query, cached_query, user_id)
+                else:
+                    is_safe = False
+                if is_safe:
+                    logger.info("breakdown_semantic_cache_hit distance=%s sub_queries=%s", distance, len(cached_sub_queries))
+                    if cache_events is not None:
+                        cache_events.append({"stage": "breakdown", "cache": "semantic", "status": "hit"})
+                    return cached_sub_queries
+        if cache_events is not None:
+            cache_events.append({"stage": "breakdown", "cache": "semantic", "status": "miss"})
+
+    # ── 3. LLM call ────────────────────────────────────────────────────────────
     try:
         data = await json_client.async_invoke_json(
             system,
@@ -103,10 +140,22 @@ async def _decompose(json_client, query: str, user_id: str, cache_events: list[d
                 seen.add(q)
                 result.append(q)
         result = result[:_MAX_SUB_QUERIES]
+        payload = {"sub_queries": result, "query": query}
         if cache_key:
-            await retrieval_cache.set_json(cache_key, {"sub_queries": result})
+            await retrieval_cache.set_json(cache_key, payload)
             if cache_events is not None:
                 cache_events.append({"stage": "breakdown", "status": "set"})
+        if semantic_key:
+            namespace, text = semantic_key
+            await asyncio.to_thread(
+                retrieval_cache.set_semantic_json,
+                user_id or "",
+                namespace,
+                text,
+                payload,
+            )
+            if cache_events is not None:
+                cache_events.append({"stage": "breakdown", "cache": "semantic", "status": "set"})
         return result
     except Exception as exc:
         logger.warning("query_breakdown_failed error=%s", exc)
@@ -144,6 +193,22 @@ def _breakdown_cache_key(query: str, user_id: str | None, system: str, human: st
     if not signature:
         return None
     return retrieval_cache.cache_key("query_breakdown:v1", signature, system, human, query)
+
+
+def _breakdown_semantic_cache_key(query: str, user_id: str | None, system: str) -> tuple[str, str] | None:
+    """Namespace + normalised text for the semantic breakdown cache.
+
+    Keyed on LLM settings + prompt version so prompt changes auto-invalidate.
+    Text is the normalised query (punctuation-stripped, lowercased) for fuzzy matching.
+    """
+    llm_sig = retrieval_cache.llm_settings_signature(user_id, "retrieval.query_breakdown")
+    if not llm_sig:
+        return None
+    namespace = retrieval_cache.semantic_namespace("breakdown:v1", user_id or "", llm_sig, system)
+    text = retrieval_cache.normalize_semantic_text(query)
+    if not text:
+        return None
+    return namespace, text
 
 
 
