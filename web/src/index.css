@@ -294,7 +294,7 @@
   }
 
   .inline-citation-popover {
-    @apply absolute left-1/2 top-full z-[90] mt-2 flex w-80 max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col gap-2 rounded-lg border border-border bg-card p-3 text-left text-sm leading-5 text-foreground shadow-2xl backdrop-blur-xl;
+    @apply absolute left-1/2 top-full z-[90] mt-2 flex w-80 max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col gap-2 rounded-xl border border-border/80 bg-background p-4 text-left text-sm leading-5 text-foreground shadow-2xl ring-1 ring-foreground/5;
   }
 
   .inline-citation-label {
