@@ -331,6 +331,7 @@ function NoteCreationModal({ isOpen, onClose, token, allDirectories, selectedDir
   const [draftDir, setDraftDir] = useState<string>(selectedDir || '')
   const [tags, setTags] = useState<string[]>([])
   const [tagInput, setTagInput] = useState('')
+  const [format, setFormat] = useState<'md' | 'txt'>('md')
   
   useEffect(() => {
     if (isOpen) {
@@ -338,6 +339,7 @@ function NoteCreationModal({ isOpen, onClose, token, allDirectories, selectedDir
       setDraft('')
       setTags([])
       setTagInput('')
+      setFormat('md')
     }
   }, [isOpen, selectedDir])
 
@@ -365,7 +367,10 @@ function NoteCreationModal({ isOpen, onClose, token, allDirectories, selectedDir
         body: JSON.stringify({
           text: draft,
           directory_id: draftDir || null,
-          tags: tags
+          tags: tags,
+          metadata: {
+            extension: format
+          }
         })
       })
       onSuccess()
@@ -429,14 +434,24 @@ function NoteCreationModal({ isOpen, onClose, token, allDirectories, selectedDir
             </div>
 
             <div className="bg-input/50 p-4 border-t border-border/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <select 
-                className="premium-input w-48 h-10 py-0 bg-background border-border/50"
-                value={draftDir}
-                onChange={e => setDraftDir(e.target.value)}
-              >
-                <option value="">Root Directory</option>
-                {allDirectories.map(d => <option key={d.id} value={d.id}>{d.path}</option>)}
-              </select>
+              <div className="flex flex-col sm:flex-row gap-4">
+                <select 
+                  className="premium-input w-48 h-10 py-0 bg-background border-border/50"
+                  value={draftDir}
+                  onChange={e => setDraftDir(e.target.value)}
+                >
+                  <option value="">Root Directory</option>
+                  {allDirectories.map(d => <option key={d.id} value={d.id}>{d.path}</option>)}
+                </select>
+                <select
+                  className="premium-input w-32 h-10 py-0 bg-background border-border/50"
+                  value={format}
+                  onChange={e => setFormat(e.target.value as 'md' | 'txt')}
+                >
+                  <option value="md">Markdown</option>
+                  <option value="txt">Plain Text</option>
+                </select>
+              </div>
               <div className="flex gap-2">
                 <button className="premium-btn premium-btn-secondary h-10 px-4" onClick={onClose}>Cancel</button>
                 <button className="premium-btn premium-btn-primary h-10 px-6" onClick={handleCreateNote}>Save Note</button>

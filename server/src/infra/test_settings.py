@@ -94,7 +94,7 @@ async def test_llm_rotation_falls_through_to_next_candidate(monkeypatch):
         def __init__(self, model: str) -> None:
             self.model = model
 
-        async def ainvoke(self, messages):
+        async def ainvoke(self, messages, **kwargs):
             calls.append(self.model)
             if self.model == "bad-model":
                 raise RuntimeError("down")
@@ -107,6 +107,48 @@ async def test_llm_rotation_falls_through_to_next_candidate(monkeypatch):
 
     assert result == {"ok": True}
     assert calls == ["bad-model", "good-model"]
+
+
+async def test_official_openai_preset_passes_prompt_cache_key(monkeypatch):
+    calls = []
+    candidates = (Settings({"id": "openai", "llm_model": "gpt-4o"}),)
+
+    class FakeResponse:
+        content = '{"ok": true}'
+
+    class FakeLLM:
+        async def ainvoke(self, messages, **kwargs):
+            calls.append(kwargs)
+            return FakeResponse()
+
+    monkeypatch.setattr(langchain_json, "get_user_setting_candidates", lambda user_id: candidates)
+    monkeypatch.setattr(langchain_json, "_get_chat_llm", lambda cache_key: FakeLLM())
+
+    result = await langchain_json.JsonLLMClient().async_invoke_json("stable system", "human", "user-1")
+
+    assert result == {"ok": True}
+    assert calls[0]["prompt_cache_key"].startswith("openai:gpt-4o:api.openai.com:")
+
+
+async def test_custom_openai_base_url_skips_prompt_cache_key(monkeypatch):
+    calls = []
+    candidates = (Settings({"id": "custom", "llm_base_url": "http://localhost:1234/v1"}),)
+
+    class FakeResponse:
+        content = '{"ok": true}'
+
+    class FakeLLM:
+        async def ainvoke(self, messages, **kwargs):
+            calls.append(kwargs)
+            return FakeResponse()
+
+    monkeypatch.setattr(langchain_json, "get_user_setting_candidates", lambda user_id: candidates)
+    monkeypatch.setattr(langchain_json, "_get_chat_llm", lambda cache_key: FakeLLM())
+
+    result = await langchain_json.JsonLLMClient().async_invoke_json("stable system", "human", "user-1")
+
+    assert result == {"ok": True}
+    assert calls == [{}]
 
 
 def test_chroma_upsert_writes_actual_embedding_rotation_snapshot(monkeypatch):

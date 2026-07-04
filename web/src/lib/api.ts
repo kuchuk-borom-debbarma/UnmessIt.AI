@@ -44,6 +44,43 @@ export type ProcessingSettings = {
   ingest_retry_backoff_seconds: string
 }
 
+export type LLMConfig = {
+  id: string
+  name: string
+  llm_provider: string
+  llm_model: string
+  llm_base_url?: string | null
+  llm_temperature: number
+  llm_max_retries: number
+  llm_max_tokens?: number | null
+  llm_rate_limit_per_minute: number
+}
+
+export type EmbeddingConfig = {
+  id: string
+  name: string
+  embedding_provider: string
+  embedding_model: string
+  embedding_base_url?: string | null
+  embedding_rate_limit_per_minute: number
+  embedding_batch_size: number
+}
+
+export type StageRoute = {
+  stage: string
+  kind: 'llm' | 'embedding'
+  enabled: boolean
+  config_ids: string[]
+  active_config_id?: string | null
+}
+
+export type StageConfig = {
+  llm: Record<string, StageRoute>
+  embedding: Record<string, StageRoute>
+  llm_configs: LLMConfig[]
+  embedding_configs: EmbeddingConfig[]
+}
+
 export type RotationConfig = {
   enabled: boolean
   preset_ids: string[]

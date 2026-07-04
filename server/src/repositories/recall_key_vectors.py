@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from src.infra import chroma
-from src.infra.settings import get_user_settings
+from src.infra.settings import get_user_embedding_settings
 
 
 def index(keys: list[dict[str, Any]]) -> None:
@@ -14,7 +14,7 @@ def index(keys: list[dict[str, Any]]) -> None:
     existing keys when wording differs from a saved name or alias.
     """
     ids, texts, metadatas = [], [], []
-    settings = get_user_settings(keys[0]["user_id"]) if keys else None
+    settings = get_user_embedding_settings(keys[0]["user_id"], "ingest.recall_key_vectors") if keys else None
     processing_snapshot = settings.processing_snapshot() if settings else {}
     rotation_snapshot = settings.rotation_snapshot() if settings else {}
     for key in keys:
@@ -31,7 +31,7 @@ def index(keys: list[dict[str, Any]]) -> None:
         })
     if keys:
         user_id = keys[0]["user_id"]
-        chroma.upsert(ids, texts, metadatas, user_id)
+        chroma.upsert(ids, texts, metadatas, user_id, stage="ingest.recall_key_vectors")
 
 
 def vector_id(recall_key_id: str) -> str:
@@ -41,12 +41,12 @@ def vector_id(recall_key_id: str) -> str:
 
 def exists(recall_key_id: str, user_id: str) -> bool:
     """Check if a recall key vector already exists."""
-    return vector_id(recall_key_id) in chroma.existing_ids([vector_id(recall_key_id)], user_id)
+    return vector_id(recall_key_id) in chroma.existing_ids([vector_id(recall_key_id)], user_id, stage="ingest.recall_key_vectors")
 
 
 def search(query: str, user_id: str, top_k: int = 20) -> list[dict[str, Any]]:
     """Search only recall-key vectors, not source-chunk vectors."""
-    return chroma.search(query, user_id, top_k=top_k, where={"$and": [{"object_type": "recall_key"}, {"user_id": user_id}]})
+    return chroma.search(query, user_id, top_k=top_k, where={"$and": [{"object_type": "recall_key"}, {"user_id": user_id}]}, stage="retrieval.vector_search")
 
 
 def _text(key: dict[str, Any]) -> str:

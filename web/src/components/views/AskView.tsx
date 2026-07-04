@@ -1,7 +1,9 @@
-import { Search, RefreshCw, ChevronRight, ChevronDown, ChevronUp, ExternalLink, Terminal, SlidersHorizontal, Square } from 'lucide-react'
+import { RefreshCw, ChevronRight, ChevronDown, ChevronUp, ExternalLink, Terminal, SlidersHorizontal, Square, Zap, Database, Cpu, Clock, CheckCircle, Gauge, Timer, Layers, TrendingDown, GitBranch } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Link } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { DirectorySearchSelect } from './DirectorySearchSelect'
 import { TagSearchSelect } from './TagSearchSelect'
 import { useAsk } from '../../contexts/useAsk'
@@ -18,10 +20,81 @@ type Citation = {
   start_char?: number | null
   end_char?: number | null
 }
+type ContextEngineering = {
+  ran?: boolean
+  raw_chars?: number
+  packed_chars?: number
+  saved_chars?: number
+  shrink_percent?: number
+}
+type FlowStep = {
+  id: string
+  title: string
+  subtitle?: string
+  type: 'llm' | 'cache' | 'process'
+  status: 'hit' | 'miss' | 'skip' | 'skipped' | 'completed' | 'error'
+  duration_ms?: number
+  model_used?: string
+  metrics?: { calls?: number; prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; duration_ms?: number; model_used?: string }
+  details?: Record<string, any>
+  badges?: string[]
+  children?: FlowStep[]
+}
+type TraceSummaryItem = {
+  id: string
+  label: string
+  value: string
+  detail?: string
+  tone?: 'success' | 'warning' | 'danger' | 'neutral'
+}
+type RetrievalTraceUi = {
+  summary?: TraceSummaryItem[]
+  flow?: FlowStep[]
+  savings?: Record<string, any>
+}
 
-const CITE_MARKER_RE = /(\[\[cite:[^\]\s]+\]\]?)/g
-const CITE_MARKER_ONLY_RE = /^\[\[cite:([^\]\s]+)\]\]?$/
+type RetrievalTraceLike = {
+  context_engineering?: ContextEngineering
+  context_chars_before_packing?: number
+  context_chars_after_packing?: number
+  llm_saved_metrics?: {
+    llm_calls: number
+    prompt_tokens: number
+    completion_tokens: number
+    total_tokens: number
+  }
+  cache_summary?: Record<string, string>
+  mode?: string
+  source_chunk_count?: number
+  citation_count?: number
+  sub_queries?: string[]
+  extracted_subjects?: string[]
+  flow_steps?: FlowStep[]
+  ui?: RetrievalTraceUi
+}
+
+// We don't use CITE_MARKER_RE and CITE_MARKER_ONLY_RE anymore with ReactMarkdown,
+// but keep them in case they're needed elsewhere or just remove them to fix TS errors.
+// Actually, let's just remove them.
 const STRAY_CITE_MARKER_RE = /\[\[cite:[^\]\s]+(?:\]\])?/g
+function contextShrinkPercent(before?: number, after?: number) {
+  if (!before || before <= 0) return 0
+  return Math.round(Math.min(100, Math.max(0, ((before - (after || 0)) / before) * 100)))
+}
+
+function contextEngineeringTrace(trace?: RetrievalTraceLike | null): ContextEngineering | null {
+  if (!trace) return null
+  if (trace.context_engineering) return trace.context_engineering
+  const raw = Number(trace.context_chars_before_packing || 0)
+  const packed = Number(trace.context_chars_after_packing || 0)
+  return {
+    ran: raw > 0,
+    raw_chars: raw,
+    packed_chars: packed,
+    saved_chars: Math.max(raw - packed, 0),
+    shrink_percent: contextShrinkPercent(raw, packed),
+  }
+}
 
 function ToastMessage({ toast }: { toast: Toast }) {
   return (
@@ -160,63 +233,325 @@ function citationHref(citation: Citation) {
 
 function InlineAnswer({ answer, citations }: { answer: string; citations: Citation[] }) {
   const [openId, setOpenId] = useState<string | null>(null)
-  const parts = answer.split(CITE_MARKER_RE)
+  
+  let citeIndex = 0
+  const processedAnswer = answer
+    .replace(/\[\[cite:([^\]\s]+)\]\]?/g, (_, chunkId) => {
+      const id = `${chunkId}:${citeIndex++}`
+      return `[cite](cite:${id})`
+    })
+    .replace(STRAY_CITE_MARKER_RE, '') // strip any malformed stray markers
 
   return (
-    <div className="answer-text">
-      {parts.map((part, index) => {
-        const match = part.match(CITE_MARKER_ONLY_RE)
-        if (!match) {
-          const text = part.replace(STRAY_CITE_MARKER_RE, '')
-          return text ? <span key={index}>{text}</span> : null
-        }
+    <div className="prose dark:prose-invert max-w-none prose-p:leading-7 prose-headings:font-bold prose-pre:bg-input/50 prose-pre:border prose-pre:border-border/50">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ href, children, ...props }) => {
+            let chunkId: string | null = null;
+            let indexStr = '0';
 
-        const chunkId = match[1]
-        const citation = citations.find((item) => item.source_chunk_id === chunkId)
-        if (!citation) return null
-        const sourceNumber = citations.findIndex((item) => item.source_chunk_id === chunkId) + 1
-        const markerId = `${chunkId}-${index}`
-        const isOpen = openId === markerId
+            if (href?.startsWith('cite:')) {
+              [chunkId, indexStr] = href.replace('cite:', '').split(':')
+            } else if (href && citations.some((c) => c.source_chunk_id === href)) {
+              chunkId = href;
+              indexStr = (citeIndex++).toString();
+            }
 
+            if (chunkId) {
+              const citation = citations.find((item) => item.source_chunk_id === chunkId)
+              if (!citation) return <span className="text-muted-foreground line-through decoration-muted-foreground/50 cursor-help" title="Source not found">{children}</span>
+              const sourceNumber = citations.findIndex((item) => item.source_chunk_id === chunkId) + 1
+              const markerId = `${chunkId}-${indexStr}`
+              const isOpen = openId === markerId
+
+              return (
+                <span className={`inline-citation-wrap ${isOpen ? '!z-[100]' : ''}`}>
+                  <button
+                    type="button"
+                    className="inline-citation-chip"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setOpenId(isOpen ? null : markerId);
+                    }}
+                  >
+                    Source {sourceNumber}
+                  </button>
+                  <AnimatePresence>
+                    {isOpen && (
+                      <motion.span
+                        initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                        transition={{ duration: 0.16 }}
+                        className="inline-citation-popover"
+                      >
+                        <span className="inline-citation-label">Cited lines</span>
+                        <span className="inline-citation-quote">
+                          "{citation.exact_quote || citation.raw_text}"
+                        </span>
+                        {citation.cleaned_text && (
+                          <span className="inline-citation-summary">{citation.cleaned_text}</span>
+                        )}
+                        <Link className="inline-citation-link" to={citationHref(citation)}>
+                          Open in note <ExternalLink size={13} />
+                        </Link>
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                </span>
+              )
+            }
+            
+            // If the LLM hallucinated a citation link that isn't valid, don't render it as a clickable link
+            const textContent = String(children).toLowerCase();
+            if (textContent === 'cite' || textContent.includes('citecite') || href === '#' || href === 'cite') {
+               return <span className="text-muted-foreground line-through decoration-muted-foreground/50 cursor-help" title="Source not found">{children}</span>
+            }
+
+            return (
+              <a 
+                href={href} 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                onClick={(e) => {
+                  if (!href || href.startsWith('#') || !href.startsWith('http')) {
+                    e.preventDefault();
+                  }
+                }}
+                {...props}
+              >
+                {children}
+              </a>
+            )
+          }
+        }}
+      >
+        {processedAnswer}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
+function statusToneClass(tone?: string) {
+  if (tone === 'success') return 'border-primary-500/25 bg-primary-500/10 text-primary-600 dark:text-primary-300'
+  if (tone === 'warning') return 'border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+  if (tone === 'danger') return 'border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-300'
+  return 'border-border/55 bg-background/45 text-foreground'
+}
+
+function TraceSummaryGrid({ items }: { items: TraceSummaryItem[] }) {
+  const icons = [Timer, Zap, TrendingDown, Cpu, Layers, Database]
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+      {items.map((item, index) => {
+        const Icon = icons[index % icons.length]
         return (
-          <span key={markerId} className="inline-citation-wrap">
-            <button
-              type="button"
-              className="inline-citation-chip"
-              onClick={() => setOpenId(isOpen ? null : markerId)}
-            >
-              Source {sourceNumber}
-            </button>
-            <AnimatePresence>
-              {isOpen && (
-                <motion.span
-                  initial={{ opacity: 0, y: 8, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 6, scale: 0.98 }}
-                  transition={{ duration: 0.16 }}
-                  className="inline-citation-popover"
-                >
-                  <span className="inline-citation-label">Cited lines</span>
-                  <span className="inline-citation-quote">
-                    "{citation.exact_quote || citation.raw_text}"
-                  </span>
-                  {citation.cleaned_text && (
-                    <span className="inline-citation-summary">{citation.cleaned_text}</span>
-                  )}
-                  <Link className="inline-citation-link" to={citationHref(citation)}>
-                    Open in note <ExternalLink size={13} />
-                  </Link>
-                </motion.span>
-              )}
-            </AnimatePresence>
-          </span>
+          <motion.div
+            key={item.id}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: index * 0.04, duration: 0.22 }}
+            className={cn('rounded-lg border p-4 min-h-28 flex flex-col justify-between', statusToneClass(item.tone))}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[10px] font-extrabold uppercase tracking-[0.14em] opacity-70">{item.label}</span>
+              <Icon size={16} className="shrink-0 opacity-70" />
+            </div>
+            <strong className="mt-3 block break-words text-2xl font-black leading-tight">{item.value}</strong>
+            {item.detail && <span className="mt-1 text-xs font-semibold leading-5 opacity-75">{item.detail}</span>}
+          </motion.div>
         )
       })}
     </div>
   )
 }
 
+function SavingsPanel({ savings }: { savings?: Record<string, any> }) {
+  if (!savings) return null
+  const rows = [
+    ['Cache', `${savings.cache_hits ?? 0} hits`, `${savings.cache_misses ?? 0} misses · ${savings.cache_sets ?? 0} writes`, Zap],
+    ['LLM', `${savings.llm_calls_saved ?? 0} calls saved`, `${savings.llm_calls_observed ?? 0} calls observed · ${formatNumber(savings.tokens_observed)} tokens`, Cpu],
+    ['Context', `${savings.context_shrink_percent ?? 0}% smaller`, `${formatNumber(savings.context_saved_chars)} chars saved`, TrendingDown],
+    ['Skipped', `${Array.isArray(savings.steps_skipped) ? savings.steps_skipped.length : 0} steps`, Array.isArray(savings.steps_skipped) ? savings.steps_skipped.slice(0, 4).join(', ') || 'None' : 'None', GitBranch],
+  ] as const
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      {rows.map(([label, value, detail, Icon]) => (
+        <div key={label} className="rounded-lg border border-border/55 bg-background/35 p-4 flex items-start gap-3">
+          <div className="h-9 w-9 rounded-lg border border-primary-500/20 bg-primary-500/10 text-primary-500 flex items-center justify-center shrink-0">
+            <Icon size={17} />
+          </div>
+          <div className="min-w-0">
+            <div className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-muted-foreground">{label}</div>
+            <div className="mt-1 text-base font-black text-foreground">{value}</div>
+            <div className="mt-0.5 text-xs font-semibold text-muted-foreground break-words">{detail}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function FlowStepList({ steps }: { steps: FlowStep[] }) {
+  const iconFor = (step: FlowStep) => {
+    if (step.type === 'cache') return <Zap size={14} className="text-amber-500" />
+    if (step.type === 'llm') return <Cpu size={14} className="text-blue-500" />
+    return <Database size={14} className="text-zinc-500" />
+  }
+
+  const colorFor = (step: FlowStep) => {
+    if (step.type === 'cache') return 'border-amber-400/60 bg-amber-50/40 dark:bg-amber-900/10'
+    if (step.type === 'llm') return 'border-blue-400/60 bg-blue-50/40 dark:bg-blue-900/10'
+    return 'border-zinc-300/60 dark:border-zinc-700/60 bg-black/5 dark:bg-white/5'
+  }
+
+  const lineColorFor = (step: FlowStep) => {
+    if (step.type === 'cache') return 'bg-amber-400/50'
+    if (step.type === 'llm') return 'bg-blue-400/50'
+    return 'bg-zinc-400/40'
+  }
+
+  return (
+    <div className="flex flex-col gap-0">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Retrieval Pipeline</div>
+          <div className="text-xs text-muted-foreground mt-1">Backend-authored flow, including cache skips and nested sub-query passes.</div>
+        </div>
+        <Gauge size={18} className="text-primary-500" />
+      </div>
+      {steps.map((step, i) => (
+        <motion.div
+          key={step.id}
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: i * 0.05, duration: 0.22 }}
+          className="flex gap-3"
+        >
+          <div className="flex flex-col items-center">
+            <div className={cn('w-6 h-6 rounded-full border flex items-center justify-center flex-shrink-0 z-10', colorFor(step))}>
+              {iconFor(step)}
+            </div>
+            {i < steps.length - 1 && (
+              <div className={cn('w-0.5 flex-1 mt-1 mb-1', lineColorFor(step))} />
+            )}
+          </div>
+
+          <div className={cn('flex-1 rounded-xl border px-4 py-3 mb-2', colorFor(step))}>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 leading-tight">{step.title}</span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <StepBadge status={step.status} />
+                {step.metrics?.duration_ms != null && (
+                  <span className="text-[10px] font-mono text-zinc-500 dark:text-zinc-400 flex items-center gap-1">
+                    <Clock size={9} /> {formatMs(step.metrics.duration_ms)}
+                  </span>
+                )}
+                {step.metrics?.model_used && (
+                  <span className="text-[10px] font-mono text-blue-500/80 dark:text-blue-400/70">{step.metrics.model_used}</span>
+                )}
+              </div>
+            </div>
+            {step.subtitle && <p className="mt-1 text-xs leading-5 text-muted-foreground">{step.subtitle}</p>}
+            {step.badges && step.badges.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {step.badges.map((badge) => (
+                  <span key={badge} className="rounded-full border border-border/60 bg-background/50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-muted-foreground">
+                    {badge.replace(/_/g, ' ')}
+                  </span>
+                ))}
+              </div>
+            )}
+            {step.metrics && (
+              <div className="mt-1.5 flex gap-3 flex-wrap">
+                {step.metrics.prompt_tokens != null && <span className="text-[10px] text-zinc-500">↑ {formatNumber(step.metrics.prompt_tokens)} prompt</span>}
+                {step.metrics.completion_tokens != null && <span className="text-[10px] text-zinc-500">↓ {formatNumber(step.metrics.completion_tokens)} completion</span>}
+                {step.metrics.total_tokens != null && <span className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-400">= {formatNumber(step.metrics.total_tokens)} total tokens</span>}
+              </div>
+            )}
+            <DetailChips details={step.details} />
+            {step.children && step.children.length > 0 && (
+              <div className="mt-3 grid gap-2">
+                {step.children.map((child, childIndex) => (
+                  <motion.div
+                    key={child.id}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: (i * 0.05) + (childIndex * 0.03), duration: 0.18 }}
+                    className="rounded-lg border border-border/55 bg-background/45 p-3"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-foreground">{child.title}</div>
+                        {child.subtitle && <div className="mt-0.5 text-[11px] leading-4 text-muted-foreground break-words">{child.subtitle}</div>}
+                      </div>
+                      <StepBadge status={child.status} />
+                    </div>
+                    <DetailChips details={child.details} />
+                  </motion.div>
+                ))}
+              </div>
+            )}
+          </div>
+        </motion.div>
+      ))}
+    </div>
+  )
+}
+
+function StepBadge({ status }: { status: FlowStep['status'] }) {
+  const text = status === 'hit' ? 'Cache hit' : status === 'skipped' || status === 'skip' ? 'Skipped' : status
+  const cls = status === 'hit'
+    ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400'
+    : status === 'skipped' || status === 'skip'
+      ? 'bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300'
+      : 'bg-zinc-100 dark:bg-zinc-900/60 text-zinc-600 dark:text-zinc-400'
+  return (
+    <span className={cn('text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full flex items-center gap-1 shrink-0', cls)}>
+      {status === 'hit' && <CheckCircle size={9} />}
+      {text}
+    </span>
+  )
+}
+
+function DetailChips({ details }: { details?: Record<string, any> }) {
+  if (!details) return null
+  const entries = Object.entries(details)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '' && !(Array.isArray(value) && value.length === 0))
+    .slice(0, 8)
+  if (entries.length === 0) return null
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {entries.map(([key, value]) => (
+        <span key={key} className="text-[10px] px-2 py-0.5 rounded-md bg-white/70 dark:bg-zinc-900/60 border border-black/10 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400">
+          <span className="font-bold">{key.replace(/_/g, ' ')}:</span> {compactTraceValue(value)}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function compactTraceValue(value: unknown) {
+  if (Array.isArray(value)) return value.length <= 3 ? value.join(', ') : `${value.length} items`
+  if (value && typeof value === 'object') return `${Object.keys(value as Record<string, unknown>).length} fields`
+  const text = String(value)
+  return text.length > 54 ? `${text.slice(0, 51)}...` : text
+}
+
+function formatNumber(value: unknown) {
+  const n = Number(value || 0)
+  return Number.isFinite(n) ? n.toLocaleString() : '0'
+}
+
+function formatMs(value: unknown) {
+  const n = Number(value || 0)
+  if (!Number.isFinite(n)) return 'n/a'
+  return n < 1000 ? `${Math.round(n)}ms` : `${(n / 1000).toFixed(1)}s`
+}
+
 export function AskView({ token }: { token: string }) {
+
   const {
     query, setQuery, loading, showTrace, setShowTrace, showFilters, setShowFilters,
     terminalOpen, setTerminalOpen,
@@ -224,6 +559,9 @@ export function AskView({ token }: { token: string }) {
     withinTags, setWithinTags, excludingTags, setExcludingTags, withinTagsCondition, setWithinTagsCondition,
     result, toast, progressSteps, handleAsk, stopAsk
   } = useAsk()
+  const contextEngineering = contextEngineeringTrace(result?.retrieval_trace)
+  const traceUi = result?.retrieval_trace?.ui
+  const flowSteps = traceUi?.flow || result?.retrieval_trace?.flow_steps || []
 
   return (
     <div className="flex flex-col flex-1 h-full max-w-4xl mx-auto w-full pt-10 md:pt-20 relative">
@@ -458,60 +796,23 @@ export function AskView({ token }: { token: string }) {
                       exit={{ height: 0, opacity: 0 }}
                       className="overflow-hidden"
                     >
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="p-5 rounded-2xl bg-black/5 dark:bg-black/40 border border-black/10 dark:border-[#222] shadow-inner">
-                          <div className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">Sub-Queries Generated</div>
-                          <div className="flex flex-wrap gap-2">
-                            {result.retrieval_trace.sub_queries?.map((sq: string, i: number) => (
-                              <span key={i} className="px-2.5 py-1 rounded-lg bg-white dark:bg-zinc-900 border border-black/10 dark:border-zinc-800 text-xs text-zinc-700 dark:text-zinc-300 shadow-sm dark:shadow-none">
-                                {sq}
-                              </span>
-                            )) || <span className="text-zinc-600 text-xs italic">None</span>}
-                          </div>
-                        </div>
+                      <div className="flex flex-col gap-6 mt-4">
+                        {traceUi?.summary && traceUi.summary.length > 0 ? (
+                          <TraceSummaryGrid items={traceUi.summary} />
+                        ) : (
+                          <TraceSummaryGrid items={[
+                            { id: 'chunks', label: 'Chunks found', value: String(result.retrieval_trace.source_chunk_count || 0), tone: 'neutral' },
+                            { id: 'citations', label: 'Citations used', value: String(result.retrieval_trace.citation_count || 0), tone: 'success' },
+                            { id: 'mode', label: 'Retrieval mode', value: String(result.retrieval_trace.mode || 'N/A').replace(/_/g, ' '), tone: 'neutral' },
+                            { id: 'context', label: 'Context saved', value: `${contextEngineering?.shrink_percent ?? 0}%`, detail: `${formatNumber(contextEngineering?.saved_chars)} chars`, tone: 'success' },
+                          ]} />
+                        )}
 
-                        <div className="p-5 rounded-2xl bg-black/5 dark:bg-black/40 border border-black/10 dark:border-[#222] shadow-inner">
-                          <div className="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">Entities Extracted</div>
-                          <div className="flex flex-wrap gap-2">
-                            {result.retrieval_trace.extracted_subjects?.map((subj: string, i: number) => (
-                              <span key={i} className="px-2.5 py-1 rounded-lg bg-white dark:bg-zinc-900 border border-black/10 dark:border-zinc-800 text-xs text-zinc-700 dark:text-zinc-300 shadow-sm dark:shadow-none flex items-center gap-1">
-                                <Search size={10} className="text-zinc-500" /> {subj}
-                              </span>
-                            )) || <span className="text-zinc-600 text-xs italic">None</span>}
-                          </div>
-                        </div>
-                      </div>
+                        <SavingsPanel savings={traceUi?.savings} />
 
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-                        <div className="p-5 rounded-2xl bg-black/5 dark:bg-black/40 border border-black/10 dark:border-[#222] flex flex-col items-center justify-center text-center shadow-inner">
-                          <div className="text-3xl font-black text-black dark:text-white mb-1">{result.retrieval_trace.source_chunk_count || 0}</div>
-                          <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Chunks Found</div>
-                        </div>
-                        <div className="p-5 rounded-2xl bg-black/5 dark:bg-black/40 border border-black/10 dark:border-[#222] flex flex-col items-center justify-center text-center shadow-inner relative overflow-hidden">
-                          <div className="absolute inset-0 bg-primary-500/10 blur-xl"></div>
-                          <div className="text-3xl font-black text-primary-600 dark:text-primary-400 mb-1 relative z-10">{result.retrieval_trace.citation_count || 0}</div>
-                          <div className="text-[10px] font-bold text-primary-600/70 dark:text-primary-500/70 uppercase tracking-widest relative z-10">Citations Used</div>
-                        </div>
-                        <div className="p-5 rounded-2xl bg-black/5 dark:bg-black/40 border border-black/10 dark:border-[#222] flex flex-col items-center justify-center text-center shadow-inner md:col-span-2">
-                          <div className="text-lg font-black text-zinc-700 dark:text-zinc-300 mb-1 truncate w-full px-2">{String(result.retrieval_trace.mode || 'N/A').replace(/_/g, ' ')}</div>
-                          <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Retrieval Mode</div>
-                        </div>
-                        {result.retrieval_trace.context_chars_before_packing && (
-                          <div className="p-5 rounded-2xl bg-emerald-500/5 dark:bg-black/40 border border-emerald-500/20 dark:border-emerald-900/30 flex flex-col justify-center shadow-inner md:col-span-4">
-                              <div className="flex justify-between items-end mb-3">
-                                <div className="text-[10px] font-bold text-emerald-600/80 dark:text-emerald-500/80 uppercase tracking-widest">Token Optimization via Context Engineering</div>
-                                <div className="text-xl font-black text-emerald-600 dark:text-emerald-400">-{result.retrieval_trace.context_chars_saved?.toLocaleString()} chars</div>
-                              </div>
-                              <div className="w-full bg-black/5 dark:bg-zinc-900 rounded-full h-1.5 overflow-hidden">
-                              <div 
-                                className="bg-emerald-500 h-full rounded-full" 
-                                style={{ width: `${Math.min(100, Math.max(0, ((result.retrieval_trace.context_chars_saved || 0) / (result.retrieval_trace.context_chars_before_packing || 1)) * 100))}%` }}
-                              ></div>
-                            </div>
-                            <div className="flex justify-between mt-2 text-[10px] text-zinc-500 font-mono">
-                              <span>Raw Text: {result.retrieval_trace.context_chars_before_packing?.toLocaleString()}c</span>
-                              <span>Packed: {result.retrieval_trace.context_chars_after_packing?.toLocaleString()}c</span>
-                            </div>
+                        {flowSteps.length > 0 && (
+                          <div className="mt-1 rounded-lg border border-border/45 bg-card/35 p-4 backdrop-blur-xl">
+                            <FlowStepList steps={flowSteps} />
                           </div>
                         )}
                       </div>

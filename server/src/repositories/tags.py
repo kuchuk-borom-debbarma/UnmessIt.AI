@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from src.infra.sqlite import get_connection
+from src.repositories import retrieval_index
 
 
 def create(name: str, user_id: str, conn=None) -> str:
@@ -58,13 +59,15 @@ def add_to_note(note_id: str, tag_id: str, conn=None) -> None:
     """Associate a tag with a note."""
     db = conn or get_connection()
     try:
-        db.execute(
+        cursor = db.execute(
             """
             INSERT INTO note_tags (note_id, tag_id)
             VALUES (?, ?)
             """,
             (note_id, tag_id)
         )
+        if cursor.rowcount > 0:
+            retrieval_index.bump(_note_user_id(db, note_id), db)
         if conn is None:
             db.commit()
     except sqlite3.IntegrityError:
@@ -73,10 +76,12 @@ def add_to_note(note_id: str, tag_id: str, conn=None) -> None:
 
 def remove_from_note(note_id: str, tag_id: str, conn=None) -> None:
     db = conn or get_connection()
-    db.execute(
+    cursor = db.execute(
         "DELETE FROM note_tags WHERE note_id = ? AND tag_id = ?",
         (note_id, tag_id)
     )
+    if cursor.rowcount > 0:
+        retrieval_index.bump(_note_user_id(db, note_id), db)
     if conn is None:
         db.commit()
 
@@ -93,3 +98,8 @@ def get_for_note(note_id: str) -> list[dict[str, Any]]:
         (note_id,)
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def _note_user_id(conn, note_id: str) -> str | None:
+    row = conn.execute("SELECT user_id FROM notes WHERE id = ?", (note_id,)).fetchone()
+    return row["user_id"] if row else None

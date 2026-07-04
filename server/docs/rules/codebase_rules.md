@@ -37,8 +37,20 @@ Keep the server boring, small, and easy to read.
 - LangChain imports belong only in `src/infra/`.
 - Chains use the JSON client passed by `get_rag_service()`.
 - Do not log API keys, full prompts, full model responses, or full raw source text.
+- User AI configuration is split into named LLM configs and named embedding configs; processing settings stay separate from both.
+- Stage routing belongs in config repositories/settings infra. Runtime chains pass explicit stage keys instead of choosing models themselves.
+- Stage rotation is fallback-only: try the configured ordered configs for that stage on provider failure, and do not leak rotation choices across other stages.
 - Chroma is a rebuildable index; SQLite source rows are the source of truth.
 - Redis is a delivery/cache layer. SQLite remains the source of truth for jobs, events, and idempotency.
+- Embedding cache belongs in `src/infra/`, may use in-memory plus Redis layers, and must stay disposable; never make Redis the source of truth for vectors.
+- Exact retrieval LLM caches belong in `src/infra/`, must include prompt text and model/settings signatures in their keys, and must never cache provider failures.
+- Semantic retrieval caches may be used for query-planning outputs and evidence candidate boosts; they must be disposable, versioned by prompt/settings or retrieval index/settings/filters, and must never skip the verifier.
+- Evidence-search caches must be exact-only, infra-backed, disposable, and keyed by the SQLite retrieval index version. Bump that version whenever source chunks, recall links/keys, note tags, directory metadata, trash/restore state, or raw inputs change.
+- Context engineering belongs at the evidence boundary before verifier/answer prompts: keep relevant snippets from retrieved chunks, report raw/engineered prompt context when verifier or answer LLMs use source context, and show zero on full verifier+answer cache hits.
+- Recall-candidate lookup caches may use exact memory/Redis caching during ingest; key them by user, retrieval index version, embedding settings, and source chunk payload because candidates are hints before the recall-draft LLM.
+- Verifier caches must be exact-only and keyed by prompt text, LLM settings, attempt number, query, and compact evidence payload; never cache provider failure fallbacks.
+- Answer caches must be exact-only and keyed by prompt text, LLM settings, query, and compact verified evidence payload; never cache provider failure fallbacks.
+- Ingest parallelism must be bounded and unit-based. Only independent source chunk and recall units may run concurrently; durable checkpoints remain per unit, vector indexing stays batched, and pause/retry behavior must not mark unrelated completed units failed.
 
 ## 6. Routes
 - Keep these URLs stable: `POST /ingest/`, `POST /api/retrieval/query`, `GET /notes/`, `POST /notes/`, `GET /directories/`, `GET /tags/`, `GET /configs/presets`, `GET /configs/processing`, `PUT /configs/processing`, `GET /configs/rotation`, `PUT /configs/rotation`.

@@ -5,7 +5,7 @@ import hashlib
 from typing import Any
 
 from src.infra import chroma
-from src.infra.settings import get_user_settings
+from src.infra.settings import get_user_embedding_settings
 from src.services.rag.models import SourceChunk
 
 
@@ -17,7 +17,7 @@ def index(chunks: list[SourceChunk]) -> None:
     from src.repositories import tags, raw_inputs
     
     ids, texts, metadatas = [], [], []
-    settings = get_user_settings(chunks[0]["user_id"]) if chunks else None
+    settings = get_user_embedding_settings(chunks[0]["user_id"], "ingest.source_chunk_vectors") if chunks else None
     processing_snapshot = settings.processing_snapshot() if settings else {}
     rotation_snapshot = settings.rotation_snapshot() if settings else {}
     for chunk in chunks:
@@ -57,13 +57,13 @@ def index(chunks: list[SourceChunk]) -> None:
         
     if chunks:
         user_id = chunks[0]["user_id"]
-        chroma.upsert(ids, texts, metadatas, user_id)
+        chroma.upsert(ids, texts, metadatas, user_id, stage="ingest.source_chunk_vectors")
 
 
 def delete(chunk_ids: list[str], user_id: str) -> None:
     """Delete source chunk vectors from Chroma."""
     ids = [vector_id(cid) for cid in chunk_ids if cid]
-    chroma.delete(ids, user_id)
+    chroma.delete(ids, user_id, stage="ingest.source_chunk_vectors")
 
 
 def vector_id(chunk_id: str) -> str:
@@ -73,7 +73,7 @@ def vector_id(chunk_id: str) -> str:
 
 def exists(chunk_id: str, user_id: str) -> bool:
     """Check if a source chunk vector already exists."""
-    return vector_id(chunk_id) in chroma.existing_ids([vector_id(chunk_id)], user_id)
+    return vector_id(chunk_id) in chroma.existing_ids([vector_id(chunk_id)], user_id, stage="ingest.source_chunk_vectors")
 
 
 def update_metadata(chunk_ids: list[str], metadata_updates: dict[str, Any], user_id: str) -> None:
@@ -81,7 +81,7 @@ def update_metadata(chunk_ids: list[str], metadata_updates: dict[str, Any], user
     if not chunk_ids:
         return
     vector_ids = [vector_id(cid) for cid in chunk_ids]
-    collection = chroma.collection(user_id)
+    collection = chroma.collection(user_id, stage="ingest.source_chunk_vectors")
     results = collection.get(ids=vector_ids, include=["metadatas"])
     existing_metadatas = results.get("metadatas") or []
     existing_ids = results.get("ids") or []
@@ -152,7 +152,7 @@ def search(
     else:
         where = {"$and": where_conditions}
         
-    return chroma.search(query, user_id, top_k=top_k, where=where)
+    return chroma.search(query, user_id, top_k=top_k, where=where, stage="retrieval.vector_search")
 
 
 def reset(user_id: str) -> None:

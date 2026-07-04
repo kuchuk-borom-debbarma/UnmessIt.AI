@@ -108,6 +108,14 @@ def test_retrieval_progress_payload_uses_nested_shape():
     }
 
 
+def test_retrieval_progress_reporter_is_best_effort():
+    class BrokenSse:
+        async def publish(self, *args):
+            raise RuntimeError("down")
+
+    asyncio.run(retrieval_route.SseProgressReporter(BrokenSse(), "topic").report("Step"))
+
+
 def test_retrieval_route_accepts_legacy_tag_names(monkeypatch):
     monkeypatch.setattr(retrieval_route.tags, "get_by_name", lambda value, user_id: {"id": "tag-id-1"} if value == "Tag One" else None)
 
@@ -125,18 +133,18 @@ def test_config_test_reuses_saved_key_when_editing(monkeypatch):
         used["key"] = cache_key[4]
         return FakeLLM()
 
-    monkeypatch.setattr(config_route.config_presets, "get_by_id", lambda preset_id, user_id: {"llm_api_key": "saved-key", "embedding_api_key": "saved-embed-key"})
+    monkeypatch.setattr(config_route.config_profiles, "get_llm", lambda config_id, user_id: {"llm_api_key": "saved-key"})
     monkeypatch.setattr(config_route, "_get_chat_llm", fake_chat_llm)
 
     response = config_route.test_config(config_route.ConfigTestPayload(
         kind="llm",
-        preset_id="preset-1",
-        config=config_route.PresetCreate(
-            name="nvidia",
-            llm_model="meta/llama-3.3-70b-instruct",
-            llm_base_url="https://integrate.api.nvidia.com/v1",
-            llm_api_key=None,
-        ),
+        config_id="preset-1",
+        config={
+            "name": "nvidia",
+            "llm_model": "meta/llama-3.3-70b-instruct",
+            "llm_base_url": "https://integrate.api.nvidia.com/v1",
+            "llm_api_key": None,
+        },
     ), "user-1")
 
     assert response["status"] == "ok"

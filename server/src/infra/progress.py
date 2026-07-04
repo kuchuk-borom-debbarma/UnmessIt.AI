@@ -8,8 +8,18 @@ SyncReporter = Callable[[str, dict[str, Any] | None], None]
 
 _async_reporter: ContextVar[AsyncReporter | None] = ContextVar("async_progress_reporter", default=None)
 _sync_reporter: ContextVar[SyncReporter | None] = ContextVar("sync_progress_reporter", default=None)
+_active_parent_ref: ContextVar[str | None] = ContextVar("active_parent_ref", default=None)
 _last_llm_rotation_snapshot: ContextVar[dict[str, Any] | None] = ContextVar("last_llm_rotation_snapshot", default=None)
 _last_embedding_rotation_snapshot: ContextVar[dict[str, Any] | None] = ContextVar("last_embedding_rotation_snapshot", default=None)
+
+def set_active_parent_ref(ref: str | None) -> Token:
+    return _active_parent_ref.set(ref)
+
+def get_active_parent_ref() -> str | None:
+    return _active_parent_ref.get()
+
+def reset_active_parent_ref(token: Token) -> None:
+    _active_parent_ref.reset(token)
 
 
 def set_progress_reporters(
@@ -27,12 +37,24 @@ def reset_progress_reporters(tokens: tuple[Token, Token]) -> None:
 async def report_progress(message: str, details: dict[str, Any] | None = None) -> None:
     reporter = _async_reporter.get()
     if reporter:
+        if details is None:
+            details = {}
+        if "parent_ref" not in details:
+            parent = _active_parent_ref.get()
+            if parent:
+                details["parent_ref"] = parent
         await reporter(message, details)
 
 
 def report_progress_sync(message: str, details: dict[str, Any] | None = None) -> None:
     reporter = _sync_reporter.get()
     if reporter:
+        if details is None:
+            details = {}
+        if "parent_ref" not in details:
+            parent = _active_parent_ref.get()
+            if parent:
+                details["parent_ref"] = parent
         reporter(message, details)
 
 

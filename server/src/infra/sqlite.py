@@ -61,9 +61,18 @@ def init_db() -> None:
     _add_column_if_missing(conn, "user_config_presets", "embedding_rate_limit_per_minute", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(conn, "user_config_presets", "embedding_batch_size", "INTEGER NOT NULL DEFAULT 100")
     _add_column_if_missing(conn, "user_config_presets", "ingest_retry_backoff_seconds", "TEXT NOT NULL DEFAULT '5,15,30,60,120'")
+    _ensure_split_config_tables(conn)
+    _backfill_split_configs(conn)
     _add_column_if_missing(conn, "source_chunks", "directory_path", "TEXT")
     conn.executescript(
         """
+        CREATE TABLE IF NOT EXISTS user_retrieval_index_versions (
+            user_id TEXT PRIMARY KEY,
+            version INTEGER NOT NULL DEFAULT 0,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS user_processing_settings (
             user_id TEXT PRIMARY KEY,
             embedding_provider TEXT NOT NULL DEFAULT 'openai',
@@ -95,6 +104,90 @@ def init_db() -> None:
     _add_column_if_missing(conn, "user_rotation_config", "embedding_active_preset_id", "TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_directories_user_name ON directories(user_id, name)")
     conn.commit()
+
+
+def _ensure_split_config_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS user_llm_configs (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            llm_provider TEXT NOT NULL DEFAULT 'openai',
+            llm_model TEXT NOT NULL DEFAULT 'gpt-4o',
+            llm_base_url TEXT,
+            llm_api_key TEXT,
+            llm_temperature REAL NOT NULL DEFAULT 0,
+            llm_max_retries INTEGER NOT NULL DEFAULT 2,
+            llm_max_tokens INTEGER,
+            llm_rate_limit_per_minute INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_llm_configs_user ON user_llm_configs(user_id);
+
+        CREATE TABLE IF NOT EXISTS user_embedding_configs (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            embedding_provider TEXT NOT NULL DEFAULT 'openai',
+            embedding_model TEXT NOT NULL DEFAULT 'text-embedding-3-small',
+            embedding_base_url TEXT,
+            embedding_api_key TEXT,
+            embedding_rate_limit_per_minute INTEGER NOT NULL DEFAULT 0,
+            embedding_batch_size INTEGER NOT NULL DEFAULT 100,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_embedding_configs_user ON user_embedding_configs(user_id);
+
+        CREATE TABLE IF NOT EXISTS user_stage_config (
+            user_id TEXT NOT NULL,
+            stage TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind IN ('llm', 'embedding')),
+            enabled INTEGER NOT NULL DEFAULT 0,
+            config_ids JSON NOT NULL DEFAULT '[]',
+            active_config_id TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(user_id, stage),
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        """
+    )
+
+
+def _backfill_split_configs(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO user_llm_configs (
+            id, user_id, name, llm_provider, llm_model, llm_base_url, llm_api_key,
+            llm_temperature, llm_max_retries, llm_max_tokens, llm_rate_limit_per_minute,
+            created_at, updated_at
+        )
+        SELECT
+            'llm-' || id, user_id, name, llm_provider, llm_model, llm_base_url, llm_api_key,
+            llm_temperature, llm_max_retries, llm_max_tokens, llm_rate_limit_per_minute,
+            created_at, updated_at
+        FROM user_config_presets
+        """
+    )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO user_embedding_configs (
+            id, user_id, name, embedding_provider, embedding_model, embedding_base_url,
+            embedding_api_key, embedding_rate_limit_per_minute, embedding_batch_size,
+            created_at, updated_at
+        )
+        SELECT
+            'emb-' || id, user_id, name, embedding_provider, embedding_model, embedding_base_url,
+            embedding_api_key, embedding_rate_limit_per_minute, embedding_batch_size,
+            created_at, updated_at
+        FROM user_config_presets
+        """
+    )
 
 
 def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:

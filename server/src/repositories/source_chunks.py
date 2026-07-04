@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from src.infra.sqlite import get_connection
+from src.repositories import retrieval_index
 from src.services.rag.models import SourceChunk
 
 _ATTRIBUTE_TRIGGERS = {
@@ -74,6 +75,8 @@ def save_many(chunks: list[SourceChunk]) -> None:
             for chunk in chunks
         ],
     )
+    for user_id in {chunk.get("user_id") for chunk in chunks}:
+        retrieval_index.bump(user_id, conn)
     conn.commit()
 
 
@@ -102,10 +105,17 @@ def get_by_ids(chunk_ids: list[str], user_id: str) -> list[dict[str, Any]]:
 def update_directory_path(raw_input_id: str, new_path: str | None) -> bool:
     """Update directory_path for all chunks of a raw input."""
     conn = get_connection()
+    user_rows = conn.execute(
+        "SELECT DISTINCT user_id FROM source_chunks WHERE raw_input_id = ?",
+        (raw_input_id,),
+    ).fetchall()
     cursor = conn.execute(
         "UPDATE source_chunks SET directory_path = ? WHERE raw_input_id = ?",
         (new_path, raw_input_id)
     )
+    if cursor.rowcount > 0:
+        for row in user_rows:
+            retrieval_index.bump(row["user_id"], conn)
     conn.commit()
     return cursor.rowcount > 0
 
@@ -128,7 +138,13 @@ def get_by_raw_input_id(raw_input_id: str) -> list[dict[str, Any]]:
 def delete_by_raw_input_id(raw_input_id: str) -> None:
     """Delete source chunks owned by a corrupt job's raw input."""
     conn = get_connection()
+    user_rows = conn.execute(
+        "SELECT DISTINCT user_id FROM source_chunks WHERE raw_input_id = ?",
+        (raw_input_id,),
+    ).fetchall()
     conn.execute("DELETE FROM source_chunks WHERE raw_input_id = ?", (raw_input_id,))
+    for row in user_rows:
+        retrieval_index.bump(row["user_id"], conn)
     conn.commit()
 
 

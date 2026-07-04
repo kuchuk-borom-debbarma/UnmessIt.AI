@@ -97,8 +97,24 @@ Prompts should be boring, standard, explicit, and portable across domains. A goo
 - Final answers must cite citable source spans, not metadata.
 - Recall keys are general recall structures for reusable user-specific things, not a domain-specific model.
 - Retrieval prompts should select evidence that matches the user's subject and time scope before broader context.
+- Verifier and answer prompts should consume context-engineered snippets from source chunks instead of full raw chunk text when snippets are available.
+- Query breakdown and subject extraction prompts should produce deterministic, embedding-friendly query-planning text: stable nouns and qualifiers, no pronouns, no filler words, and no wording variation that does not change meaning.
+- Query-planning output participates in exact and semantic evidence-search cache keys, so prompt changes that affect sub-query or subject wording should be deliberate and covered by retrieval cache tests.
+- Verifier prompt text participates in exact verifier cache keys, so verifier prompt changes invalidate cached verifier decisions automatically.
+- Answer prompt text participates in exact answer cache keys, so answer prompt changes invalidate cached final answers automatically.
+- Stage-specific model routing must not change prompt contracts. Prompts should stay portable across configured stage models, with cache keys/signatures handling model changes outside the prompt text.
 
-## 11. Test Expectations
+## 11. Provider-Native Prompt Caching
+
+- Treat provider prompt caching as a latency and cost optimization only; behavior must not depend on a cache hit.
+- Put durable, reusable instructions at the beginning of the system message.
+- Put reused schemas or examples after durable instructions, and only include them when they are genuinely needed.
+- Put dynamic user text, source chunks, timestamps, candidate lists, retry data, repair data, and request-specific metadata in the human message or as late as possible.
+- Do not put request ids, timestamps, random ordering, user-specific metadata, or source text near the start of a prompt.
+- Keep repeated instruction, schema, and tool text byte-stable when possible.
+- For providers that support native prompt caching, unsupported providers must continue without special cache fields.
+
+## 12. Test Expectations
 
 - Test behavior or contract-critical phrases, not entire prompt snapshots.
 - Add a small test when a prompt rule prevents a known failure mode.

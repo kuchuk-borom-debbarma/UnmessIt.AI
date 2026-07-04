@@ -22,6 +22,7 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+INGEST_PARALLELISM = 3
 
 
 class IngestGraphState(TypedDict, total=False):
@@ -168,15 +169,29 @@ class DurableIngestRunner:
             logger.info("ingest_stage_reuse job_id=%s stage=%s count=%s", job_id, STAGE_SOURCE_CHUNKS, len(existing))
             return existing
 
+        pending = []
         for index, text_piece in enumerate(windows):
             unit_key = _source_piece_key(raw_input_id, text_piece)
             is_done = await asyncio.to_thread(repository.checkpoint_complete, job_id, STAGE_SOURCE_CHUNKS, unit_key)
             if is_done:
                 logger.info("ingest_unit_reuse job_id=%s stage=%s unit=%s", job_id, STAGE_SOURCE_CHUNKS, unit_key)
                 continue
-            await self._run_unit(job_id, STAGE_SOURCE_CHUNKS, unit_key, lambda tp=text_piece, idx=index, tot=len(windows): self._build_source_piece(job_id, idx, tot, raw_input_id, raw_text, user_id, tp, unit_key, directory_path), user_id)
-            current_chunks = await asyncio.to_thread(source_chunks.get_by_raw_input_id, raw_input_id)
-            await asyncio.to_thread(repository.update_metadata, job_id, {"source_chunk_count": len(current_chunks)})
+            pending.append((index, text_piece, unit_key))
+        if pending:
+            logger.info("ingest_parallel_start job_id=%s stage=%s units=%s limit=%s", job_id, STAGE_SOURCE_CHUNKS, len(pending), INGEST_PARALLELISM)
+            await asyncio.to_thread(repository.update_metadata, job_id, {
+                "progress_message": _progress(f"Processing {len(pending)} source chunk(s) in parallel", 1, f"{STAGE_SOURCE_CHUNKS}:parallel", STAGE_SOURCE_CHUNKS),
+            })
+            await _bounded_gather([
+                lambda tp=text_piece, idx=index, uk=unit_key: self._run_unit(
+                    job_id,
+                    STAGE_SOURCE_CHUNKS,
+                    uk,
+                    lambda: self._build_source_piece(job_id, idx, len(windows), raw_input_id, raw_text, user_id, tp, uk, directory_path),
+                    user_id,
+                )
+                for index, text_piece, unit_key in pending
+            ], should_continue=lambda: _job_can_continue(job_id))
         chunks = await asyncio.to_thread(source_chunks.get_by_raw_input_id, raw_input_id)
         await asyncio.to_thread(repository.update_metadata, job_id, {"source_chunk_count": len(chunks)})
         return chunks
@@ -187,11 +202,19 @@ class DurableIngestRunner:
         parent_ref = f"{STAGE_SOURCE_CHUNKS}:{unit_key}"
         await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": _progress(f"Chunk {index + 1}/{total}: \"{snippet}\"", 2, parent_ref, STAGE_SOURCE_CHUNKS)})
         await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": _progress("Drafting summary", 3, f"{parent_ref}:draft", parent_ref)})
-        drafts: list[SourceChunkDraft] = await self.source_chunk_drafts.run(text_piece, user_id)
-        
+
+        async def on_draft_progress(msg: str) -> None:
+            await asyncio.to_thread(
+                repository.update_metadata,
+                job_id,
+                {"progress_message": _progress(msg, 3, f"{parent_ref}:draft:cache", f"{parent_ref}:draft")},
+            )
+
+        drafts: list[SourceChunkDraft] = await self.source_chunk_drafts.run(text_piece, user_id, on_draft_progress)
+
         await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": _progress("Assembling source chunk", 3, f"{parent_ref}:assemble", parent_ref)})
         chunks = await self.source_chunk_assembler.run(raw_input_id, raw_text, user_id, drafts, directory_path)
-        
+
         await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": _progress("Saving source chunk", 3, f"{parent_ref}:save", parent_ref)})
         processing_snapshot = _processing_snapshot(user_id)
         rotation_snapshot = get_last_llm_rotation_snapshot()
@@ -212,16 +235,31 @@ class DurableIngestRunner:
         await asyncio.to_thread(repository.update_metadata, job_id, {"progress_message": _progress("Building recall links", 0, STAGE_RECALL)})
         await asyncio.to_thread(repository.update_metadata, job_id, {"recall_chunk_count": len(chunks)})
         linked_chunk_ids = await asyncio.to_thread(recall.source_chunks_with_links, [chunk["id"] for chunk in chunks], user_id)
+        pending = []
         for index, chunk in enumerate(chunks):
             unit_key = f"recall_chunk:{chunk['id']}"
             is_done = await asyncio.to_thread(repository.checkpoint_complete, job_id, STAGE_RECALL, unit_key)
             if is_done or chunk["id"] in linked_chunk_ids:
                 await asyncio.to_thread(repository.complete_checkpoint, job_id, STAGE_RECALL, unit_key, chunk["id"], {"reused": True})
-                await self._update_recall_counts(job_id, chunks, user_id)
                 logger.info("ingest_unit_reuse job_id=%s stage=%s unit=%s", job_id, STAGE_RECALL, unit_key)
                 continue
-            await self._run_unit(job_id, STAGE_RECALL, unit_key, lambda c=chunk, idx=index, tot=len(chunks): self._build_recall(job_id, idx, tot, raw_text, user_id, c), user_id)
-            await self._update_recall_counts(job_id, chunks, user_id)
+            pending.append((index, chunk, unit_key))
+        if pending:
+            logger.info("ingest_parallel_start job_id=%s stage=%s units=%s limit=%s", job_id, STAGE_RECALL, len(pending), INGEST_PARALLELISM)
+            await asyncio.to_thread(repository.update_metadata, job_id, {
+                "progress_message": _progress(f"Processing {len(pending)} recall chunk(s) in parallel", 1, f"{STAGE_RECALL}:parallel", STAGE_RECALL),
+            })
+            await _bounded_gather([
+                lambda c=chunk, idx=index, uk=unit_key: self._run_unit(
+                    job_id,
+                    STAGE_RECALL,
+                    uk,
+                    lambda: self._build_recall(job_id, idx, len(chunks), raw_text, user_id, c),
+                    user_id,
+                )
+                for index, chunk, unit_key in pending
+            ], should_continue=lambda: _job_can_continue(job_id))
+        await self._update_recall_counts(job_id, chunks, user_id)
 
     async def _update_recall_counts(self, job_id: str, chunks: list[SourceChunk], user_id: str) -> None:
         """Refresh job-level recall counters from saved evidence."""
@@ -423,6 +461,23 @@ def _progress(message: str, depth: int, ref: str, parent_ref: str | None = None)
     if parent_ref:
         data["parent_ref"] = parent_ref
     return data
+
+
+async def _bounded_gather(tasks, should_continue=None):
+    semaphore = asyncio.Semaphore(INGEST_PARALLELISM)
+
+    async def run(task):
+        async with semaphore:
+            if should_continue is not None and not await should_continue():
+                return None
+            return await task()
+
+    return await asyncio.gather(*(run(task) for task in tasks))
+
+
+async def _job_can_continue(job_id: str) -> bool:
+    job = await asyncio.to_thread(repository.get, job_id)
+    return bool(job and job["status"] != STATUS_PAUSED)
 
 
 def _ref_part(value: str) -> str:

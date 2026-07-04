@@ -5,13 +5,17 @@ import logging
 import re
 from typing import Any
 
+from src.infra import retrieval_cache
 from src.services.rag.models import ProgressReporter
 
 from ._graph import build_retrieval_graph
 from ._search import finalize_chunks
+from ._semantic_verifier import SemanticCacheVerifierChain
 
 logger = logging.getLogger(__name__)
 _CITE_MARKER_RE = re.compile(r"\[\[cite:([^\]\s]+)\]\]?")
+_VERIFIER_CACHE_VERSION = "query_verifier:v1"
+_ANSWER_CACHE_VERSION = "query_answer:v1"
 
 
 class QueryEvidenceChain:
@@ -32,8 +36,10 @@ class QueryEvidenceChain:
             "query": query,
             "sub_queries": [],
             "extracted_subjects": [],
+            "cache_events": [],
             "user_id": user_id,
             "reporter": reporter,
+            "json_client": self.json_client,
             "within_directories": within_directories or [],
             "excluding_directories": excluding_directories or [],
             "within_tags": within_tags or [],
@@ -47,27 +53,27 @@ class QueryEvidenceChain:
         extracted_subjects: list[str] = result.get("extracted_subjects") or []
         raw_chunks: list[dict[str, Any]] = result["chunks"]
         trace_parts: list[dict[str, Any]] = result["trace_parts"]
+        cache_events: list[dict[str, Any]] = result.get("cache_events") or []
         if reporter:
             await reporter.report(
-                "Merging sub-query evidence...",
+                "Combining and selecting the best notes...",
                 {"depth": 1, "ref": "retrieval:evidence:merge", "raw_chunk_count": len(raw_chunks), "sub_query_count": len(trace_parts)},
             )
         chunks, finalize_trace = finalize_chunks(raw_chunks, query)
+        for key in (
+            "context_engineering",
+            "context_chars_before_packing",
+            "context_chars_after_packing",
+            "context_chars_saved",
+            "selected_snippet_counts",
+        ):
+            if key in result:
+                finalize_trace[key] = result[key]
         if reporter:
             await reporter.report(
-                f"Final context selected {len(chunks)} chunk(s); saved {finalize_trace.get('context_chars_saved', 0)} chars",
+                f"Selected {len(chunks)} best notes for reading.",
                 {"depth": 1, "ref": "retrieval:evidence:final", "source_chunk_ids": [chunk["id"] for chunk in chunks], **finalize_trace},
             )
-        
-        # Calculate true baseline chars (unique across all subqueries before budget dropping)
-        global_unique_chunks = {}
-        for t in trace_parts:
-            global_unique_chunks.update(t.get("baseline_lengths", {}))
-            
-        true_before_chars = sum(global_unique_chunks.values())
-        if true_before_chars > 0:
-            finalize_trace["context_chars_before_packing"] = true_before_chars
-            finalize_trace["context_chars_saved"] = max(true_before_chars - finalize_trace.get("context_chars_after_packing", 0), 0)
 
         trace = {
             "mode": "source_chunks_with_recall_expansion",
@@ -78,6 +84,7 @@ class QueryEvidenceChain:
             "sub_query_traces": trace_parts,
             "ranked_source_chunk_ids": [chunk["id"] for chunk in chunks],
             "source_chunk_count": len(chunks),
+            "cache_events": cache_events,
             **finalize_trace,
         }
         return chunks, trace
@@ -109,40 +116,50 @@ class QueryVerifierChain:
 
         if reporter:
             await reporter.report(
-                "Verifying evidence against query scope...",
+                "Checking if notes answer the question...",
                 {"depth": 1, "ref": f"retrieval:verify:{attempt}", "source_chunk_count": len(chunks)},
             )
 
         valid_ids = {chunk["id"] for chunk in chunks}
+        system = _verifier_system_prompt()
+        human = _verifier_human_prompt(query, chunks)
+        cache_key = _verifier_cache_key(query, user_id, attempt, system, human)
+        if cache_key:
+            cached = _cached_verifier_result(await retrieval_cache.get_json(cache_key), valid_ids)
+            if cached is not None:
+                logger.info(
+                    "query_verifier_cache_hit attempt=%s status=%s on_topic=%s off_topic=%s",
+                    attempt,
+                    cached["status"],
+                    len(cached["on_topic_ids"]),
+                    len(cached["off_topic_ids"]),
+                )
+                if reporter:
+                    await reporter.report(
+                        "Reusing previous note review.",
+                        {
+                            "depth": 1,
+                            "ref": f"retrieval:verify:{attempt}:cache_hit",
+                            "status": cached["status"],
+                            "on_topic_count": len(cached["on_topic_ids"]),
+                            "off_topic_count": len(cached["off_topic_ids"]),
+                            "retry_query": cached["retry_query"],
+                        },
+                    )
+                return {**cached, "_cache_events": [{"stage": "verifier", "status": "hit"}]}
+
         try:
             data = await self.json_client.async_invoke_json(
-                system=(
-                    "Judge whether retrieved evidence can answer the user's query without mixing unrelated contexts. "
-                    "Return only valid JSON. No markdown. "
-                    "Use only the provided compact chunk payloads. "
-                    "Classify chunks as on-topic when they match the user's requested subject, scope, qualifiers, and sense of ambiguous terms. "
-                    "Classify chunks as off-topic when they use a different sense, domain, event, entity, time, or scope than the query asks for. "
-                    "When the query explicitly asks to compare, connect, or contrast multiple subjects, chunks for each requested subject may be on-topic even if they come from different contexts. "
-                    "When the query is scoped to one context, do not keep chunks from another context just because words overlap. "
-                    "If some chunks support only part of a multi-part query, keep those chunks on-topic and mark missing parts in reason. "
-                    "Do not set status to insufficient when on-topic chunks can support a partial answer. "
-                    "If enough on-topic evidence exists, status is sufficient. "
-                    "If on-topic evidence is partial and a focused retry may find missing parts, status is needs_retry and retry_query must be focused. "
-                    "If no selected chunk can answer any part of the query and a retry is unlikely to help, status is insufficient. "
-                    "Do not reveal hidden reasoning; put a concise user-safe reason in reason."
-                ),
-                human=(
-                    f"QUERY:\n{query}\n\n"
-                    f"CHUNKS:\n{json.dumps(_chunk_payload(chunks), ensure_ascii=False)}\n\n"
-                    'Return JSON: {"status":"sufficient|needs_retry|insufficient","reason":"short reason","on_topic_ids":["source_chunk_id"],"off_topic_ids":["source_chunk_id"],"retry_query":"focused query or empty string"}'
-                ),
+                system=system,
+                human=human,
                 user_id=user_id,
+                stage="retrieval.verifier",
             )
         except Exception as exc:
             logger.warning("query_verifier_failed error=%s", exc)
             if reporter:
                 await reporter.report(
-                    "Evidence verifier failed; continuing with ranked context.",
+                    "Verification skipped; continuing with selected notes.",
                     {"depth": 1, "ref": f"retrieval:verify:{attempt}:fallback", "error": str(exc)[:500]},
                 )
             return {
@@ -153,45 +170,136 @@ class QueryVerifierChain:
                 "retry_query": "",
             }
 
-        if not isinstance(data, dict):
-            data = {}
-        status = str(data.get("status") or "sufficient").strip().lower()
-        if status not in {"sufficient", "needs_retry", "insufficient"}:
-            status = "sufficient"
-        on_topic_ids = _valid_ids(data.get("on_topic_ids"), valid_ids)
-        off_topic_ids = _valid_ids(data.get("off_topic_ids"), valid_ids)
-        if on_topic_ids:
-            off_topic_ids = [chunk_id for chunk_id in off_topic_ids if chunk_id not in set(on_topic_ids)]
-        elif off_topic_ids:
-            off_topic = set(off_topic_ids)
-            on_topic_ids = [chunk["id"] for chunk in chunks if chunk["id"] not in off_topic]
-        elif status == "sufficient":
-            on_topic_ids = [chunk["id"] for chunk in chunks]
-
-        retry_query = str(data.get("retry_query") or "").strip()
-        if on_topic_ids and status == "insufficient":
-            status = "needs_retry" if retry_query else "sufficient"
-        reason = str(data.get("reason") or "").strip()[:500]
-        result = {
-            "status": status,
-            "reason": reason or "Evidence checked against the query scope.",
-            "on_topic_ids": on_topic_ids,
-            "off_topic_ids": off_topic_ids,
-            "retry_query": retry_query,
-        }
+        result = _normalize_verifier_result(data if isinstance(data, dict) else {}, chunks)
+        if cache_key and isinstance(data, dict):
+            await retrieval_cache.set_json(cache_key, result)
+            logger.info(
+                "query_verifier_cache_set attempt=%s status=%s on_topic=%s off_topic=%s",
+                attempt,
+                result["status"],
+                len(result["on_topic_ids"]),
+                len(result["off_topic_ids"]),
+            )
+            if reporter:
+                await reporter.report(
+                    "Saved note review for exact repeat questions.",
+                    {
+                        "depth": 1,
+                        "ref": f"retrieval:verify:{attempt}:cache_set",
+                        "status": result["status"],
+                        "on_topic_count": len(result["on_topic_ids"]),
+                        "off_topic_count": len(result["off_topic_ids"]),
+                    },
+                )
+            result["_cache_events"] = [{"stage": "verifier", "status": "miss"}, {"stage": "verifier", "status": "set"}]
         if reporter:
             await reporter.report(
-                f"Verifier marked {len(on_topic_ids)} on-topic chunk(s), {len(off_topic_ids)} off-topic.",
+                f"Approved {len(result['on_topic_ids'])} notes as highly relevant, rejected {len(result['off_topic_ids'])}.",
                 {
                     "depth": 1,
                     "ref": f"retrieval:verify:{attempt}:result",
-                    "status": status,
-                    "on_topic_count": len(on_topic_ids),
-                    "off_topic_count": len(off_topic_ids),
-                    "retry_query": retry_query,
+                    "status": result["status"],
+                    "on_topic_count": len(result["on_topic_ids"]),
+                    "off_topic_count": len(result["off_topic_ids"]),
+                    "retry_query": result["retry_query"],
                 },
             )
         return result
+
+
+def _verifier_system_prompt() -> str:
+    return (
+        "Judge whether retrieved evidence can answer the user's query without mixing unrelated contexts. "
+        "Return only valid JSON. No markdown. "
+        "Use only the provided compact chunk payloads. "
+        "Classify chunks as on-topic when they match the user's requested subject, scope, qualifiers, and sense of ambiguous terms. "
+        "Classify chunks as off-topic when they use a different sense, domain, event, entity, time, or scope than the query asks for. "
+        "When the query explicitly asks to compare, connect, or contrast multiple subjects, chunks for each requested subject may be on-topic even if they come from different contexts. "
+        "When the query asks for an opinion, take, impression, or what to think about a subject, treat it as a request for a source-grounded assessment; chunks about that subject can be on-topic even if they do not contain someone else's opinion. "
+        "When the query is scoped to one context, do not keep chunks from another context just because words overlap. "
+        "If some chunks support only part of a multi-part query, keep those chunks on-topic and mark missing parts in reason. "
+        "Do not set status to insufficient when on-topic chunks can support a partial answer. "
+        "If enough on-topic evidence exists, status is sufficient. "
+        "If on-topic evidence is partial and a focused retry may find missing parts, status is needs_retry and retry_query must be focused. "
+        "If no selected chunk can answer any part of the query and a retry is unlikely to help, status is insufficient. "
+        "Do not reveal hidden reasoning; put a concise user-safe reason in reason."
+    )
+
+
+def _verifier_human_prompt(query: str, chunks: list[dict[str, Any]]) -> str:
+    return (
+        f"QUERY:\n{query}\n\n"
+        f"CHUNKS:\n{json.dumps(_chunk_payload(chunks), ensure_ascii=False)}\n\n"
+        'Return JSON: {"status":"sufficient|needs_retry|insufficient","reason":"short reason","on_topic_ids":["source_chunk_id"],"off_topic_ids":["source_chunk_id"],"retry_query":"focused query or empty string"}'
+    )
+
+
+def _verifier_cache_key(query: str, user_id: str | None, attempt: int, system: str, human: str) -> str | None:
+    signature = retrieval_cache.llm_settings_signature(user_id, "retrieval.verifier")
+    if not signature:
+        return None
+    return retrieval_cache.cache_key(_VERIFIER_CACHE_VERSION, user_id or "", attempt, signature, system, human, query)
+
+
+def _normalize_verifier_result(data: dict[str, Any], chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    valid_ids = {chunk["id"] for chunk in chunks}
+    status = str(data.get("status") or "sufficient").strip().lower()
+    if status not in {"sufficient", "needs_retry", "insufficient"}:
+        status = "sufficient"
+    on_topic_ids = _valid_ids(data.get("on_topic_ids"), valid_ids)
+    off_topic_ids = _valid_ids(data.get("off_topic_ids"), valid_ids)
+    if on_topic_ids:
+        off_topic_ids = [chunk_id for chunk_id in off_topic_ids if chunk_id not in set(on_topic_ids)]
+    elif off_topic_ids:
+        off_topic = set(off_topic_ids)
+        on_topic_ids = [chunk["id"] for chunk in chunks if chunk["id"] not in off_topic]
+    elif status == "sufficient":
+        on_topic_ids = [chunk["id"] for chunk in chunks]
+
+    retry_query = str(data.get("retry_query") or "").strip()
+    if on_topic_ids and status == "insufficient":
+        status = "needs_retry" if retry_query else "sufficient"
+    reason = str(data.get("reason") or "").strip()[:500]
+    return {
+        "status": status,
+        "reason": reason or "Evidence checked against the query scope.",
+        "on_topic_ids": on_topic_ids,
+        "off_topic_ids": off_topic_ids,
+        "retry_query": retry_query,
+    }
+
+
+def _cached_verifier_result(value: dict[str, Any] | None, valid_ids: set[str]) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    if value.get("status") not in {"sufficient", "needs_retry", "insufficient"}:
+        return None
+    if not isinstance(value.get("reason"), str) or not isinstance(value.get("retry_query"), str):
+        return None
+    on_topic_ids = _cached_ids(value.get("on_topic_ids"), valid_ids)
+    off_topic_ids = _cached_ids(value.get("off_topic_ids"), valid_ids)
+    if on_topic_ids is None or off_topic_ids is None:
+        return None
+    if set(on_topic_ids) & set(off_topic_ids):
+        return None
+    return {
+        "status": value["status"],
+        "reason": value["reason"][:500] or "Evidence checked against the query scope.",
+        "on_topic_ids": on_topic_ids,
+        "off_topic_ids": off_topic_ids,
+        "retry_query": value["retry_query"].strip(),
+    }
+
+
+def _cached_ids(value: Any, valid_ids: set[str]) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    result = []
+    for item in value:
+        if not isinstance(item, str) or item not in valid_ids or item in result:
+            return None
+        result.append(item)
+    return result
 
 
 class QueryAnswerChain:
@@ -204,75 +312,401 @@ class QueryAnswerChain:
         """Return an answer and source chunk ids used as citations."""
         if not chunks:
             if reporter:
-                await reporter.report("No evidence chunks found; skipping answer model call.", {"depth": 1, "ref": "retrieval:answer:empty"})
+                await reporter.report("No notes found; skipping answer generation.", {"depth": 1, "ref": "retrieval:answer:empty"})
             return {"answer": "I could not find relevant source chunks for that query.", "citation_ids": []}
+
+        system = _answer_system_prompt()
+        human = _answer_human_prompt(query, chunks)
+        cache_key = _answer_cache_key(query, user_id, system, human)
+        if cache_key:
+            cached = _cached_answer_result(await retrieval_cache.get_json(cache_key), {chunk["id"] for chunk in chunks})
+            if cached is not None:
+                logger.info("query_answer_cache_hit citations=%s", len(cached["citation_ids"]))
+                if reporter:
+                    await reporter.report(
+                        "Reusing previous final answer.",
+                        {"depth": 1, "ref": "retrieval:answer:cache_hit", "citation_count": len(cached["citation_ids"])},
+                    )
+                return {**cached, "_cache_events": [{"stage": "answer", "status": "hit"}]}
 
         try:
             if reporter:
                 await reporter.report(
-                    "Building answer prompt from packed snippets...",
+                    "Synthesizing answer from verified notes...",
                     {"depth": 1, "ref": "retrieval:answer:prompt", "source_chunk_count": len(chunks)},
                 )
             data = await self.json_client.async_invoke_json(
-                system=(
-                    "Answer the user query using only SOURCE_CHUNKS. "
-                    "Return only valid JSON. No markdown. "
-                    "SOURCE_CHUNKS are the only evidence; recall metadata is not evidence. "
-                    "Each source chunk contains a summary and focused snippets from saved text. "
-                    "If evidence supports only part of the query, answer the supported part first and briefly name what is missing. "
-                    "Do not refuse the whole query only because another requested part is missing. "
-                    "Do not mention SOURCE_CHUNKS, chunks, retrieval internals, or source ids in prose. "
-                    "For broad, timeline, comparison, similarity, or reasoning questions, synthesize across chunks when the facts for each side are present. "
-                    "Do not require a source to explicitly perform the comparison; compare the sourced facts yourself. "
-                    "When the user explicitly asks to compare or relate subjects, do not reject the comparison only because the subjects come from different contexts or sources. "
-                    "If chunks describe subject A and separate chunks describe subject B, infer similarities and differences from those facts instead of saying direct comparative analysis is unavailable. "
-                    "For attribute questions, collect small details from all relevant snippets before deciding the answer is missing. "
-                    "For attribute answers, preserve exact counts, labels, descriptors, and qualifiers when the snippets contain them. "
-                    "Use cautious wording for inference, but provide the inference when the evidence supports it. "
-                    "Embed source markers directly in the answer where they help verification, using [[cite:SOURCE_CHUNK_ID]] immediately after the supported claim. "
-                    "Do not show raw ids except inside [[cite:...]] markers. "
-                    "Citations must be source_chunk ids from SOURCE_CHUNKS."
-                ),
-                human=(
-                    f"QUERY:\n{query}\n\n"
-                    f"SOURCE_CHUNKS:\n{json.dumps(_chunk_payload(chunks), ensure_ascii=False)}\n\n"
-                    'Return JSON with keys: {"answer":"string with optional [[cite:source_chunk_id]] markers","citation_ids":["source_chunk_id"]}'
-                ),
+                system=system,
+                human=human,
                 user_id=user_id,
+                stage="retrieval.answer",
             )
             if reporter:
-                await reporter.report("Answer model returned JSON; validating citations...", {"depth": 1, "ref": "retrieval:answer:validate"})
+                await reporter.report("Validating citations...", {"depth": 1, "ref": "retrieval:answer:validate"})
         except Exception as exc:
             logger.warning("query_answer_failed error=%s", exc)
             if reporter:
                 await reporter.report(f"Answer generation failed: {exc}", {"depth": 1, "ref": "retrieval:answer:error"})
             return {"answer": "I found relevant source chunks, but answer generation failed.", "citation_ids": []}
 
-        answer = str(data.get("answer") or "").strip()
-        valid_ids = {chunk["id"] for chunk in chunks}
-        marker_ids = [match.group(1) for match in _CITE_MARKER_RE.finditer(answer) if match.group(1) in valid_ids]
-        citation_ids = [str(item) for item in data.get("citation_ids", []) if str(item) in valid_ids]
-        citation_ids = list(dict.fromkeys([*citation_ids, *marker_ids]))[:6]
-        answer = _sanitize_answer_citations(answer, set(citation_ids))
+        result = _normalize_answer_result(data if isinstance(data, dict) else {}, chunks)
+        if cache_key and isinstance(data, dict) and str(data.get("answer") or "").strip():
+            await retrieval_cache.set_json(cache_key, result)
+            logger.info("query_answer_cache_set citations=%s", len(result["citation_ids"]))
+            if reporter:
+                await reporter.report(
+                    "Saved final answer for exact repeat questions.",
+                    {"depth": 1, "ref": "retrieval:answer:cache_set", "citation_count": len(result["citation_ids"])},
+                )
+            result["_cache_events"] = [{"stage": "answer", "status": "miss"}, {"stage": "answer", "status": "set"}]
         if reporter:
             await reporter.report(
-                f"Selected {len(citation_ids)} citation(s)",
-                {"depth": 1, "ref": "retrieval:answer:citations", "citation_ids": citation_ids},
+                f"Selected {len(result['citation_ids'])} citation(s) to back the answer",
+                {"depth": 1, "ref": "retrieval:answer:citations", "citation_ids": result["citation_ids"]},
             )
-        return {"answer": answer or "I found relevant source chunks, but no answer was generated.", "citation_ids": citation_ids}
+        return result
 
+
+def _answer_system_prompt() -> str:
+    return (
+        "Answer the user query using only SOURCE_CHUNKS. "
+        "Return only valid JSON without markdown code blocks wrapping the response. "
+        "Format the 'answer' string field with rich markdown (e.g. bolding, lists, code blocks) to make it easy to read. "
+        "SOURCE_CHUNKS are the only evidence; recall metadata is not evidence. "
+        "Each source chunk contains a summary and focused snippets from saved text. "
+        "If evidence supports only part of the query, answer the supported part first and briefly name what is missing. "
+        "Do not refuse the whole query only because another requested part is missing. "
+        "Do not mention SOURCE_CHUNKS, chunks, retrieval internals, or source ids in prose. "
+        "For broad, timeline, comparison, similarity, or reasoning questions, synthesize across chunks when the facts for each side are present. "
+        "Do not require a source to explicitly perform the comparison; compare the sourced facts yourself. "
+        "When the user explicitly asks to compare or relate subjects, do not reject the comparison only because the subjects come from different contexts or sources. "
+        "If chunks describe subject A and separate chunks describe subject B, infer similarities and differences from those facts instead of saying direct comparative analysis is unavailable. "
+        "For attribute questions, collect small details from all relevant snippets before deciding the answer is missing. "
+        "For attribute answers, preserve exact counts, labels, descriptors, and qualifiers when the snippets contain them. "
+        "Use cautious wording for inference, but provide the inference when the evidence supports it. "
+        "Embed source markers directly in the answer where they help verification, using markdown links: [cite](SOURCE_CHUNK_ID). "
+        "Do not show raw ids except inside the citation link. "
+        "Citations must be source_chunk ids from SOURCE_CHUNKS."
+    )
+
+
+def _answer_human_prompt(query: str, chunks: list[dict[str, Any]]) -> str:
+    return (
+        f"QUERY:\n{query}\n\n"
+        f"SOURCE_CHUNKS:\n{json.dumps(_chunk_payload(chunks), ensure_ascii=False)}\n\n"
+        'Return JSON with keys: {"answer":"markdown string with optional [cite](source_chunk_id) markers","citation_ids":["source_chunk_id"]}'
+    )
+
+
+def _answer_cache_key(query: str, user_id: str | None, system: str, human: str) -> str | None:
+    signature = retrieval_cache.llm_settings_signature(user_id, "retrieval.answer")
+    if not signature:
+        return None
+    return retrieval_cache.cache_key(_ANSWER_CACHE_VERSION, user_id or "", signature, system, human, query)
+
+
+def _normalize_answer_result(data: dict[str, Any], chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    answer = str(data.get("answer") or "").strip()
+    
+    valid_ids = {chunk["id"] for chunk in chunks}
+    
+    # Support both legacy [[cite:id]] and modern [cite](id)
+    marker_ids: list[str] = []
+    for match in _CITE_MARKER_RE.finditer(answer):
+        marker_ids.append(match.group(1))
+        
+    for match in re.finditer(r'\[([^\]]+)\]\(([^)\s]+)\)', answer):
+        if "cite" in match.group(1).lower() or match.group(2) in valid_ids:
+            marker_ids.append(match.group(2))
+            
+    marker_ids = [m for m in marker_ids if m in valid_ids]
+    
+    citation_ids = [str(item) for item in data.get("citation_ids", []) if str(item) in valid_ids]
+    citation_ids = list(dict.fromkeys([*citation_ids, *marker_ids]))[:6]
+    
+    answer = _sanitize_answer_citations(answer, set(citation_ids))
+    return {
+        "answer": answer or "I found relevant source chunks, but no answer was generated.",
+        "citation_ids": citation_ids,
+    }
+
+
+def _cached_answer_result(value: dict[str, Any] | None, valid_ids: set[str]) -> dict[str, Any] | None:
+    if not isinstance(value, dict) or not isinstance(value.get("answer"), str):
+        return None
+    citation_ids = _cached_ids(value.get("citation_ids"), valid_ids)
+    if citation_ids is None:
+        return None
+    answer = _sanitize_answer_citations(value["answer"].strip(), set(citation_ids))
+    if not answer:
+        return None
+    return {"answer": answer, "citation_ids": citation_ids}
+
+
+
+def _build_retrieval_ui(trace: dict[str, Any], chunks: list[dict[str, Any]], cache_summary: dict[str, str], context_trace: dict[str, Any]) -> dict[str, Any]:
+    events = trace.get("trace_events") if isinstance(trace.get("trace_events"), list) else []
+    llm_events = [_llm_event(event) for event in events]
+    llm_events = [event for event in llm_events if event]
+    llm_by_stage = {event["stage"]: event for event in llm_events}
+    sub_traces = trace.get("sub_query_traces") if isinstance(trace.get("sub_query_traces"), list) else []
+    context = context_trace.get("context_engineering") or {}
+    cache_events = trace.get("cache_events") if isinstance(trace.get("cache_events"), list) else []
+    cache_counts = _cache_counts(cache_events)
+    skipped = _skipped_steps(cache_summary)
+    total_tokens = sum(int(event.get("total_tokens") or 0) for event in llm_events)
+
+    flow = [
+        _flow_step(
+            "query_cache",
+            "Full-result cache",
+            "Checks exact and semantic answers before doing retrieval.",
+            "cache",
+            "hit" if cache_summary.get("query") == "exact_hit" or cache_summary.get("semantic_query") == "semantic_hit" else "miss",
+            badges=[cache_summary.get("query") or cache_summary.get("semantic_query") or "miss"],
+        ),
+        _stage_step("breakdown", "Query breakdown", "Builds focused sub-queries.", cache_summary, llm_by_stage.get("retrieval.query_breakdown"), {"sub_queries": trace.get("sub_queries") or []}),
+        _stage_step("subjects", "Subject extraction", "Finds named entities and implied topics.", cache_summary, llm_by_stage.get("retrieval.query_subjects"), {"subjects": trace.get("extracted_subjects") or []}),
+        _evidence_step(trace, sub_traces, cache_summary, context),
+        _stage_step("verifier", "Evidence verifier", "Drops off-topic chunks and decides whether retry is needed.", cache_summary, llm_by_stage.get("retrieval.verifier"), trace.get("verification") or {}),
+        _stage_step("answer", "Answer synthesis", "Writes cited answer from verified chunks.", cache_summary, llm_by_stage.get("retrieval.answer"), {"citation_count": trace.get("citation_count", 0)}),
+    ]
+
+    summary = [
+        {"id": "time", "label": "Total time", "value": _format_ms(trace.get("duration_ms")), "detail": "Backend measured", "tone": "neutral"},
+        {"id": "cache", "label": "Cache hits", "value": str(cache_counts["hit"]), "detail": f"{cache_counts['miss']} misses, {cache_counts['set']} writes", "tone": "success" if cache_counts["hit"] else "neutral"},
+        {"id": "context", "label": "Context saved", "value": _format_percent(context.get("shrink_percent")), "detail": f"{_format_int(context.get('raw_chars'))} -> {_format_int(context.get('packed_chars'))} chars", "tone": "success"},
+        {"id": "llm", "label": "LLM calls", "value": str(len(llm_events)), "detail": f"{_format_int(total_tokens)} tokens observed", "tone": "warning" if llm_events else "success"},
+        {"id": "skipped", "label": "Steps skipped", "value": str(len(skipped)), "detail": ", ".join(skipped[:3]) if skipped else "No major step skips", "tone": "success" if skipped else "neutral"},
+        {"id": "evidence", "label": "Evidence", "value": str(trace.get("verified_source_chunk_count", trace.get("source_chunk_count", len(chunks))) or 0), "detail": f"{trace.get('citation_count', 0)} citations used", "tone": "neutral"},
+    ]
+
+    return {
+        "summary": summary,
+        "flow": flow,
+        "savings": {
+            "cache_hits": cache_counts["hit"],
+            "cache_misses": cache_counts["miss"],
+            "cache_sets": cache_counts["set"],
+            "steps_skipped": skipped,
+            "llm_calls_observed": len(llm_events),
+            "llm_calls_saved": _estimated_llm_calls_saved(cache_summary),
+            "tokens_observed": total_tokens,
+            "context_raw_chars": int(context.get("raw_chars") or 0),
+            "context_packed_chars": int(context.get("packed_chars") or 0),
+            "context_saved_chars": int(context.get("saved_chars") or 0),
+            "context_shrink_percent": int(context.get("shrink_percent") or 0),
+        },
+    }
+
+
+def _llm_event(event: dict[str, Any]) -> dict[str, Any] | None:
+    metrics = ((event.get("details") or {}).get("metrics") or {}) if isinstance(event, dict) else {}
+    if not metrics or not metrics.get("stage"):
+        return None
+    return {
+        "stage": metrics.get("stage"),
+        "duration_ms": metrics.get("duration_ms"),
+        "model_used": metrics.get("model_used"),
+        "prompt_tokens": metrics.get("prompt_tokens", 0),
+        "completion_tokens": metrics.get("completion_tokens", 0),
+        "total_tokens": metrics.get("total_tokens", 0),
+    }
+
+
+def _flow_step(id: str, title: str, subtitle: str, type: str, status: str, metrics: dict[str, Any] | None = None, details: dict[str, Any] | None = None, badges: list[str] | None = None, children: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    return {
+        "id": id,
+        "title": title,
+        "subtitle": subtitle,
+        "type": type,
+        "status": status,
+        "metrics": metrics or {},
+        "details": details or {},
+        "badges": [badge for badge in (badges or []) if badge],
+        "children": children or [],
+    }
+
+
+def _stage_step(stage: str, title: str, subtitle: str, cache_summary: dict[str, str], llm: dict[str, Any] | None, details: dict[str, Any]) -> dict[str, Any]:
+    cache = cache_summary.get(stage)
+    if cache == "hit" or str(cache).endswith("_hit"):
+        return _flow_step(stage, title, subtitle, "cache", "hit", details=details, badges=[cache, "LLM skipped"])
+    if cache == "skip":
+        return _flow_step(stage, title, subtitle, "cache", "skipped", details=details, badges=["skipped"])
+    if llm:
+        return _flow_step(stage, title, subtitle, "llm", "completed", metrics=llm, details=details, badges=["LLM"])
+    status = "completed" if details else "skipped"
+    return _flow_step(stage, title, subtitle, "process", status, details=details, badges=[cache] if cache else [])
+
+
+def _evidence_step(trace: dict[str, Any], sub_traces: list[dict[str, Any]], cache_summary: dict[str, str], context: dict[str, Any]) -> dict[str, Any]:
+    children = []
+    for index, item in enumerate(sub_traces, start=1):
+        cache_events = item.get("cache_events") if isinstance(item, dict) else []
+        semantic_hit = any(event.get("stage") == "evidence_semantic" and event.get("status") == "hit" for event in cache_events or [])
+        children.append(_flow_step(
+            f"sub_query_{index}",
+            f"Sub-query {index}",
+            str(item.get("sub_query") or ""),
+            "cache" if semantic_hit else "process",
+            "hit" if semantic_hit else "completed",
+            details={
+                "chunks": item.get("source_chunk_count", 0),
+                "vector_hits": len(item.get("vector_source_chunk_ids") or []),
+                "lexical_hits": item.get("lexical_source_chunk_count", 0),
+                "recall_keys": item.get("recall_key_count", 0),
+                "linked_chunks": item.get("linked_source_chunk_count", 0),
+            },
+            badges=["semantic evidence hit"] if semantic_hit else [],
+        ))
+    return _flow_step(
+        "evidence",
+        "Evidence search",
+        "Vector, lexical, recall-link expansion, ranking, and context packing.",
+        "cache" if cache_summary.get("evidence") == "hit" else "process",
+        "hit" if cache_summary.get("evidence") == "hit" else "completed",
+        details={
+            "sub_query_count": trace.get("sub_query_count", len(children)),
+            "ranked_chunks": len(trace.get("ranked_source_chunk_ids") or []),
+            "context_source": context.get("source"),
+            "context_saved_chars": context.get("saved_chars", 0),
+        },
+        badges=[cache_summary.get("evidence") or "", f"{_format_percent(context.get('shrink_percent'))} context saved"],
+        children=children,
+    )
+
+
+def _cache_counts(events: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {"hit": 0, "miss": 0, "set": 0, "skip": 0}
+    for event in events:
+        status = event.get("status")
+        if status in counts:
+            counts[status] += 1
+    return counts
+
+
+def _skipped_steps(summary: dict[str, str]) -> list[str]:
+    return [stage for stage, status in summary.items() if status == "skip" or str(status).endswith("_hit") or status == "hit"]
+
+
+def _estimated_llm_calls_saved(summary: dict[str, str]) -> int:
+    return sum(1 for stage in ("breakdown", "subjects", "verifier", "answer") if summary.get(stage) in {"hit", "skip"} or str(summary.get(stage)).endswith("_hit"))
+
+
+def _format_ms(value: Any) -> str:
+    if not isinstance(value, (int, float)):
+        return "n/a"
+    return f"{int(value)} ms" if value < 1000 else f"{value / 1000:.1f}s"
+
+
+def _format_int(value: Any) -> str:
+    try:
+        return f"{int(value):,}"
+    except Exception:
+        return "0"
+
+
+def _format_percent(value: Any) -> str:
+    try:
+        return f"{int(value)}%"
+    except Exception:
+        return "0%"
 
 def build_query_result(query: str, chunks: list[dict[str, Any]], answer: dict[str, Any], trace: dict[str, Any]) -> dict[str, Any]:
     """Build the route response shape expected by the UI."""
     citation_ids = answer.get("citation_ids") or answer.get("citations") or [chunk["id"] for chunk in chunks[:3]]
     cited_chunks = [chunk for chunk in chunks if chunk["id"] in set(citation_ids)]
+    cache_events = trace.get("cache_events") if isinstance(trace.get("cache_events"), list) else []
+    cache_summary = _cache_summary(cache_events)
+    context_trace = _context_engineering_for_result(chunks, trace, cache_summary)
+    ui = _build_retrieval_ui({**trace, "citation_count": len(cited_chunks)}, chunks, cache_summary, context_trace)
     return {
         "answer": answer["answer"],
         "citations": [_citation(chunk, index + 1) for index, chunk in enumerate(cited_chunks)],
         "source_chunks": [_public_chunk(chunk) for chunk in chunks],
         "directories": answer.get("directories", []),
         "notes": answer.get("notes", []),
-        "retrieval_trace": {**trace, "citation_count": len(cited_chunks)},
+        "retrieval_trace": {
+            **trace,
+            **context_trace,
+            "cache_summary": cache_summary,
+            "citation_count": len(cited_chunks),
+            "ui": ui,
+            "flow_steps": ui["flow"],
+        },
+    }
+
+
+def _cache_summary(events: list[dict[str, Any]]) -> dict[str, str]:
+    summary: dict[str, str] = {}
+    for event in events:
+        stage = event.get("stage")
+        status = event.get("status")
+        if not isinstance(stage, str) or not isinstance(status, str):
+            continue
+        cache = event.get("cache")
+        summary[stage] = f"{cache}_{status}" if cache and cache != "exact" else status
+    return summary
+
+
+def _context_engineering_for_result(
+    chunks: list[dict[str, Any]],
+    trace: dict[str, Any],
+    cache_summary: dict[str, str],
+) -> dict[str, Any]:
+    context = trace.get("context_engineering")
+    if isinstance(context, dict) and (context.get("ran") or context.get("raw_chars")):
+        return {
+            "context_engineering": context,
+            "context_chars_before_packing": context.get("raw_chars", 0),
+            "context_chars_after_packing": context.get("packed_chars", 0),
+            "context_chars_saved": context.get("saved_chars", 0),
+        }
+    if cache_summary.get("verifier") == "hit" and cache_summary.get("answer") == "hit":
+        return _zero_context_engineering()
+    raw_chars = sum(len(str(chunk.get("text", ""))) for chunk in chunks)
+    packed_chars = sum(
+        len(str(chunk.get("summary", ""))) + sum(len(str(snippet)) for snippet in (chunk.get("_snippets") or []))
+        for chunk in chunks
+    )
+    if raw_chars <= 0 or packed_chars <= 0:
+        return _zero_context_engineering()
+    saved_chars = max(raw_chars - packed_chars, 0)
+    context = {
+        "ran": True,
+        "source": "cache",
+        "raw_chars": raw_chars,
+        "packed_chars": packed_chars,
+        "saved_chars": saved_chars,
+        "shrink_percent": round(min(100, max(0, (saved_chars / raw_chars) * 100))),
+        "chunk_count": len(chunks),
+        "snippet_count": sum(len(chunk.get("_snippets") or []) for chunk in chunks),
+    }
+    return {
+        "context_engineering": context,
+        "context_chars_before_packing": raw_chars,
+        "context_chars_after_packing": packed_chars,
+        "context_chars_saved": saved_chars,
+    }
+
+
+def _zero_context_engineering() -> dict[str, Any]:
+    context = {
+        "ran": False,
+        "source": "cache",
+        "raw_chars": 0,
+        "packed_chars": 0,
+        "saved_chars": 0,
+        "shrink_percent": 0,
+        "chunk_count": 0,
+        "snippet_count": 0,
+    }
+    return {
+        "context_engineering": context,
+        "context_chars_before_packing": 0,
+        "context_chars_after_packing": 0,
+        "context_chars_saved": 0,
     }
 
 
@@ -302,11 +736,18 @@ def _valid_ids(value: Any, valid_ids: set[str]) -> list[str]:
 
 
 def _sanitize_answer_citations(answer: str, citation_ids: set[str]) -> str:
-    def replace(match: re.Match[str]) -> str:
+    def replace_legacy(match: re.Match[str]) -> str:
         chunk_id = match.group(1)
-        return f"[[cite:{chunk_id}]]" if chunk_id in citation_ids else ""
+        return f"[cite]({chunk_id})" if chunk_id in citation_ids else ""
+        
+    def replace_markdown(match: re.Match[str]) -> str:
+        text, chunk_id = match.group(1), match.group(2)
+        if "cite" in text.lower() or chunk_id in citation_ids:
+            return f"[{text}]({chunk_id})" if chunk_id in citation_ids else ""
+        return match.group(0)
 
-    cleaned = _CITE_MARKER_RE.sub(replace, answer)
+    cleaned = _CITE_MARKER_RE.sub(replace_legacy, answer)
+    cleaned = re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', replace_markdown, cleaned)
     cleaned = re.sub(r"[ \t]+([,.;:])", r"\1", cleaned)
     cleaned = re.sub(r"([,;:])(?:[ \t]*[,;:])+", r"\1", cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
