@@ -245,7 +245,7 @@ function InlineAnswer({ answer, citations }: { answer: string; citations: Citati
               const isOpen = openId === markerId
 
               return (
-                <span className="inline-citation-wrap">
+                <span className={`inline-citation-wrap ${isOpen ? '!z-[100]' : ''}`}>
                   <button
                     type="button"
                     className="inline-citation-chip"
