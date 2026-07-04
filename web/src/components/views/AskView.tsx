@@ -31,6 +31,16 @@ type RetrievalTraceLike = {
   context_engineering?: ContextEngineering
   context_chars_before_packing?: number
   context_chars_after_packing?: number
+  llm_saved_metrics?: {
+    llm_calls: number
+    prompt_tokens: number
+    completion_tokens: number
+    total_tokens: number
+  }
+  cache_summary?: Record<string, string>
+  mode?: string
+  source_chunk_count?: number
+  citation_count?: number
 }
 
 // We don't use CITE_MARKER_RE and CITE_MARKER_ONLY_RE anymore with ReactMarkdown,
@@ -54,6 +64,7 @@ function cacheStatusLabel(status: string) {
 function cacheStatusClass(status: string) {
   if (status.includes('hit')) return 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
   if (status === 'set') return 'border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+  if (status === 'skip') return 'border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300'
   return 'border-zinc-500/20 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300'
 }
 
@@ -606,6 +617,40 @@ export function AskView({ token }: { token: string }) {
                                   {CACHE_LABELS[stage] || stage}: {cacheStatusLabel(status)}
                                 </span>
                               ))}
+                            </div>
+                          </div>
+                        )}
+                        {result.retrieval_trace.llm_saved_metrics && (
+                          <div className="p-5 rounded-2xl bg-black/5 dark:bg-black/40 border border-black/10 dark:border-[#222] shadow-inner md:col-span-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div>
+                              <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">
+                                {result.retrieval_trace.cache_summary?.semantic_query === 'semantic_hit' 
+                                  ? 'LLM Resources Saved (via Top-Level Cache)'
+                                  : 'LLM Resources Used'}
+                              </div>
+                              <div className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+                                {result.retrieval_trace.llm_saved_metrics.llm_calls} LLM Calls
+                              </div>
+                            </div>
+                            <div className="flex gap-4">
+                               <div className="flex flex-col text-right">
+                                 <div className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Input Tokens</div>
+                                 <div className="text-lg font-black text-amber-600 dark:text-amber-500">
+                                   {result.retrieval_trace.llm_saved_metrics.prompt_tokens?.toLocaleString() || 0}
+                                 </div>
+                               </div>
+                               <div className="flex flex-col text-right">
+                                 <div className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Output Tokens</div>
+                                 <div className="text-lg font-black text-sky-600 dark:text-sky-500">
+                                   {result.retrieval_trace.llm_saved_metrics.completion_tokens?.toLocaleString() || 0}
+                                 </div>
+                               </div>
+                               <div className="flex flex-col text-right">
+                                 <div className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Total</div>
+                                 <div className="text-lg font-black text-emerald-600 dark:text-emerald-500">
+                                   {result.retrieval_trace.llm_saved_metrics.total_tokens?.toLocaleString() || 0}
+                                 </div>
+                               </div>
                             </div>
                           </div>
                         )}

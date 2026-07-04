@@ -127,7 +127,18 @@ class JsonLLMClient:
                 )
                 response = await llm.ainvoke(messages, **_prompt_cache_kwargs(settings, system))
                 content = response.content if hasattr(response, "content") else str(response)
-                return JsonOutputParser().parse(content)
+                result = JsonOutputParser().parse(content)
+                if isinstance(result, dict) and hasattr(response, "response_metadata"):
+                    usage = response.response_metadata.get("token_usage", {})
+                    if usage:
+                        metrics = {
+                            "prompt_tokens": usage.get("prompt_tokens", 0),
+                            "completion_tokens": usage.get("completion_tokens", 0),
+                            "total_tokens": usage.get("total_tokens", 0),
+                        }
+                        result["_llm_usage"] = metrics
+                        await report_progress("LLM completed", {"ref": "llm:usage", "metrics": metrics})
+                return result
             except Exception as exc:
                 last_error = exc
                 logger.warning("llm_json_parse_failed_async attempt=%s error=%s", attempt, exc)

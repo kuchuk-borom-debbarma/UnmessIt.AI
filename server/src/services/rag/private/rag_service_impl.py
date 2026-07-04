@@ -71,13 +71,22 @@ class RagServiceImpl:
 
         loop = asyncio.get_running_loop()
 
+        llm_saved_metrics = {"llm_calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        
         async def async_report(message: str, details: dict | None = None) -> None:
+            if details and details.get("ref") == "llm:usage":
+                metrics = details.get("metrics", {})
+                llm_saved_metrics["llm_calls"] += 1
+                llm_saved_metrics["prompt_tokens"] += metrics.get("prompt_tokens", 0)
+                llm_saved_metrics["completion_tokens"] += metrics.get("completion_tokens", 0)
+                llm_saved_metrics["total_tokens"] += metrics.get("total_tokens", 0)
             await reporter.report(message, details)
 
         def sync_report(message: str, details: dict | None = None) -> None:
             loop.call_soon_threadsafe(asyncio.create_task, reporter.report(message, details))
 
         tokens = set_progress_reporters(async_report, sync_report)
+        
         try:
             set_active_parent_ref(None)
             await reporter.report("Checking for identical past questions...", {"depth": 0, "ref": "retrieval:cache_lookup"})
@@ -99,7 +108,12 @@ class RagServiceImpl:
                         cached_payload["retrieval_trace"] = {}
                     if "cache_summary" not in cached_payload["retrieval_trace"]:
                         cached_payload["retrieval_trace"]["cache_summary"] = {}
-                    cached_payload["retrieval_trace"]["cache_summary"]["semantic_query"] = "semantic_hit"
+                    
+                    # Override existing stages to "skip"
+                    summary = cached_payload["retrieval_trace"]["cache_summary"]
+                    for stage in summary:
+                        summary[stage] = "skip"
+                    summary["semantic_query"] = "semantic_hit"
                     
                     return cached_payload
 
@@ -165,6 +179,7 @@ class RagServiceImpl:
             trace.setdefault("cache_events", []).extend(answer.pop("_cache_events", []))
             
             set_active_parent_ref(None)
+            trace["llm_saved_metrics"] = llm_saved_metrics
             result = build_query_result(query, chunks, answer, trace)
             
             # Save the full result to the semantic cache
