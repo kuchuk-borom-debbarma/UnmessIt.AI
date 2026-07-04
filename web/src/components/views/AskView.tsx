@@ -1,4 +1,4 @@
-import { Search, RefreshCw, ChevronRight, ChevronDown, ChevronUp, ExternalLink, Terminal, SlidersHorizontal, Square, Zap, Database, Cpu, Clock, CheckCircle } from 'lucide-react'
+import { RefreshCw, ChevronRight, ChevronDown, ChevronUp, ExternalLink, Terminal, SlidersHorizontal, Square, Zap, Database, Cpu, Clock, CheckCircle, Gauge, Timer, Layers, TrendingDown, GitBranch } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Link } from 'react-router-dom'
@@ -30,12 +30,27 @@ type ContextEngineering = {
 type FlowStep = {
   id: string
   title: string
+  subtitle?: string
   type: 'llm' | 'cache' | 'process'
-  status: 'hit' | 'miss' | 'skip' | 'completed' | 'error'
+  status: 'hit' | 'miss' | 'skip' | 'skipped' | 'completed' | 'error'
   duration_ms?: number
   model_used?: string
-  metrics?: { calls: number; prompt_tokens: number; completion_tokens: number; total_tokens: number }
+  metrics?: { calls?: number; prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; duration_ms?: number; model_used?: string }
   details?: Record<string, any>
+  badges?: string[]
+  children?: FlowStep[]
+}
+type TraceSummaryItem = {
+  id: string
+  label: string
+  value: string
+  detail?: string
+  tone?: 'success' | 'warning' | 'danger' | 'neutral'
+}
+type RetrievalTraceUi = {
+  summary?: TraceSummaryItem[]
+  flow?: FlowStep[]
+  savings?: Record<string, any>
 }
 
 type RetrievalTraceLike = {
@@ -55,33 +70,13 @@ type RetrievalTraceLike = {
   sub_queries?: string[]
   extracted_subjects?: string[]
   flow_steps?: FlowStep[]
+  ui?: RetrievalTraceUi
 }
 
 // We don't use CITE_MARKER_RE and CITE_MARKER_ONLY_RE anymore with ReactMarkdown,
 // but keep them in case they're needed elsewhere or just remove them to fix TS errors.
 // Actually, let's just remove them.
 const STRAY_CITE_MARKER_RE = /\[\[cite:[^\]\s]+(?:\]\])?/g
-const CACHE_LABELS: Record<string, string> = {
-  semantic_query: 'Top-Level Semantic',
-  breakdown: 'Breakdown',
-  subjects: 'Subjects',
-  evidence: 'Evidence',
-  evidence_semantic: 'Semantic Evidence',
-  verifier: 'Verifier',
-  answer: 'Answer',
-}
-
-function cacheStatusLabel(status: string) {
-  return status.replace(/_/g, ' ')
-}
-
-function cacheStatusClass(status: string) {
-  if (status.includes('hit')) return 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-  if (status === 'set') return 'border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300'
-  if (status === 'skip') return 'border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300'
-  return 'border-zinc-500/20 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300'
-}
-
 function contextShrinkPercent(before?: number, after?: number) {
   if (!before || before <= 0) return 0
   return Math.round(Math.min(100, Math.max(0, ((before - (after || 0)) / before) * 100)))
@@ -252,7 +247,7 @@ function InlineAnswer({ answer, citations }: { answer: string; citations: Citati
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          a: ({ node, href, children, ...props }) => {
+          a: ({ href, children, ...props }) => {
             let chunkId: string | null = null;
             let indexStr = '0';
 
@@ -338,6 +333,66 @@ function InlineAnswer({ answer, citations }: { answer: string; citations: Citati
   )
 }
 
+function statusToneClass(tone?: string) {
+  if (tone === 'success') return 'border-primary-500/25 bg-primary-500/10 text-primary-600 dark:text-primary-300'
+  if (tone === 'warning') return 'border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+  if (tone === 'danger') return 'border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-300'
+  return 'border-border/55 bg-background/45 text-foreground'
+}
+
+function TraceSummaryGrid({ items }: { items: TraceSummaryItem[] }) {
+  const icons = [Timer, Zap, TrendingDown, Cpu, Layers, Database]
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+      {items.map((item, index) => {
+        const Icon = icons[index % icons.length]
+        return (
+          <motion.div
+            key={item.id}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: index * 0.04, duration: 0.22 }}
+            className={cn('rounded-lg border p-4 min-h-28 flex flex-col justify-between', statusToneClass(item.tone))}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[10px] font-extrabold uppercase tracking-[0.14em] opacity-70">{item.label}</span>
+              <Icon size={16} className="shrink-0 opacity-70" />
+            </div>
+            <strong className="mt-3 block break-words text-2xl font-black leading-tight">{item.value}</strong>
+            {item.detail && <span className="mt-1 text-xs font-semibold leading-5 opacity-75">{item.detail}</span>}
+          </motion.div>
+        )
+      })}
+    </div>
+  )
+}
+
+function SavingsPanel({ savings }: { savings?: Record<string, any> }) {
+  if (!savings) return null
+  const rows = [
+    ['Cache', `${savings.cache_hits ?? 0} hits`, `${savings.cache_misses ?? 0} misses · ${savings.cache_sets ?? 0} writes`, Zap],
+    ['LLM', `${savings.llm_calls_saved ?? 0} calls saved`, `${savings.llm_calls_observed ?? 0} calls observed · ${formatNumber(savings.tokens_observed)} tokens`, Cpu],
+    ['Context', `${savings.context_shrink_percent ?? 0}% smaller`, `${formatNumber(savings.context_saved_chars)} chars saved`, TrendingDown],
+    ['Skipped', `${Array.isArray(savings.steps_skipped) ? savings.steps_skipped.length : 0} steps`, Array.isArray(savings.steps_skipped) ? savings.steps_skipped.slice(0, 4).join(', ') || 'None' : 'None', GitBranch],
+  ] as const
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      {rows.map(([label, value, detail, Icon]) => (
+        <div key={label} className="rounded-lg border border-border/55 bg-background/35 p-4 flex items-start gap-3">
+          <div className="h-9 w-9 rounded-lg border border-primary-500/20 bg-primary-500/10 text-primary-500 flex items-center justify-center shrink-0">
+            <Icon size={17} />
+          </div>
+          <div className="min-w-0">
+            <div className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-muted-foreground">{label}</div>
+            <div className="mt-1 text-base font-black text-foreground">{value}</div>
+            <div className="mt-0.5 text-xs font-semibold text-muted-foreground break-words">{detail}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function FlowStepList({ steps }: { steps: FlowStep[] }) {
   const iconFor = (step: FlowStep) => {
     if (step.type === 'cache') return <Zap size={14} className="text-amber-500" />
@@ -359,10 +414,21 @@ function FlowStepList({ steps }: { steps: FlowStep[] }) {
 
   return (
     <div className="flex flex-col gap-0">
-      <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-3">Retrieval Pipeline</div>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Retrieval Pipeline</div>
+          <div className="text-xs text-muted-foreground mt-1">Backend-authored flow, including cache skips and nested sub-query passes.</div>
+        </div>
+        <Gauge size={18} className="text-primary-500" />
+      </div>
       {steps.map((step, i) => (
-        <div key={step.id} className="flex gap-3">
-          {/* Timeline line + dot */}
+        <motion.div
+          key={step.id}
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: i * 0.05, duration: 0.22 }}
+          className="flex gap-3"
+        >
           <div className="flex flex-col items-center">
             <div className={cn('w-6 h-6 rounded-full border flex items-center justify-center flex-shrink-0 z-10', colorFor(step))}>
               {iconFor(step)}
@@ -372,45 +438,116 @@ function FlowStepList({ steps }: { steps: FlowStep[] }) {
             )}
           </div>
 
-          {/* Content */}
           <div className={cn('flex-1 rounded-xl border px-4 py-3 mb-2', colorFor(step))}>
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 leading-tight">{step.title}</span>
               <div className="flex items-center gap-2 flex-wrap">
-                {step.status === 'hit' && (
-                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 flex items-center gap-1">
-                    <CheckCircle size={9} /> Cache Hit
-                  </span>
-                )}
-                {step.duration_ms != null && (
+                <StepBadge status={step.status} />
+                {step.metrics?.duration_ms != null && (
                   <span className="text-[10px] font-mono text-zinc-500 dark:text-zinc-400 flex items-center gap-1">
-                    <Clock size={9} /> {step.duration_ms}ms
+                    <Clock size={9} /> {formatMs(step.metrics.duration_ms)}
                   </span>
                 )}
-                {step.model_used && (
-                  <span className="text-[10px] font-mono text-blue-500/80 dark:text-blue-400/70">{step.model_used}</span>
+                {step.metrics?.model_used && (
+                  <span className="text-[10px] font-mono text-blue-500/80 dark:text-blue-400/70">{step.metrics.model_used}</span>
                 )}
               </div>
             </div>
-            {step.metrics && (
-              <div className="mt-1.5 flex gap-3 flex-wrap">
-                <span className="text-[10px] text-zinc-500">↑ {step.metrics.prompt_tokens} prompt</span>
-                <span className="text-[10px] text-zinc-500">↓ {step.metrics.completion_tokens} completion</span>
-                <span className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-400">= {step.metrics.total_tokens} total tokens</span>
+            {step.subtitle && <p className="mt-1 text-xs leading-5 text-muted-foreground">{step.subtitle}</p>}
+            {step.badges && step.badges.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {step.badges.map((badge) => (
+                  <span key={badge} className="rounded-full border border-border/60 bg-background/50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-muted-foreground">
+                    {badge.replace(/_/g, ' ')}
+                  </span>
+                ))}
               </div>
             )}
-            {step.type === 'cache' && step.details?.sub_queries && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {(step.details.sub_queries as string[]).map((sq, j) => (
-                  <span key={j} className="text-[10px] px-2 py-0.5 rounded-md bg-white/70 dark:bg-zinc-900/60 border border-black/10 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400">{sq}</span>
+            {step.metrics && (
+              <div className="mt-1.5 flex gap-3 flex-wrap">
+                {step.metrics.prompt_tokens != null && <span className="text-[10px] text-zinc-500">↑ {formatNumber(step.metrics.prompt_tokens)} prompt</span>}
+                {step.metrics.completion_tokens != null && <span className="text-[10px] text-zinc-500">↓ {formatNumber(step.metrics.completion_tokens)} completion</span>}
+                {step.metrics.total_tokens != null && <span className="text-[10px] font-semibold text-zinc-600 dark:text-zinc-400">= {formatNumber(step.metrics.total_tokens)} total tokens</span>}
+              </div>
+            )}
+            <DetailChips details={step.details} />
+            {step.children && step.children.length > 0 && (
+              <div className="mt-3 grid gap-2">
+                {step.children.map((child, childIndex) => (
+                  <motion.div
+                    key={child.id}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: (i * 0.05) + (childIndex * 0.03), duration: 0.18 }}
+                    className="rounded-lg border border-border/55 bg-background/45 p-3"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-foreground">{child.title}</div>
+                        {child.subtitle && <div className="mt-0.5 text-[11px] leading-4 text-muted-foreground break-words">{child.subtitle}</div>}
+                      </div>
+                      <StepBadge status={child.status} />
+                    </div>
+                    <DetailChips details={child.details} />
+                  </motion.div>
                 ))}
               </div>
             )}
           </div>
-        </div>
+        </motion.div>
       ))}
     </div>
   )
+}
+
+function StepBadge({ status }: { status: FlowStep['status'] }) {
+  const text = status === 'hit' ? 'Cache hit' : status === 'skipped' || status === 'skip' ? 'Skipped' : status
+  const cls = status === 'hit'
+    ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400'
+    : status === 'skipped' || status === 'skip'
+      ? 'bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300'
+      : 'bg-zinc-100 dark:bg-zinc-900/60 text-zinc-600 dark:text-zinc-400'
+  return (
+    <span className={cn('text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full flex items-center gap-1 shrink-0', cls)}>
+      {status === 'hit' && <CheckCircle size={9} />}
+      {text}
+    </span>
+  )
+}
+
+function DetailChips({ details }: { details?: Record<string, any> }) {
+  if (!details) return null
+  const entries = Object.entries(details)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '' && !(Array.isArray(value) && value.length === 0))
+    .slice(0, 8)
+  if (entries.length === 0) return null
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {entries.map(([key, value]) => (
+        <span key={key} className="text-[10px] px-2 py-0.5 rounded-md bg-white/70 dark:bg-zinc-900/60 border border-black/10 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400">
+          <span className="font-bold">{key.replace(/_/g, ' ')}:</span> {compactTraceValue(value)}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function compactTraceValue(value: unknown) {
+  if (Array.isArray(value)) return value.length <= 3 ? value.join(', ') : `${value.length} items`
+  if (value && typeof value === 'object') return `${Object.keys(value as Record<string, unknown>).length} fields`
+  const text = String(value)
+  return text.length > 54 ? `${text.slice(0, 51)}...` : text
+}
+
+function formatNumber(value: unknown) {
+  const n = Number(value || 0)
+  return Number.isFinite(n) ? n.toLocaleString() : '0'
+}
+
+function formatMs(value: unknown) {
+  const n = Number(value || 0)
+  if (!Number.isFinite(n)) return 'n/a'
+  return n < 1000 ? `${Math.round(n)}ms` : `${(n / 1000).toFixed(1)}s`
 }
 
 export function AskView({ token }: { token: string }) {
@@ -423,6 +560,8 @@ export function AskView({ token }: { token: string }) {
     result, toast, progressSteps, handleAsk, stopAsk
   } = useAsk()
   const contextEngineering = contextEngineeringTrace(result?.retrieval_trace)
+  const traceUi = result?.retrieval_trace?.ui
+  const flowSteps = traceUi?.flow || result?.retrieval_trace?.flow_steps || []
 
   return (
     <div className="flex flex-col flex-1 h-full max-w-4xl mx-auto w-full pt-10 md:pt-20 relative">
@@ -658,25 +797,22 @@ export function AskView({ token }: { token: string }) {
                       className="overflow-hidden"
                     >
                       <div className="flex flex-col gap-6 mt-4">
-                        <div className="grid grid-cols-3 gap-4">
-                          <div className="p-5 rounded-2xl bg-black/5 dark:bg-black/40 border border-black/10 dark:border-[#222] flex flex-col items-center justify-center text-center shadow-inner">
-                            <div className="text-3xl font-black text-black dark:text-white mb-1">{result.retrieval_trace.source_chunk_count || 0}</div>
-                            <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Chunks Found</div>
-                          </div>
-                          <div className="p-5 rounded-2xl bg-black/5 dark:bg-black/40 border border-black/10 dark:border-[#222] flex flex-col items-center justify-center text-center shadow-inner relative overflow-hidden">
-                            <div className="absolute inset-0 bg-primary-500/10 blur-xl"></div>
-                            <div className="text-3xl font-black text-primary-600 dark:text-primary-400 mb-1 relative z-10">{result.retrieval_trace.citation_count || 0}</div>
-                            <div className="text-[10px] font-bold text-primary-600/70 dark:text-primary-500/70 uppercase tracking-widest relative z-10">Citations Used</div>
-                          </div>
-                          <div className="p-5 rounded-2xl bg-black/5 dark:bg-black/40 border border-black/10 dark:border-[#222] flex flex-col items-center justify-center text-center shadow-inner">
-                            <div className="text-lg font-black text-zinc-700 dark:text-zinc-300 mb-1 truncate w-full px-2">{String(result.retrieval_trace.mode || 'N/A').replace(/_/g, ' ')}</div>
-                            <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Retrieval Mode</div>
-                          </div>
-                        </div>
+                        {traceUi?.summary && traceUi.summary.length > 0 ? (
+                          <TraceSummaryGrid items={traceUi.summary} />
+                        ) : (
+                          <TraceSummaryGrid items={[
+                            { id: 'chunks', label: 'Chunks found', value: String(result.retrieval_trace.source_chunk_count || 0), tone: 'neutral' },
+                            { id: 'citations', label: 'Citations used', value: String(result.retrieval_trace.citation_count || 0), tone: 'success' },
+                            { id: 'mode', label: 'Retrieval mode', value: String(result.retrieval_trace.mode || 'N/A').replace(/_/g, ' '), tone: 'neutral' },
+                            { id: 'context', label: 'Context saved', value: `${contextEngineering?.shrink_percent ?? 0}%`, detail: `${formatNumber(contextEngineering?.saved_chars)} chars`, tone: 'success' },
+                          ]} />
+                        )}
 
-                        {result.retrieval_trace.flow_steps && result.retrieval_trace.flow_steps.length > 0 && (
-                          <div className="mt-4">
-                            <FlowStepList steps={result.retrieval_trace.flow_steps} />
+                        <SavingsPanel savings={traceUi?.savings} />
+
+                        {flowSteps.length > 0 && (
+                          <div className="mt-1 rounded-lg border border-border/45 bg-card/35 p-4 backdrop-blur-xl">
+                            <FlowStepList steps={flowSteps} />
                           </div>
                         )}
                       </div>

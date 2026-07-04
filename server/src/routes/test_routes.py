@@ -108,6 +108,14 @@ def test_retrieval_progress_payload_uses_nested_shape():
     }
 
 
+def test_retrieval_progress_reporter_is_best_effort():
+    class BrokenSse:
+        async def publish(self, *args):
+            raise RuntimeError("down")
+
+    asyncio.run(retrieval_route.SseProgressReporter(BrokenSse(), "topic").report("Step"))
+
+
 def test_retrieval_route_accepts_legacy_tag_names(monkeypatch):
     monkeypatch.setattr(retrieval_route.tags, "get_by_name", lambda value, user_id: {"id": "tag-id-1"} if value == "Tag One" else None)
 

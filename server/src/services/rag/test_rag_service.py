@@ -807,6 +807,44 @@ def test_query_result_includes_cache_summary():
         "verifier": "hit",
         "answer": "miss",
     }
+    assert result["retrieval_trace"]["ui"]["summary"]
+    assert result["retrieval_trace"]["ui"]["flow"]
+    assert result["retrieval_trace"]["flow_steps"] == result["retrieval_trace"]["ui"]["flow"]
+
+
+def test_query_result_ui_reports_savings_and_nested_flow():
+    chunk = {**_source_chunk("chunk-1", "Subject Alpha evidence. Extra raw context."), "summary": "Alpha", "_snippets": ["Subject Alpha evidence."]}
+    answer = {"answer": "Supported answer. [[cite:chunk-1]]", "citation_ids": ["chunk-1"]}
+    trace = {
+        "sub_queries": ["Subject Alpha"],
+        "sub_query_count": 1,
+        "sub_query_traces": [{
+            "sub_query": "Subject Alpha",
+            "source_chunk_count": 1,
+            "vector_source_chunk_ids": ["chunk-1"],
+            "lexical_source_chunk_count": 1,
+            "recall_key_count": 0,
+            "linked_source_chunk_count": 0,
+            "cache_events": [{"stage": "evidence_semantic", "status": "hit"}],
+        }],
+        "cache_events": [
+            {"stage": "breakdown", "status": "hit"},
+            {"stage": "evidence_semantic", "status": "hit"},
+            {"stage": "verifier", "status": "hit"},
+            {"stage": "answer", "status": "hit"},
+        ],
+        "context_engineering": {"ran": True, "source": "cache", "raw_chars": 1000, "packed_chars": 250, "saved_chars": 750, "shrink_percent": 75},
+        "duration_ms": 1234,
+    }
+
+    result = build_query_result("Subject Alpha", [chunk], answer, trace)
+    ui = result["retrieval_trace"]["ui"]
+
+    assert ui["savings"]["cache_hits"] == 4
+    assert ui["savings"]["context_saved_chars"] == 750
+    assert ui["savings"]["llm_calls_saved"] >= 3
+    assert ui["flow"][3]["id"] == "evidence"
+    assert ui["flow"][3]["children"][0]["status"] == "hit"
 
 
 def test_query_result_zeros_context_when_source_llm_cache_hits():

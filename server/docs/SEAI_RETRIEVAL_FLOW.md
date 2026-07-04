@@ -68,12 +68,22 @@ Attribute, comparison, and reasoning-style queries get deterministic query-term 
       "off_topic_ids": [],
       "retry_query": ""
     },
-    "verified_source_chunk_ids": []
+    "verified_source_chunk_ids": [],
+    "ui": {
+      "summary": [],
+      "flow": [],
+      "savings": {}
+    },
+    "flow_steps": []
   }
 }
 ```
 
 `citations` point to raw input ids and source chunk spans. `answer` may also contain inline citation markers that reference those source chunk ids. `directories` and `notes` point to organizational UUIDs for UI links.
+
+`retrieval_trace.ui` is the backend-driven Retrieval Analysis contract. `summary` contains display-ready metric cards, `flow` contains ordered steps with optional nested sub-steps, and `savings` contains cache, LLM-call, token, and context-packing savings. `flow_steps` mirrors `ui.flow` for older UI callers.
+
+Cache hits, misses, writes, skipped steps, verifier/answer LLM metrics, context raw/packed sizes, and per-sub-query evidence details should be added here by the backend instead of recomputed by the UI.
 
 ## Directory Filtering
 

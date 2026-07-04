@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from uuid import uuid4
 
 from src.infra.progress import reset_progress_reporters, set_progress_reporters, set_active_parent_ref
@@ -72,10 +73,13 @@ class RagServiceImpl:
             return build_query_result(query, [], answer, trace)
 
         loop = asyncio.get_running_loop()
+        started_at = time.time()
+        trace_events: list[dict] = []
 
         llm_saved_metrics = {"llm_calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         
         async def async_report(message: str, details: dict | None = None) -> None:
+            trace_events.append(_trace_event(message, details))
             if details and details.get("ref") == "llm:usage":
                 metrics = details.get("metrics", {})
                 llm_saved_metrics["llm_calls"] += 1
@@ -112,6 +116,7 @@ class RagServiceImpl:
                     for stage in summary:
                         summary[stage] = "skip"
                     summary["query"] = "exact_hit"
+                    exact_cached["retrieval_trace"]["ui"] = _top_level_cache_ui("exact", None, int((time.time() - started_at) * 1000))
                     await reporter.report("Retrieval complete (Exact Cache Hit).", {"depth": 0, "ref": "retrieval:done"})
                     return exact_cached
 
@@ -151,6 +156,7 @@ class RagServiceImpl:
                     for stage in summary:
                         summary[stage] = "skip"
                     summary["semantic_query"] = "semantic_hit"
+                    cached_payload["retrieval_trace"]["ui"] = _top_level_cache_ui("semantic", distance, int((time.time() - started_at) * 1000))
 
                     return cached_payload
 
@@ -217,6 +223,8 @@ class RagServiceImpl:
             
             set_active_parent_ref(None)
             trace["llm_saved_metrics"] = llm_saved_metrics
+            trace["trace_events"] = trace_events
+            trace["duration_ms"] = int((time.time() - started_at) * 1000)
             result = build_query_result(query, chunks, answer, trace)
             
             # Save the full result to both exact cache (instant next hit) and semantic cache (fuzzy)
@@ -289,3 +297,45 @@ def _query_filters_signature(
     }, separators=(",", ":"))
     import hashlib as _hashlib
     return _hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def _trace_event(message: str, details: dict | None) -> dict:
+    details = details or {}
+    return {
+        "message": message,
+        "ref": details.get("ref"),
+        "parent_ref": details.get("parent_ref"),
+        "depth": details.get("depth", 0),
+        "details": details,
+    }
+
+
+def _top_level_cache_ui(mode: str, distance: float | None, duration_ms: int) -> dict:
+    label = "Exact cache" if mode == "exact" else "Semantic cache"
+    detail = "Same query reused." if mode == "exact" else f"Verifier approved similar answer; distance {distance:.3f}."
+    return {
+        "summary": [
+            {"id": "duration", "label": "Time", "value": f"{duration_ms} ms", "detail": "Returned before retrieval", "tone": "success"},
+            {"id": "cache", "label": "Cache", "value": "Hit", "detail": label, "tone": "success"},
+            {"id": "skipped", "label": "Steps skipped", "value": "Retrieval + LLM", "detail": "Full answer reused", "tone": "warning"},
+        ],
+        "flow": [
+            {
+                "id": "query_cache",
+                "title": label,
+                "subtitle": detail,
+                "type": "cache",
+                "status": "hit",
+                "metrics": {"duration_ms": duration_ms},
+                "badges": ["hit", "skipped downstream"],
+                "children": [],
+            }
+        ],
+        "savings": {
+            "cache_hits": 1,
+            "cache_misses": 0,
+            "cache_sets": 0,
+            "steps_skipped": ["breakdown", "subjects", "evidence", "verifier", "answer"],
+            "llm_calls_saved": 2,
+        },
+    }

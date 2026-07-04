@@ -444,94 +444,174 @@ def _cached_answer_result(value: dict[str, Any] | None, valid_ids: set[str]) -> 
 
 
 
-def _build_flow_steps(trace: dict) -> list[dict]:
-    events = trace.get("trace_events", [])
-    sub_queries = trace.get("sub_queries", [])
-    
-    steps = []
-    
-    # 1. Top-Level Cache
-    mode = trace.get("mode")
-    if mode in ("exact_cache", "semantic_cache"):
-        steps.append({
-            "id": "top_level_cache",
-            "title": "Top-Level Query Cache",
-            "type": "cache",
-            "status": "hit",
-            "details": {"mode": mode}
-        })
-        return steps
-        
-    # 2. Query Breakdown
-    breakdown_llm_events = [e for e in events if e.get("details", {}).get("ref") == "llm:usage" and e.get("details", {}).get("metrics", {}).get("stage") == "retrieval.query_breakdown"]
-    if breakdown_llm_events:
-        metrics = breakdown_llm_events[-1]["details"]["metrics"]
-        steps.append({
-            "id": "breakdown",
-            "title": "Query Breakdown",
-            "type": "llm",
-            "status": "completed",
-            "duration_ms": metrics.get("duration_ms"),
-            "model_used": metrics.get("model_used"),
-            "metrics": metrics,
-            "details": {"sub_queries": sub_queries}
-        })
-    elif sub_queries:
-        steps.append({
-            "id": "breakdown",
-            "title": "Query Breakdown",
-            "type": "cache",
-            "status": "hit",
-            "details": {"sub_queries": sub_queries}
-        })
+def _build_retrieval_ui(trace: dict[str, Any], chunks: list[dict[str, Any]], cache_summary: dict[str, str], context_trace: dict[str, Any]) -> dict[str, Any]:
+    events = trace.get("trace_events") if isinstance(trace.get("trace_events"), list) else []
+    llm_events = [_llm_event(event) for event in events]
+    llm_events = [event for event in llm_events if event]
+    llm_by_stage = {event["stage"]: event for event in llm_events}
+    sub_traces = trace.get("sub_query_traces") if isinstance(trace.get("sub_query_traces"), list) else []
+    context = context_trace.get("context_engineering") or {}
+    cache_events = trace.get("cache_events") if isinstance(trace.get("cache_events"), list) else []
+    cache_counts = _cache_counts(cache_events)
+    skipped = _skipped_steps(cache_summary)
+    total_tokens = sum(int(event.get("total_tokens") or 0) for event in llm_events)
 
-    # 3. Sub-Queries
-    for i, sq in enumerate(sub_queries):
-        search_ref = f"retrieval:search:{i+1}"
-        sq_events = [e for e in events if e.get("details", {}).get("parent_ref", "").startswith(search_ref) or e.get("details", {}).get("ref", "").startswith(search_ref)]
-        
-        semantic_hit_events = [e for e in sq_events if e.get("details", {}).get("ref") == f"{search_ref}:semantic:hit"]
-        context_llm_events = [e for e in sq_events if e.get("details", {}).get("ref") == "llm:usage" and e.get("details", {}).get("metrics", {}).get("stage") == "retrieval.context_engineering"]
-        
-        if semantic_hit_events:
-            steps.append({
-                "id": search_ref,
-                "title": f"Sub-Query: {sq}",
-                "type": "cache",
-                "status": "hit",
-                "details": semantic_hit_events[-1]["details"]
-            })
-        else:
-            step = {
-                "id": search_ref,
-                "title": f"Sub-Query: {sq}",
-                "type": "process",
-                "status": "completed",
-                "details": {}
-            }
-            if context_llm_events:
-                metrics = context_llm_events[-1]["details"]["metrics"]
-                step["type"] = "llm"
-                step["duration_ms"] = metrics.get("duration_ms")
-                step["model_used"] = metrics.get("model_used")
-                step["metrics"] = metrics
-            steps.append(step)
-            
-    # 4. Answer Generation
-    answer_llm_events = [e for e in events if e.get("details", {}).get("ref") == "llm:usage" and e.get("details", {}).get("metrics", {}).get("stage") == "retrieval.answer"]
-    if answer_llm_events:
-        metrics = answer_llm_events[-1]["details"]["metrics"]
-        steps.append({
-            "id": "answer",
-            "title": "Answer Formulation",
-            "type": "llm",
-            "status": "completed",
-            "duration_ms": metrics.get("duration_ms"),
-            "model_used": metrics.get("model_used"),
-            "metrics": metrics,
-        })
+    flow = [
+        _flow_step(
+            "query_cache",
+            "Full-result cache",
+            "Checks exact and semantic answers before doing retrieval.",
+            "cache",
+            "hit" if cache_summary.get("query") == "exact_hit" or cache_summary.get("semantic_query") == "semantic_hit" else "miss",
+            badges=[cache_summary.get("query") or cache_summary.get("semantic_query") or "miss"],
+        ),
+        _stage_step("breakdown", "Query breakdown", "Builds focused sub-queries.", cache_summary, llm_by_stage.get("retrieval.query_breakdown"), {"sub_queries": trace.get("sub_queries") or []}),
+        _stage_step("subjects", "Subject extraction", "Finds named entities and implied topics.", cache_summary, llm_by_stage.get("retrieval.query_subjects"), {"subjects": trace.get("extracted_subjects") or []}),
+        _evidence_step(trace, sub_traces, cache_summary, context),
+        _stage_step("verifier", "Evidence verifier", "Drops off-topic chunks and decides whether retry is needed.", cache_summary, llm_by_stage.get("retrieval.verifier"), trace.get("verification") or {}),
+        _stage_step("answer", "Answer synthesis", "Writes cited answer from verified chunks.", cache_summary, llm_by_stage.get("retrieval.answer"), {"citation_count": trace.get("citation_count", 0)}),
+    ]
 
-    return steps
+    summary = [
+        {"id": "time", "label": "Total time", "value": _format_ms(trace.get("duration_ms")), "detail": "Backend measured", "tone": "neutral"},
+        {"id": "cache", "label": "Cache hits", "value": str(cache_counts["hit"]), "detail": f"{cache_counts['miss']} misses, {cache_counts['set']} writes", "tone": "success" if cache_counts["hit"] else "neutral"},
+        {"id": "context", "label": "Context saved", "value": _format_percent(context.get("shrink_percent")), "detail": f"{_format_int(context.get('raw_chars'))} -> {_format_int(context.get('packed_chars'))} chars", "tone": "success"},
+        {"id": "llm", "label": "LLM calls", "value": str(len(llm_events)), "detail": f"{_format_int(total_tokens)} tokens observed", "tone": "warning" if llm_events else "success"},
+        {"id": "skipped", "label": "Steps skipped", "value": str(len(skipped)), "detail": ", ".join(skipped[:3]) if skipped else "No major step skips", "tone": "success" if skipped else "neutral"},
+        {"id": "evidence", "label": "Evidence", "value": str(trace.get("verified_source_chunk_count", trace.get("source_chunk_count", len(chunks))) or 0), "detail": f"{trace.get('citation_count', 0)} citations used", "tone": "neutral"},
+    ]
+
+    return {
+        "summary": summary,
+        "flow": flow,
+        "savings": {
+            "cache_hits": cache_counts["hit"],
+            "cache_misses": cache_counts["miss"],
+            "cache_sets": cache_counts["set"],
+            "steps_skipped": skipped,
+            "llm_calls_observed": len(llm_events),
+            "llm_calls_saved": _estimated_llm_calls_saved(cache_summary),
+            "tokens_observed": total_tokens,
+            "context_raw_chars": int(context.get("raw_chars") or 0),
+            "context_packed_chars": int(context.get("packed_chars") or 0),
+            "context_saved_chars": int(context.get("saved_chars") or 0),
+            "context_shrink_percent": int(context.get("shrink_percent") or 0),
+        },
+    }
+
+
+def _llm_event(event: dict[str, Any]) -> dict[str, Any] | None:
+    metrics = ((event.get("details") or {}).get("metrics") or {}) if isinstance(event, dict) else {}
+    if not metrics or not metrics.get("stage"):
+        return None
+    return {
+        "stage": metrics.get("stage"),
+        "duration_ms": metrics.get("duration_ms"),
+        "model_used": metrics.get("model_used"),
+        "prompt_tokens": metrics.get("prompt_tokens", 0),
+        "completion_tokens": metrics.get("completion_tokens", 0),
+        "total_tokens": metrics.get("total_tokens", 0),
+    }
+
+
+def _flow_step(id: str, title: str, subtitle: str, type: str, status: str, metrics: dict[str, Any] | None = None, details: dict[str, Any] | None = None, badges: list[str] | None = None, children: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    return {
+        "id": id,
+        "title": title,
+        "subtitle": subtitle,
+        "type": type,
+        "status": status,
+        "metrics": metrics or {},
+        "details": details or {},
+        "badges": [badge for badge in (badges or []) if badge],
+        "children": children or [],
+    }
+
+
+def _stage_step(stage: str, title: str, subtitle: str, cache_summary: dict[str, str], llm: dict[str, Any] | None, details: dict[str, Any]) -> dict[str, Any]:
+    cache = cache_summary.get(stage)
+    if cache == "hit" or str(cache).endswith("_hit"):
+        return _flow_step(stage, title, subtitle, "cache", "hit", details=details, badges=[cache, "LLM skipped"])
+    if cache == "skip":
+        return _flow_step(stage, title, subtitle, "cache", "skipped", details=details, badges=["skipped"])
+    if llm:
+        return _flow_step(stage, title, subtitle, "llm", "completed", metrics=llm, details=details, badges=["LLM"])
+    status = "completed" if details else "skipped"
+    return _flow_step(stage, title, subtitle, "process", status, details=details, badges=[cache] if cache else [])
+
+
+def _evidence_step(trace: dict[str, Any], sub_traces: list[dict[str, Any]], cache_summary: dict[str, str], context: dict[str, Any]) -> dict[str, Any]:
+    children = []
+    for index, item in enumerate(sub_traces, start=1):
+        cache_events = item.get("cache_events") if isinstance(item, dict) else []
+        semantic_hit = any(event.get("stage") == "evidence_semantic" and event.get("status") == "hit" for event in cache_events or [])
+        children.append(_flow_step(
+            f"sub_query_{index}",
+            f"Sub-query {index}",
+            str(item.get("sub_query") or ""),
+            "cache" if semantic_hit else "process",
+            "hit" if semantic_hit else "completed",
+            details={
+                "chunks": item.get("source_chunk_count", 0),
+                "vector_hits": len(item.get("vector_source_chunk_ids") or []),
+                "lexical_hits": item.get("lexical_source_chunk_count", 0),
+                "recall_keys": item.get("recall_key_count", 0),
+                "linked_chunks": item.get("linked_source_chunk_count", 0),
+            },
+            badges=["semantic evidence hit"] if semantic_hit else [],
+        ))
+    return _flow_step(
+        "evidence",
+        "Evidence search",
+        "Vector, lexical, recall-link expansion, ranking, and context packing.",
+        "cache" if cache_summary.get("evidence") == "hit" else "process",
+        "hit" if cache_summary.get("evidence") == "hit" else "completed",
+        details={
+            "sub_query_count": trace.get("sub_query_count", len(children)),
+            "ranked_chunks": len(trace.get("ranked_source_chunk_ids") or []),
+            "context_source": context.get("source"),
+            "context_saved_chars": context.get("saved_chars", 0),
+        },
+        badges=[cache_summary.get("evidence") or "", f"{_format_percent(context.get('shrink_percent'))} context saved"],
+        children=children,
+    )
+
+
+def _cache_counts(events: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {"hit": 0, "miss": 0, "set": 0, "skip": 0}
+    for event in events:
+        status = event.get("status")
+        if status in counts:
+            counts[status] += 1
+    return counts
+
+
+def _skipped_steps(summary: dict[str, str]) -> list[str]:
+    return [stage for stage, status in summary.items() if status == "skip" or str(status).endswith("_hit") or status == "hit"]
+
+
+def _estimated_llm_calls_saved(summary: dict[str, str]) -> int:
+    return sum(1 for stage in ("breakdown", "subjects", "verifier", "answer") if summary.get(stage) in {"hit", "skip"} or str(summary.get(stage)).endswith("_hit"))
+
+
+def _format_ms(value: Any) -> str:
+    if not isinstance(value, (int, float)):
+        return "n/a"
+    return f"{int(value)} ms" if value < 1000 else f"{value / 1000:.1f}s"
+
+
+def _format_int(value: Any) -> str:
+    try:
+        return f"{int(value):,}"
+    except Exception:
+        return "0"
+
+
+def _format_percent(value: Any) -> str:
+    try:
+        return f"{int(value)}%"
+    except Exception:
+        return "0%"
 
 def build_query_result(query: str, chunks: list[dict[str, Any]], answer: dict[str, Any], trace: dict[str, Any]) -> dict[str, Any]:
     """Build the route response shape expected by the UI."""
@@ -540,6 +620,7 @@ def build_query_result(query: str, chunks: list[dict[str, Any]], answer: dict[st
     cache_events = trace.get("cache_events") if isinstance(trace.get("cache_events"), list) else []
     cache_summary = _cache_summary(cache_events)
     context_trace = _context_engineering_for_result(chunks, trace, cache_summary)
+    ui = _build_retrieval_ui({**trace, "citation_count": len(cited_chunks)}, chunks, cache_summary, context_trace)
     return {
         "answer": answer["answer"],
         "citations": [_citation(chunk, index + 1) for index, chunk in enumerate(cited_chunks)],
@@ -551,7 +632,8 @@ def build_query_result(query: str, chunks: list[dict[str, Any]], answer: dict[st
             **context_trace,
             "cache_summary": cache_summary,
             "citation_count": len(cited_chunks),
-            "flow_steps": _build_flow_steps(trace),
+            "ui": ui,
+            "flow_steps": ui["flow"],
         },
     }
 
