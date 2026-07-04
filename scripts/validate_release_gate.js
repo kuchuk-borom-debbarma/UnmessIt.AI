@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 
 const baseRef = process.env.RELEASE_BASE_REF || process.argv[2] || 'origin/staging'
 const packagePath = 'web/package.json'
-const changelogPath = 'CHANGELOG.md'
+const changelogDir = 'changelog'
 
 function fail(message) {
   console.error(`release gate failed: ${message}`)
@@ -30,16 +30,8 @@ function newerThan(current, previous) {
   return false
 }
 
-function releaseNotes(changelog, version) {
-  const header = new RegExp(`^##\\s+\\[?${version}\\]?.*$`, 'm')
-  const match = changelog.match(header)
-  if (!match || match.index === undefined) return ''
-  const rest = changelog.slice(match.index + match[0].length)
-  const next = rest.search(/^##\s+\[?\d+\.\d+\.\d+/m)
-  return (next === -1 ? rest : rest.slice(0, next)).trim()
-}
-
 const currentVersion = versionOf(fs.readFileSync(packagePath, 'utf8'))
+const currentChangelogPath = `${changelogDir}/${currentVersion}.md`
 let previousVersion = '0.0.0'
 try {
   previousVersion = versionOf(git(['show', `${baseRef}:${packagePath}`]))
@@ -52,11 +44,13 @@ if (!newerThan(currentVersion, previousVersion)) {
 }
 
 const changedFiles = git(['diff', '--name-only', `${baseRef}...HEAD`]).split('\n').filter(Boolean)
-if (!changedFiles.includes(changelogPath)) fail(`${changelogPath} must be changed`)
+if (!changedFiles.includes(currentChangelogPath)) fail(`${currentChangelogPath} must be changed`)
 
-const notes = releaseNotes(fs.readFileSync(changelogPath, 'utf8'), currentVersion)
-if (!notes || /No release notes found/i.test(notes)) {
-  fail(`${changelogPath} needs release notes for ${currentVersion}`)
+if (!fs.existsSync(currentChangelogPath)) fail(`${currentChangelogPath} must exist`)
+
+const notes = fs.readFileSync(currentChangelogPath, 'utf8').trim()
+if (!notes || /No release notes found/i.test(notes) || !new RegExp(`^##\\s+\\[?${currentVersion}\\]?`, 'm').test(notes)) {
+  fail(`${currentChangelogPath} needs release notes headed by ${currentVersion}`)
 }
 
 console.log(`release gate passed: ${previousVersion} -> ${currentVersion}`)
