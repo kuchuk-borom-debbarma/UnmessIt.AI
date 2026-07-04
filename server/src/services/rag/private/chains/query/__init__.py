@@ -369,7 +369,8 @@ class QueryAnswerChain:
 def _answer_system_prompt() -> str:
     return (
         "Answer the user query using only SOURCE_CHUNKS. "
-        "Return only valid JSON. No markdown. "
+        "Return only valid JSON without markdown code blocks wrapping the response. "
+        "Format the 'answer' string field with rich markdown (e.g. bolding, lists, code blocks) to make it easy to read. "
         "SOURCE_CHUNKS are the only evidence; recall metadata is not evidence. "
         "Each source chunk contains a summary and focused snippets from saved text. "
         "If evidence supports only part of the query, answer the supported part first and briefly name what is missing. "
@@ -392,7 +393,7 @@ def _answer_human_prompt(query: str, chunks: list[dict[str, Any]]) -> str:
     return (
         f"QUERY:\n{query}\n\n"
         f"SOURCE_CHUNKS:\n{json.dumps(_chunk_payload(chunks), ensure_ascii=False)}\n\n"
-        'Return JSON with keys: {"answer":"string with optional [[cite:source_chunk_id]] markers","citation_ids":["source_chunk_id"]}'
+        'Return JSON with keys: {"answer":"markdown string with optional [[cite:source_chunk_id]] markers","citation_ids":["source_chunk_id"]}'
     )
 
 

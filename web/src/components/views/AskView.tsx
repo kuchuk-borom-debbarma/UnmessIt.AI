@@ -2,6 +2,8 @@ import { Search, RefreshCw, ChevronRight, ChevronDown, ChevronUp, ExternalLink, 
 import { cn } from '../../lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Link } from 'react-router-dom'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { DirectorySearchSelect } from './DirectorySearchSelect'
 import { TagSearchSelect } from './TagSearchSelect'
 import { useAsk } from '../../contexts/useAsk'
@@ -31,8 +33,9 @@ type RetrievalTraceLike = {
   context_chars_after_packing?: number
 }
 
-const CITE_MARKER_RE = /(\[\[cite:[^\]\s]+\]\]?)/g
-const CITE_MARKER_ONLY_RE = /^\[\[cite:([^\]\s]+)\]\]?$/
+// We don't use CITE_MARKER_RE and CITE_MARKER_ONLY_RE anymore with ReactMarkdown,
+// but keep them in case they're needed elsewhere or just remove them to fix TS errors.
+// Actually, let's just remove them.
 const STRAY_CITE_MARKER_RE = /\[\[cite:[^\]\s]+(?:\]\])?/g
 const CACHE_LABELS: Record<string, string> = {
   breakdown: 'Breakdown',
@@ -209,58 +212,69 @@ function citationHref(citation: Citation) {
 
 function InlineAnswer({ answer, citations }: { answer: string; citations: Citation[] }) {
   const [openId, setOpenId] = useState<string | null>(null)
-  const parts = answer.split(CITE_MARKER_RE)
+  
+  let citeIndex = 0
+  const processedAnswer = answer
+    .replace(/\[\[cite:([^\]\s]+)\]\]?/g, (_, chunkId) => {
+      const id = `${chunkId}:${citeIndex++}`
+      return `[cite](cite:${id})`
+    })
+    .replace(STRAY_CITE_MARKER_RE, '') // strip any malformed stray markers
 
   return (
-    <div className="answer-text">
-      {parts.map((part, index) => {
-        const match = part.match(CITE_MARKER_ONLY_RE)
-        if (!match) {
-          const text = part.replace(STRAY_CITE_MARKER_RE, '')
-          return text ? <span key={index}>{text}</span> : null
-        }
+    <div className="prose dark:prose-invert max-w-none prose-p:leading-7 prose-headings:font-bold prose-pre:bg-input/50 prose-pre:border prose-pre:border-border/50">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ node, href, children, ...props }) => {
+            if (href?.startsWith('cite:')) {
+              const [chunkId, indexStr] = href.replace('cite:', '').split(':')
+              const citation = citations.find((item) => item.source_chunk_id === chunkId)
+              if (!citation) return null
+              const sourceNumber = citations.findIndex((item) => item.source_chunk_id === chunkId) + 1
+              const markerId = `${chunkId}-${indexStr}`
+              const isOpen = openId === markerId
 
-        const chunkId = match[1]
-        const citation = citations.find((item) => item.source_chunk_id === chunkId)
-        if (!citation) return null
-        const sourceNumber = citations.findIndex((item) => item.source_chunk_id === chunkId) + 1
-        const markerId = `${chunkId}-${index}`
-        const isOpen = openId === markerId
-
-        return (
-          <span key={markerId} className="inline-citation-wrap">
-            <button
-              type="button"
-              className="inline-citation-chip"
-              onClick={() => setOpenId(isOpen ? null : markerId)}
-            >
-              Source {sourceNumber}
-            </button>
-            <AnimatePresence>
-              {isOpen && (
-                <motion.span
-                  initial={{ opacity: 0, y: 8, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 6, scale: 0.98 }}
-                  transition={{ duration: 0.16 }}
-                  className="inline-citation-popover"
-                >
-                  <span className="inline-citation-label">Cited lines</span>
-                  <span className="inline-citation-quote">
-                    "{citation.exact_quote || citation.raw_text}"
-                  </span>
-                  {citation.cleaned_text && (
-                    <span className="inline-citation-summary">{citation.cleaned_text}</span>
-                  )}
-                  <Link className="inline-citation-link" to={citationHref(citation)}>
-                    Open in note <ExternalLink size={13} />
-                  </Link>
-                </motion.span>
-              )}
-            </AnimatePresence>
-          </span>
-        )
-      })}
+              return (
+                <span className="inline-citation-wrap">
+                  <button
+                    type="button"
+                    className="inline-citation-chip"
+                    onClick={() => setOpenId(isOpen ? null : markerId)}
+                  >
+                    Source {sourceNumber}
+                  </button>
+                  <AnimatePresence>
+                    {isOpen && (
+                      <motion.span
+                        initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 6, scale: 0.98 }}
+                        transition={{ duration: 0.16 }}
+                        className="inline-citation-popover"
+                      >
+                        <span className="inline-citation-label">Cited lines</span>
+                        <span className="inline-citation-quote">
+                          "{citation.exact_quote || citation.raw_text}"
+                        </span>
+                        {citation.cleaned_text && (
+                          <span className="inline-citation-summary">{citation.cleaned_text}</span>
+                        )}
+                        <Link className="inline-citation-link" to={citationHref(citation)}>
+                          Open in note <ExternalLink size={13} />
+                        </Link>
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                </span>
+              )
+            }
+            return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
+          }
+        }}
+      >
+        {processedAnswer}
+      </ReactMarkdown>
     </div>
   )
 }
