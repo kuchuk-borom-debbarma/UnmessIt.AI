@@ -94,6 +94,13 @@ class RagServiceImpl:
                 )
                 if is_safe:
                     await reporter.report("Retrieval complete (Cache Hit).", {"depth": 0, "ref": "retrieval:done"})
+                    
+                    if "retrieval_trace" not in cached_payload:
+                        cached_payload["retrieval_trace"] = {}
+                    if "cache_summary" not in cached_payload["retrieval_trace"]:
+                        cached_payload["retrieval_trace"]["cache_summary"] = {}
+                    cached_payload["retrieval_trace"]["cache_summary"]["semantic_query"] = "semantic_hit"
+                    
                     return cached_payload
 
             await reporter.report("Preparing search...", {"depth": 0, "ref": "retrieval:normalize", "query_chars": len(query)})

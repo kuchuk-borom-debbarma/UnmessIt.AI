@@ -38,6 +38,7 @@ type RetrievalTraceLike = {
 // Actually, let's just remove them.
 const STRAY_CITE_MARKER_RE = /\[\[cite:[^\]\s]+(?:\]\])?/g
 const CACHE_LABELS: Record<string, string> = {
+  semantic_query: 'Top-Level Semantic',
   breakdown: 'Breakdown',
   subjects: 'Subjects',
   evidence: 'Evidence',
