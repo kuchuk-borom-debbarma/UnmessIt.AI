@@ -91,8 +91,18 @@ class RagServiceImpl:
             set_active_parent_ref(None)
             await reporter.report("Checking for identical past questions...", {"depth": 0, "ref": "retrieval:cache_lookup"})
 
+            # Build a stable filter signature once; baked into ALL cache keys so
+            # filtered and unfiltered queries never share cache entries.
+            filters_sig = _query_filters_signature(
+                within_directories or [],
+                excluding_directories or [],
+                within_tags or [],
+                excluding_tags or [],
+                within_tags_condition,
+            )
+
             # ── 1. Exact cache (hash lookup, ~1ms, no embedding) ──────────────
-            exact_cache_key = _query_exact_cache_key(query, user_id)
+            exact_cache_key = _query_exact_cache_key(query, user_id, filters_sig)
             if exact_cache_key:
                 exact_cached = await retrieval_cache.get_json(exact_cache_key)
                 if isinstance(exact_cached, dict):
@@ -104,7 +114,7 @@ class RagServiceImpl:
                     return exact_cached
 
             # ── 2. Semantic cache (embedding + vector search) ─────────────────
-            cached_match = await retrieval_cache.get_semantic_query_result(user_id, query, threshold=0.95, emit_progress=False)
+            cached_match = await retrieval_cache.get_semantic_query_result(user_id, query, threshold=0.95, emit_progress=False, filters_namespace=filters_sig)
             if cached_match:
                 cached_payload, cached_query, distance = cached_match
                 # Skip the LLM verifier for near-exact matches (distance ≈ 0 means identical query).
@@ -204,7 +214,7 @@ class RagServiceImpl:
             # Save the full result to both exact cache (instant next hit) and semantic cache (fuzzy)
             if exact_cache_key:
                 await retrieval_cache.set_json(exact_cache_key, result)
-            await retrieval_cache.set_semantic_query_result(user_id, query, result)
+            await retrieval_cache.set_semantic_query_result(user_id, query, result, filters_namespace=filters_sig)
             
             await reporter.report(
                 "Retrieval complete.",
@@ -234,13 +244,40 @@ def _verified_chunks(chunks: list[dict], verification: dict) -> list[dict]:
     return chunks
 
 
-def _query_exact_cache_key(query: str, user_id: str | None) -> str | None:
+def _query_exact_cache_key(query: str, user_id: str | None, filters_sig: str = "") -> str | None:
     """Deterministic cache key for the top-level query result.
 
-    Keyed on query text + LLM settings so changing model/temperature
-    correctly invalidates the cached answer.
+    Keyed on query text + LLM settings + active filters so that:
+    - Changing model/temperature correctly invalidates the cached answer.
+    - Changing directory/tag filters produces a different key (no cross-contamination).
     """
     signature = retrieval_cache.llm_settings_signature(user_id)
     if not signature:
         return None
-    return retrieval_cache.cache_key("query_result:v1", user_id or "", signature, query)
+    return retrieval_cache.cache_key("query_result:v1", user_id or "", signature, filters_sig, query)
+
+
+def _query_filters_signature(
+    within_directories: list[str],
+    excluding_directories: list[str],
+    within_tags: list[str],
+    excluding_tags: list[str],
+    within_tags_condition: str,
+) -> str:
+    """Stable short hash of all active query filters.
+
+    Empty string when no filters are active (unfiltered queries use the default
+    namespace so existing cached results stay valid without invalidation).
+    """
+    if not any([within_directories, excluding_directories, within_tags, excluding_tags]):
+        return ""
+    import json as _json
+    payload = _json.dumps({
+        "wd": sorted(within_directories),
+        "ed": sorted(excluding_directories),
+        "wt": sorted(within_tags),
+        "et": sorted(excluding_tags),
+        "wc": within_tags_condition,
+    }, separators=(",", ":"))
+    import hashlib as _hashlib
+    return _hashlib.sha256(payload.encode()).hexdigest()[:16]
