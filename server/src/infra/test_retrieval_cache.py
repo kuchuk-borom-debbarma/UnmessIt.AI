@@ -66,3 +66,42 @@ def test_semantic_cache_writes_payload(monkeypatch):
 
     assert calls[0]["documents"] == ["query"]
     assert '"subjects": ["cached"]' in calls[0]["metadatas"][0]["payload"]
+
+
+async def test_semantic_query_result_skips_stale_payload(monkeypatch):
+    class FakeCollection:
+        def query(self, **kwargs):
+            assert kwargs["n_results"] == 5
+            return {
+                "distances": [[0.01, 0.12]],
+                "documents": [["stale query", "live query"]],
+                "metadatas": [[{"redis_key": "stale"}, {"redis_key": "live"}]],
+            }
+
+    async def fake_get_json(key):
+        return {"answer": "cached"} if key == "live" else None
+
+    monkeypatch.setattr(retrieval_cache.chroma, "semantic_cache_collection", lambda user_id, namespace: FakeCollection())
+    monkeypatch.setattr(retrieval_cache.redis, "get_json", fake_get_json)
+
+    match = await retrieval_cache.get_semantic_query_result("user-1", "new query", threshold=0.85)
+
+    assert match == ({"answer": "cached"}, "live query", 0.12)
+
+
+async def test_semantic_query_result_respects_threshold(monkeypatch):
+    class FakeCollection:
+        def query(self, **kwargs):
+            return {
+                "distances": [[0.16]],
+                "documents": [["old query"]],
+                "metadatas": [[{"redis_key": "live"}]],
+            }
+
+    async def fake_get_json(key):
+        raise AssertionError("below-threshold match should not hit redis")
+
+    monkeypatch.setattr(retrieval_cache.chroma, "semantic_cache_collection", lambda user_id, namespace: FakeCollection())
+    monkeypatch.setattr(retrieval_cache.redis, "get_json", fake_get_json)
+
+    assert await retrieval_cache.get_semantic_query_result("user-1", "new query", threshold=0.85) is None

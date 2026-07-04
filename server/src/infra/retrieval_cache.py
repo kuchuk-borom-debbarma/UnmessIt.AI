@@ -178,7 +178,7 @@ async def get_semantic_query_result(user_id: str, text: str, threshold: float = 
         results = await asyncio.to_thread(
             chroma.semantic_cache_collection(user_id, namespace).query,
             query_texts=[text],
-            n_results=1,
+            n_results=5,
             include=["documents", "metadatas", "distances"],
         )
     except Exception as exc:
@@ -190,21 +190,34 @@ async def get_semantic_query_result(user_id: str, text: str, threshold: float = 
     metadatas = (results.get("metadatas") or [[]])[0]
 
     if not distances or not metadatas or not documents:
+        logger.info("semantic_query_cache_miss namespace=%s reason=no_results text_len=%d", namespace, len(text))
         return None
 
-    distance = float(distances[0])
-    if 1 - distance < threshold:
-        return None
+    for document, metadata, raw_distance in zip(documents, metadatas, distances):
+        distance = float(raw_distance)
+        if 1 - distance < threshold:
+            logger.info(
+                "semantic_query_cache_miss namespace=%s reason=below_threshold distance=%s threshold=%s",
+                namespace,
+                distance,
+                threshold,
+            )
+            return None
 
-    redis_key = metadatas[0].get("redis_key")
-    if not redis_key:
-        return None
+        redis_key = metadata.get("redis_key") if isinstance(metadata, dict) else None
+        if not redis_key:
+            continue
 
-    value = await redis.get_json(redis_key)
-    if not isinstance(value, dict):
-        return None
+        value = await redis.get_json(redis_key)
+        if not isinstance(value, dict):
+            logger.info("semantic_query_cache_stale namespace=%s distance=%s", namespace, distance)
+            continue
 
-    return value, documents[0], distance
+        logger.info("semantic_query_cache_hit namespace=%s distance=%s", namespace, distance)
+        return value, document, distance
+
+    logger.info("semantic_query_cache_miss namespace=%s reason=no_live_payload text_len=%d", namespace, len(text))
+    return None
 
 
 async def set_semantic_query_result(user_id: str, text: str, value: dict[str, Any], filters_namespace: str = "") -> None:

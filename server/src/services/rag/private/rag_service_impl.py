@@ -10,6 +10,8 @@ from src.services.rag.private.chains.query._search import finalize_chunks
 from src.services.rag.private.pipeline.ingest import get_durable_ingest
 from src.infra import retrieval_cache
 
+_QUERY_RESULT_SEMANTIC_THRESHOLD = 0.85
+
 
 class RagServiceImpl:
     """Run the active source-chunk ingestion recipe.
@@ -114,7 +116,13 @@ class RagServiceImpl:
                     return exact_cached
 
             # ── 2. Semantic cache (embedding + vector search) ─────────────────
-            cached_match = await retrieval_cache.get_semantic_query_result(user_id, query, threshold=0.95, emit_progress=False, filters_namespace=filters_sig)
+            cached_match = await retrieval_cache.get_semantic_query_result(
+                user_id,
+                query,
+                threshold=_QUERY_RESULT_SEMANTIC_THRESHOLD,
+                emit_progress=False,
+                filters_namespace=filters_sig,
+            )
             if cached_match:
                 cached_payload, cached_query, distance = cached_match
                 # Skip the LLM verifier for near-exact matches (distance ≈ 0 means identical query).

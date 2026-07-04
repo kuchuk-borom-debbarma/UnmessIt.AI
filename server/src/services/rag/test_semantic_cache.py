@@ -15,6 +15,8 @@ def mock_json_client():
 def mock_retrieval_cache():
     with patch("src.services.rag.private.rag_service_impl.retrieval_cache") as mock_cache:
         # Default to cache miss
+        mock_cache.get_json = AsyncMock(return_value=None)
+        mock_cache.set_json = AsyncMock()
         mock_cache.get_semantic_query_result = AsyncMock(return_value=None)
         mock_cache.set_semantic_query_result = AsyncMock()
         yield mock_cache
@@ -38,7 +40,7 @@ async def test_semantic_verifier_chain_unsafe(mock_json_client):
 async def test_rag_service_semantic_cache_hit(mock_json_client, mock_retrieval_cache):
     # Mock a cache hit
     cached_payload = {"answer": "Cached answer", "citations": [], "retrieval_trace": {}}
-    mock_retrieval_cache.get_semantic_query_result.return_value = (cached_payload, "Old query", 0.01)
+    mock_retrieval_cache.get_semantic_query_result.return_value = (cached_payload, "Old query", 0.12)
     
     service = RagServiceImpl(mock_json_client)
     
@@ -47,14 +49,14 @@ async def test_rag_service_semantic_cache_hit(mock_json_client, mock_retrieval_c
     
     # Should return the cached payload without running evidence chain
     assert result == cached_payload
-    mock_retrieval_cache.get_semantic_query_result.assert_called_once()
+    assert mock_retrieval_cache.get_semantic_query_result.call_args.kwargs["threshold"] == 0.85
     mock_json_client.async_invoke_json.assert_called_once() # The verifier
 
 @pytest.mark.asyncio
 async def test_rag_service_semantic_cache_hit_but_unsafe(mock_json_client, mock_retrieval_cache):
     # Mock a cache hit
     cached_payload = {"answer": "Cached answer", "citations": [], "retrieval_trace": {}}
-    mock_retrieval_cache.get_semantic_query_result.return_value = (cached_payload, "Old query", 0.01)
+    mock_retrieval_cache.get_semantic_query_result.return_value = (cached_payload, "Old query", 0.12)
     
     # Mock verifier to reject it
     mock_json_client.async_invoke_json.return_value = {"is_safe": False, "reason": "Different"}
