@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { api } from '../api'
-import type { Preset, RotationConfig, StageConfig } from '../api'
+import type { StageConfig } from '../api'
 import { ConfigContext } from './ConfigContextCore'
 
 export function ConfigProvider({ children, token }: { children: ReactNode; token: string | null }) {
@@ -16,15 +16,11 @@ export function ConfigProvider({ children, token }: { children: ReactNode; token
     }
 
     try {
-      const [presets, rotation, stages] = await Promise.all([
-        api<Preset[]>('/api/v1/configs/presets', { token }),
-        api<RotationConfig>('/api/v1/configs/rotation', { token }),
+      const [stages] = await Promise.all([
         api<StageConfig>('/api/v1/configs/stages', { token }),
       ])
       setHasActivePreset(
-        presets.some((p) => p.is_active === 1)
-        || (rotation.enabled && rotation.preset_ids.length >= 2)
-        || (stages.llm_configs.length > 0 && stages.embedding_configs.length > 0),
+        stages.llm_configs.length > 0 && stages.embedding_configs.length > 0
       )
     } catch {
       setHasActivePreset(false)

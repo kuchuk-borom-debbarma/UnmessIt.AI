@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-07-03
 
 ### Added
+- Added background cron job to periodically clean up stale semantic cache values with random jitter.
+- Fixed note creation to support choosing between Markdown and Plain Text formats.
+- Enhanced Note UI to reliably use ResizeObserver for smooth content expansion and shrinking.
+- Updated Answer generation to format results in Markdown and improved the popover UI for better readability.
 - Provider-native prompt caching now activates automatically for official OpenAI LLM presets by sending a stable, non-secret prompt cache key.
 - Prompt rules now document cache-friendly structure: durable instructions first, reusable schemas/examples next, and dynamic user/source data last.
 - Embeddings are now cached in memory and Redis when available, reducing repeated provider calls for identical text/model inputs.
