@@ -239,7 +239,7 @@ function InlineAnswer({ answer, citations }: { answer: string; citations: Citati
 
             if (chunkId) {
               const citation = citations.find((item) => item.source_chunk_id === chunkId)
-              if (!citation) return null
+              if (!citation) return <span className="text-muted-foreground line-through decoration-muted-foreground/50 cursor-help" title="Source not found">{children}</span>
               const sourceNumber = citations.findIndex((item) => item.source_chunk_id === chunkId) + 1
               const markerId = `${chunkId}-${indexStr}`
               const isOpen = openId === markerId
@@ -282,6 +282,12 @@ function InlineAnswer({ answer, citations }: { answer: string; citations: Citati
               )
             }
             
+            // If the LLM hallucinated a citation link that isn't valid, don't render it as a clickable link
+            const textContent = String(children).toLowerCase();
+            if (textContent === 'cite' || textContent.includes('citecite') || href === '#' || href === 'cite') {
+               return <span className="text-muted-foreground line-through decoration-muted-foreground/50 cursor-help" title="Source not found">{children}</span>
+            }
+
             return (
               <a 
                 href={href} 
