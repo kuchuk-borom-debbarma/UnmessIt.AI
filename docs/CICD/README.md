@@ -25,7 +25,7 @@ The generated JSON uses:
 - `web/package.json` for `version`.
 - `changelog/*.md`, sorted by semantic version, for current release notes and full version history.
 
-See [`../CHANGELOGS.md`](../CHANGELOGS.md) for the changelog file layout.
+See [`../RELEASES.md`](../RELEASES.md) for the release-note file layout.
 
 ## Prevent direct commits to staging
 

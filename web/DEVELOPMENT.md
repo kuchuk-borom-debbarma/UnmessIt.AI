@@ -41,12 +41,12 @@ We have fully automated the `version.json` generation!
 1. **Update `package.json`**:
    Bump the version number in `web/package.json`.
    
-2. **Update `CHANGELOG.md`**:
-   Add your release notes under the new version header (e.g., `## [0.1.1]`) in the `CHANGELOG.md` file at the root of the project.
+2. **Update `changelog/<version>.md`**:
+   Add your release notes directly in the version file (e.g., `changelog/0.1.1.md`) with a heading like `## [0.1.1] - YYYY-MM-DD`.
 
 When you run `npm run build` in the `web/` directory, it automatically executes the `prebuild` script (`scripts/generate_version.js`). 
 
 This script:
 - Reads the current version from `package.json`.
-- Extracts the exact markdown release notes for that specific version from `CHANGELOG.md`.
+- Extracts the exact markdown release notes for that specific version from `changelog/<version>.md`.
 - Generates a fresh `web/public/version.json` file on the fly, which gets packaged with the build.

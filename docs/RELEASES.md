@@ -1,4 +1,4 @@
-# Versioned Changelogs
+# Release Notes
 
 Release notes live in `changelog/`, one file per semantic version:
 
@@ -16,6 +16,8 @@ Each file must start with its version heading:
 ```
 
 `scripts/generate_version.js` reads every `*.md` file in that folder, sorts them by semantic version, and writes `web/public/version.json`. The frontend consumes that generated JSON for the Release History modal.
+
+`CHANGELOG.md` is intentionally absent. Do not recreate it; write release notes directly into `changelog/<version>.md`.
 
 For a release:
 
