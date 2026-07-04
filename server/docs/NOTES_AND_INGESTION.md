@@ -48,6 +48,15 @@ If only the directory changes, the listener updates `directory_path` metadata fo
 
 Recall keys can outlive a deleted note when other chunks still link to them.
 
+## Ingestion Caching
+
+To prevent redundant LLM usage across edits, restores, or similar notes, the durable ingestion pipeline implements exact memory and Redis caching for deterministic LLM chains:
+
+- `SourceChunkDraftChain` (summaries)
+- `RecallDraftChain` (entities)
+
+These chains use a SHA-256 hash of the exact source text plus a hashed `llm_settings_signature`. If a user edits a note but keeps paragraphs unchanged, the ingestion pipeline will serve the cached summaries and entities for the unchanged chunks instantly without calling the LLM.
+
 ## Directories
 
 Directories use a materialized path:

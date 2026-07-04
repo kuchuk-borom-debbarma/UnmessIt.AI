@@ -2,6 +2,15 @@
 
 Prompts live near the chains that use them. Keep them domain-neutral, JSON-only, and source-grounded. See `server/docs/rules/prompt_rules.md`.
 
+## Prompt Caching (OpenAI)
+
+Prompts for official OpenAI models automatically benefit from native provider prompt caching. To maximize this:
+- We place durable, unchanging system instructions at the very beginning of the prompt.
+- Reusable schemas and tool definitions come next.
+- Dynamic user data (the source chunk text or the user query) is placed at the very end.
+
+This structure allows OpenAI to cache the heavy instructions and schemas across sequential calls in the same background job or retrieval flow, drastically lowering ingestion costs.
+
 ## Ingestion
 
 ### Source Chunk Summary
