@@ -326,3 +326,298 @@ User Query + Filters
         │
         └─── save top-level exact + semantic ────────────────────────────── RETURN
 ```
+
+---
+
+## Complete Code-Accurate Flowchart
+
+> Every decision node maps to an exact condition in the source code. Function names and variable names match the actual implementation.
+
+### Legend
+- 🟦 Rectangle — process / computation
+- 🔷 Diamond — decision / branch
+- 🟩 Stadium — entry / exit point
+- 🟨 Parallelogram — cache read or write I/O
+- Subgraphs group stages
+
+---
+
+### Stage 0 & 1 — Top-Level Cache Checks
+
+```mermaid
+flowchart TD
+    START([fa:fa-play query called\nrag_service_impl.py:62]) --> NORM
+    NORM["query = ' '.join(data.split())\nif not query → return empty result"] --> FILTERSIG
+    FILTERSIG["filters_sig = _query_filters_signature(\n  within_dirs, excl_dirs,\n  within_tags, excl_tags, condition\n)\n→ sha256[:16] of sorted filter lists\n→ empty string if no filters active"] --> EXACTKEY
+    EXACTKEY["exact_cache_key = cache_key(\n  'query_result:v1',\n  user_id,\n  llm_settings_signature(user_id),\n  filters_sig,\n  query\n)"] --> EXACTGET
+
+    EXACTGET[/"get_json(exact_cache_key)\n① memory LRU 1000 items\n② Redis TTL 24h"/] --> EXACT_HIT_Q
+
+    EXACT_HIT_Q{"isinstance\nexact_cached, dict?"} -->|"✅ HIT"| EXACT_MUTATE
+    EXACT_HIT_Q -->|"❌ MISS"| SEMGET
+
+    EXACT_MUTATE["for stage in cache_summary:\n  summary[stage] = 'skip'\nsummary['query'] = 'exact_hit'\nreporter.report(ref='retrieval:done')"] --> EXACT_RETURN
+    EXACT_RETURN([return exact_cached])
+
+    SEMGET[/"get_semantic_query_result(\n  user_id, query,\n  threshold=0.95,\n  filters_namespace=filters_sig\n)\n→ ChromaDB collection:\n  'query_result:{filters_sig}'\n→ embed query text\n→ vector search n_results=1\n→ check 1-distance >= 0.95\n→ fetch payload from Redis\n  via metadata redis_key"/] --> SEM_HIT_Q
+
+    SEM_HIT_Q{"cached_match\nis not None?"} -->|"❌ MISS"| PIPELINE_START
+    SEM_HIT_Q -->|"✅ HIT"| UNPACK_SEM
+
+    UNPACK_SEM["cached_payload, cached_query, distance\n  = cached_match"] --> DIST_Q
+
+    DIST_Q{"abs(distance)\n< 0.02?"} -->|"✅ Yes — near-exact\nis_safe = True\nskip verifier"| IS_SAFE_Q
+    DIST_Q -->|"⚠️ No — similar query\nrun LLM verifier"| SEM_VERIFY
+
+    SEM_VERIFY["SemanticCacheVerifierChain.run(\n  new_query=query,\n  cached_query=cached_query,\n  cached_answer=cached_payload['answer'],\n  user_id, reporter\n)\n→ LLM judge: does cached answer\n  fully satisfy new query?"] --> IS_SAFE_Q
+
+    IS_SAFE_Q{"is_safe?"} -->|"❌ No — unsafe\nfall through to pipeline"| PIPELINE_START
+    IS_SAFE_Q -->|"✅ Yes"| SEM_MUTATE
+
+    SEM_MUTATE["for stage in cache_summary:\n  summary[stage] = 'skip'\nsummary['semantic_query'] = 'semantic_hit'\nreporter.report(ref='retrieval:done')"] --> SEM_RETURN
+    SEM_RETURN([return cached_payload])
+
+    PIPELINE_START([▼ Continue to Stage 2: Breakdown])
+```
+
+---
+
+### Stage 2 — Query Breakdown
+
+```mermaid
+flowchart TD
+    BD_START([▼ _decompose called\n_breakdown.py:72]) --> BD_PROMPTS
+    BD_PROMPTS["system = _breakdown_system_prompt()\nhuman = _breakdown_human_prompt(query)\n  → 'QUERY:\\n{query}\\n\\nReturn JSON: ...'"] --> BD_EXACTKEY
+
+    BD_EXACTKEY["cache_key(\n  'query_breakdown:v1',\n  llm_settings_signature(user_id,\n    'retrieval.query_breakdown'),\n  system, human, query\n)"] --> BD_EXACTGET
+
+    BD_EXACTGET[/"get_json(cache_key)\nmemory LRU → Redis"/] --> BD_EXACT_HIT_Q
+
+    BD_EXACT_HIT_Q{"_cached_sub_queries\n(cached) is not None?"} -->|"✅ HIT"| BD_EXACT_HIT
+    BD_EXACT_HIT_Q -->|"❌ MISS\ncache_events ← {stage:breakdown, status:miss}"| BD_SEM_SETUP
+
+    BD_EXACT_HIT["cache_events ← {stage:breakdown, status:hit}\nreturn sub_queries"] --> BD_DONE
+    BD_DONE([sub_queries returned])
+
+    BD_SEM_SETUP["semantic_key = _breakdown_semantic_cache_key(query, user_id, system)\n  namespace = semantic_namespace(\n    'breakdown:v1', user_id,\n    llm_sig, system_prompt\n  ) → sha256[:24]\n  text = normalize_semantic_text(query)\n    → lowercase, strip punct, collapse ws"] --> BD_SEM_GET
+
+    BD_SEM_GET[/"asyncio.to_thread(\n  get_semantic_json_match,\n  user_id, namespace, text\n)\n→ ChromaDB collection(user_id, namespace)\n→ .query(query_texts=[text], n_results=1)\n→ checks 1-distance >= SEMANTIC_THRESHOLD\n→ returns (payload_dict, distance) or None"/] --> BD_SEM_MATCH_Q
+
+    BD_SEM_MATCH_Q{"match is not None?"} -->|"❌ MISS\ncache_events ← semantic:miss"| BD_LLM
+    BD_SEM_MATCH_Q -->|"✅ HIT"| BD_SEM_UNPACK
+
+    BD_SEM_UNPACK["payload, distance = match\ncached_sub_queries = _cached_sub_queries(payload)\ncached_query = payload.get('query', '')"] --> BD_SEM_VALID_Q
+
+    BD_SEM_VALID_Q{"cached_sub_queries\nand cached_query?"} -->|"❌ invalid payload"| BD_LLM
+    BD_SEM_VALID_Q -->|"✅ valid"| BD_SEM_DIST_Q
+
+    BD_SEM_DIST_Q{"abs(distance)\n< 0.02?"} -->|"✅ near-exact\nis_safe = True"| BD_SEM_SAFE_Q
+    BD_SEM_DIST_Q -->|"⚠️ similar\nrun verifier"| BD_SEM_VERIFY
+
+    BD_SEM_VERIFY["SemanticSubQueryVerifierChain(json_client).run(\n  query,           ← new query\n  cached_query,    ← old query from payload\n  user_id\n)\n→ LLM: same intent and scope?"] --> BD_SEM_SAFE_Q
+
+    BD_SEM_SAFE_Q{"is_safe?"} -->|"❌ No\nfall through to LLM"| BD_LLM
+    BD_SEM_SAFE_Q -->|"✅ Yes"| BD_SEM_HIT
+
+    BD_SEM_HIT["cache_events ← {stage:breakdown, cache:semantic, status:hit}\nreturn cached_sub_queries"] --> BD_DONE
+
+    BD_LLM["async_invoke_json(\n  system, human,\n  user_id=user_id,\n  stage='retrieval.query_breakdown'\n)"] --> BD_LLM_PARSE
+
+    BD_LLM_PARSE["sub_queries = data.get('sub_queries')\nif not list or empty → return [query]\ncleaned = [str(q).strip() for q in sub_queries]"] --> BD_DETERM
+
+    BD_DETERM["_deterministic_expansions(query)\n→ detect ATTRIBUTE_TERMS (appearance,count,traits)\n   → add '{subject} appearance physical details'\n→ detect COMPARISON_TERMS (vs,compare,similar)\n   → add per-subject contrast searches\n→ detect REASONING_TERMS (cause,why,timeline)\n   → add '{subject} evidence context causes'\n→ len>=80 and >=3 clauses\n   → _multipart_expansions → split on and/or/,"] --> BD_MERGE
+
+    BD_MERGE["result = dedup([query, *deterministic, *cleaned])\nresult = result[:6]   ← _MAX_SUB_QUERIES\npayload = {sub_queries: result, query: query}"] --> BD_SAVE_EXACT
+
+    BD_SAVE_EXACT[/"set_json(cache_key, payload)\ncache_events ← {stage:breakdown, status:set}"/] --> BD_SAVE_SEM
+
+    BD_SAVE_SEM[/"asyncio.to_thread(\n  set_semantic_json,\n  user_id, namespace, text, payload\n)\n→ ChromaDB .upsert(\n    ids=[sha256(ns:text)],\n    documents=[text],\n    metadatas=[{payload: json.dumps(payload)}]\n  )\ncache_events ← {stage:breakdown, cache:semantic, status:set}"/] --> BD_DONE
+```
+
+---
+
+### Stage 3 — Subject Extraction
+
+```mermaid
+flowchart TD
+    SB_START([▼ _extract_subjects called\n_subjects.py]) --> SB_PROMPTS
+    SB_PROMPTS["system = _subjects_system_prompt()\nhuman = _subjects_human_prompt(query, sub_queries)"] --> SB_EXACTKEY
+
+    SB_EXACTKEY["exact_key = cache_key(\n  'query_subjects:v1',\n  user_id,\n  llm_settings_signature(user_id,\n    'retrieval.subject_extraction'),\n  embedding_sig,\n  system, human, query, sub_queries\n)"] --> SB_EXACTGET
+
+    SB_EXACTGET[/"get_json(exact_key)"/] --> SB_EXACT_Q
+
+    SB_EXACT_Q{"_cached_subjects\n(cached) is not None?"} -->|"✅ HIT\ncache_events ← exact:hit"| SB_DONE
+    SB_EXACT_Q -->|"❌ MISS\ncache_events ← exact:miss"| SB_SEM_SETUP
+
+    SB_SEM_SETUP["namespace = semantic_namespace(\n  'query_subjects:v1', user_id,\n  llm_sig, embedding_sig, system\n)\ntext = normalize_semantic_text(query, sub_queries)"] --> SB_SEM_GET
+
+    SB_SEM_GET[/"asyncio.to_thread(\n  get_semantic_json,\n  user_id, namespace, text\n)\n→ get_semantic_json_match internally\n→ returns payload only (distance not exposed)\n⚠️ No verifier — accepted unconditionally"/] --> SB_SEM_Q
+
+    SB_SEM_Q{"_cached_subjects\n(cached) is not None?"} -->|"✅ HIT\ncache_events ← semantic:hit"| SB_DONE
+    SB_SEM_Q -->|"❌ MISS\ncache_events ← semantic:miss"| SB_LLM
+
+    SB_LLM["async_invoke_json(\n  system, human,\n  stage='retrieval.subject_extraction'\n)\nresult = cleaned subjects[:_MAX_SUBJECTS]"] --> SB_SAVE
+
+    SB_SAVE[/"set_json(exact_key, payload)\ncache_events ← exact:set\n\nasyncio.to_thread(set_semantic_json,\n  user_id, namespace, text,\n  {subjects, query, sub_queries, normalized_query}\n)\ncache_events ← semantic:set"/] --> SB_DONE
+
+    SB_DONE([subjects returned])
+```
+
+---
+
+### Stage 4 — Evidence Search Batch Exact + Stage 5 — Per-Sub-Query Search
+
+```mermaid
+flowchart TD
+    EV_START([▼ search_node called\n_search.py]) --> EV_BATCHKEY
+
+    EV_BATCHKEY["_evidence_cache_key(\n  user_id, query, sub_queries,\n  subjects, index_version,\n  embedding_sig, filters_sig\n)\n→ cache_key('evidence_search',\n    _EVIDENCE_CACHE_VERSION,\n    user_id, query, sub_queries,\n    subjects, index_version,\n    embedding_sig, filters_sig\n  )"] --> EV_BATCHGET
+
+    EV_BATCHGET[/"get_json(cache_key)\n_valid_evidence_cache(cached, index_version)\n→ validates index_version matches"/] --> EV_BATCH_Q
+
+    EV_BATCH_Q{"valid cached\nevidence?"} -->|"✅ HIT\ncache_events ← evidence:hit"| EV_BATCH_DONE
+    EV_BATCH_Q -->|"❌ MISS\ncache_events ← evidence:miss"| EV_GATHER
+
+    EV_BATCH_DONE([return cached chunks + trace_parts])
+
+    EV_GATHER["asyncio.gather(\n  _evidence_for(sub_q_1, subjects, ...),\n  _evidence_for(sub_q_2, subjects, ...),\n  ...  ← up to 6 concurrent tasks\n)"] --> EV_PER
+
+    subgraph EV_PER["Per sub-query — _evidence_for()  (runs concurrently for each)"]
+        direction TD
+
+        SEM_CAND["_semantic_evidence_candidates(sub_query, subjects, ...)\n  namespace = semantic_namespace(\n    'evidence-semantic-candidates-v2',\n    user_id, index_version,\n    embedding_sig, filters_sig\n  )\n  text = normalize_semantic_text(sub_query, subjects)"] --> SEM_CAND_GET
+
+        SEM_CAND_GET[/"asyncio.to_thread(\n  get_semantic_json_match,\n  user_id, namespace, text, threshold=0.95\n)"/] --> SEM_CAND_Q
+
+        SEM_CAND_Q{"match and\n_valid_semantic_evidence_payload\n(checks index_version,\nembedding_sig, filters)?"} -->|"❌ invalid/MISS\ncache_events ← evidence_semantic:miss"| LIVE_SEARCH
+        SEM_CAND_Q -->|"✅ valid match"| SEM_CAND_DIST
+
+        SEM_CAND_DIST{"abs(distance)\n< 0.02?"} -->|"✅ is_safe = True\nno verifier"| SEM_CAND_SAFE
+        SEM_CAND_DIST -->|"⚠️ run verifier"| SEM_CAND_VERIFY
+
+        SEM_CAND_VERIFY["SemanticSubQueryVerifierChain(json_client).run(\n  sub_query,      ← new\n  old_sub_query,  ← from payload\n  user_id, reporter\n)"] --> SEM_CAND_SAFE
+
+        SEM_CAND_SAFE{"is_safe?"} -->|"✅ Yes\ncache_events ← evidence_semantic:hit"| PACKED_RETURN
+        SEM_CAND_SAFE -->|"❌ No"| LIVE_SEARCH
+
+        PACKED_RETURN(["return packed_chunks\n{semantic_cached_source_chunk_ids,\n semantic_distance, ...}"])
+
+        LIVE_SEARCH["Run 3 searches in parallel"] --> VECTOR
+
+        VECTOR[/"Vector Search\nchroma.source_chunk_collection(user_id).query(\n  query_texts=[sub_query],\n  n_results=top_k,\n  where={dir/tag filters}\n)"/] --> LEXICAL
+
+        LEXICAL[/"Lexical Search\n_lexical_search(sub_query, filters)\n→ SQLite FTS full-text search"/] --> RECALL
+
+        RECALL[/"Recall Key Expansion\n_recall_key_search(subjects)\n→ pre-linked recall_keys from\n  chunk metadata for each subject"/] --> MERGE_SCORE
+
+        MERGE_SCORE["union chunk IDs from all 3\nscore = count(sub-queries each ID appeared in)\nranked = sorted by score desc\nemit chunk_score_reasons: query_terms:{n}"] --> CTX_COMPACT
+
+        CTX_COMPACT["_pack_context(query, ranked_chunks, user_id, json_client)\n  _should_llm_compact(raw_chars, packed_chars)\n  → only if raw_chars > 9000"] --> CTX_Q
+
+        CTX_Q{"LLM compaction\nneeded?"} -->|"No — small context\ndeterministic snippet select"| SAVE_SEM_EV
+        CTX_Q -->|"Yes"| CTX_CACHE_KEY
+
+        CTX_CACHE_KEY["cache_key(\n  'context-engineering-llm:v1',\n  user_id,\n  llm_sig('retrieval.context_engineering'),\n  query, chunk_sig\n)\nchunk_sig = per-chunk sha256 of text + summary"] --> CTX_CACHE_GET
+
+        CTX_CACHE_GET[/"get_json(ctx_cache_key)"/] --> CTX_CACHE_Q
+
+        CTX_CACHE_Q{"cached compacted\nsnippets?"} -->|"✅ HIT"| SAVE_SEM_EV
+        CTX_CACHE_Q -->|"❌ MISS"| CTX_LLM
+
+        CTX_LLM["async_invoke_json(\n  stage='retrieval.context_engineering'\n)\n→ LLM selects most relevant\n  sentences per chunk\n→ on failure: fallback to first-N chars"] --> CTX_SAVE
+
+        CTX_SAVE[/"set_json(ctx_cache_key, compacted_payload)"/] --> SAVE_SEM_EV
+
+        SAVE_SEM_EV[/"asyncio.to_thread(set_semantic_json,\n  user_id, namespace, text,\n  {cache_version, index_version,\n   embedding_sig, filters,\n   sub_query, packed_chunks}\n)\ncache_events ← evidence_semantic:set"/] --> PER_DONE
+        PER_DONE(["return packed_chunks\nsub_trace, cache_events"])
+    end
+
+    EV_PER --> EV_MERGE_ALL
+    EV_MERGE_ALL["merge + dedup all sub-query chunks\nrank by score (query_terms coverage)"] --> EV_SAVE_BATCH
+
+    EV_SAVE_BATCH[/"set_json(evidence_cache_key,\n  {chunk_ids, packed_context, trace_parts}\n)\ncache_events ← evidence:set"/] --> EV_DONE
+
+    EV_DONE([chunks + trace returned to rag_service_impl])
+```
+
+---
+
+### Stage 7 — Verification (with Retry)
+
+```mermaid
+flowchart TD
+    VR_START([▼ QueryVerifierChain.run\n__init__.py:99\nattempt=1]) --> VR_PROMPTS
+    VR_PROMPTS["system = _verifier_system_prompt()\nhuman = _verifier_human_prompt(query, chunks)\n→ serialises ALL chunk payloads into prompt"] --> VR_KEY
+
+    VR_KEY["cache_key(\n  'query_verifier:v1',\n  user_id, attempt,\n  llm_settings_signature(user_id, 'retrieval.verifier'),\n  system, human, query\n)\nNote: any chunk change → different key"] --> VR_GET
+
+    VR_GET[/"get_json(cache_key)\n_cached_verifier_result(cached, valid_ids)\n→ validates on_topic_ids still in valid_ids set"/] --> VR_CACHE_Q
+
+    VR_CACHE_Q{"cached verifier\nresult valid?"} -->|"✅ HIT\ncache_events ← verifier:hit"| VR_APPLY
+    VR_CACHE_Q -->|"❌ MISS"| VR_LLM
+
+    VR_LLM["async_invoke_json(\n  system, human,\n  stage='retrieval.verifier'\n)\n→ LLM classifies each chunk:\n  on_topic_ids, off_topic_ids,\n  status, reason, retry_query"] --> VR_SAVE
+
+    VR_SAVE[/"set_json(cache_key, result)\ncache_events ← verifier:set"/] --> VR_APPLY
+
+    VR_APPLY["chunks = _verified_chunks(chunks, verification)\n→ if on_topic_ids: keep only those\n→ elif off_topic_ids: remove those\n→ else: keep all"] --> VR_RETRY_Q
+
+    VR_RETRY_Q{"status == 'needs_retry'\nAND retry_query != ''\nAND retry_query != query?"} -->|"✅ Yes — insufficient evidence"| VR_RETRY
+    VR_RETRY_Q -->|"❌ No — sufficient"| VR_DONE
+
+    VR_RETRY["Run second evidence pipeline:\n  query_evidence.run(retry_query, ...)\n  → Stages 2–5 with retry_query"] --> VR_COMBINE
+
+    VR_COMBINE["combined_chunks = merge(chunks, retry_chunks)"] --> VR_RETRY_VERIF
+
+    VR_RETRY_VERIF["QueryVerifierChain.run(\n  query,           ← ORIGINAL query\n  combined_chunks,\n  user_id, reporter,\n  attempt=2        ← separate cache key\n)"] --> VR_APPLY2
+
+    VR_APPLY2["chunks = _verified_chunks(combined_chunks, retry_verification)\ntrace['verification_attempts'].append(retry_verification)"] --> VR_DONE
+
+    VR_DONE(["verified chunks returned\ntrace['verification'] = last attempt\ntrace['verified_source_chunk_ids'] = [c['id'] for c in chunks]"])
+```
+
+---
+
+### Stage 8 — Answer Generation
+
+```mermaid
+flowchart TD
+    AN_START([▼ QueryAnswerChain.run\n__init__.py:305]) --> AN_PROMPTS
+    AN_PROMPTS["system = _answer_system_prompt()\nhuman = _answer_human_prompt(query, chunks)\n→ serialises verified+packed chunks"] --> AN_KEY
+
+    AN_KEY["cache_key(\n  'query_answer:v1',\n  user_id,\n  llm_settings_signature(user_id, 'retrieval.answer'),\n  system, human, query\n)"] --> AN_GET
+
+    AN_GET[/"get_json(cache_key)\n_cached_answer_result(cached, chunk_id_set)\n→ validates cited chunk IDs present"/] --> AN_CACHE_Q
+
+    AN_CACHE_Q{"cached answer\nvalid?"} -->|"✅ HIT\ncache_events ← answer:hit"| AN_DONE
+    AN_CACHE_Q -->|"❌ MISS"| AN_LLM
+
+    AN_LLM["async_invoke_json(\n  system, human,\n  stage='retrieval.answer'\n)\n→ LLM writes markdown answer\n  with [[cite:chunk_id]] markers"] --> AN_CITE
+
+    AN_CITE["citation_ids = _CITE_MARKER_RE.findall(raw_answer)\n  → re.compile(r'\\[\\[cite:([^\\]\\s]+)\\]\\]?')\ncitations = [_build_citation(cid, chunks) for cid in citation_ids]\n  → maps each ID to:\n    {source_chunk_id, source_input_id,\n     exact_quote, raw_text, start_char, end_char}"] --> AN_SAVE
+
+    AN_SAVE[/"if answer is non-empty:\n  set_json(cache_key, result)\n  cache_events ← answer:set"/] --> AN_DONE
+
+    AN_DONE(["return {answer, citation_ids, citations,\n  directories, notes, _cache_events}"])
+```
+
+---
+
+### Final — Assemble Result & Save Top-Level Caches
+
+```mermaid
+flowchart TD
+    FINAL_START([▼ back in rag_service_impl.py\nafter answer returned]) --> METRICS
+    METRICS["trace['llm_saved_metrics'] = llm_saved_metrics\n→ accumulated across ALL stages:\n  {llm_calls, prompt_tokens,\n   completion_tokens, total_tokens}"] --> BUILD
+
+    BUILD["result = build_query_result(query, chunks, answer, trace)\n→ assembles full QueryResult dict:\n  {query, answer, citations, notes, directories,\n   retrieval_trace: {\n     mode, sub_queries, sub_query_traces,\n     ranked_source_chunk_ids, source_chunk_count,\n     cache_events, cache_summary,\n     llm_saved_metrics, context_engineering,\n     verification, verified_source_chunk_ids,\n     flow_steps  ← _build_flow_steps()\n   }\n  }"] --> SAVE_EXACT
+
+    SAVE_EXACT[/"if exact_cache_key:\n  set_json(exact_cache_key, result)\n→ Redis key: 'unmessit:retrieval:query_result:v1:{sha256}'\n→ TTL: 24h\n→ next identical query returns in ~1ms"/] --> SAVE_SEM
+
+    SAVE_SEM[/"set_semantic_query_result(\n  user_id, query, result,\n  filters_namespace=filters_sig\n)\n→ Redis: set_json(redis_key, result, 7 days)\n→ ChromaDB: collection('query_result:{filters_sig}')\n    .upsert(\n      ids=[sha256('query_result:{filters_sig}:{query}')],\n      documents=[query],\n      metadatas=[{redis_key: redis_key}]\n    )"/] --> REPORT
+
+    REPORT["reporter.report('Retrieval complete.',\n  ref='retrieval:done',\n  citation_count=...,\n  cache_summary=...,\n  context_engineering=...\n)"] --> FINAL_DONE
+
+    FINAL_DONE([return result to API layer])
+```
