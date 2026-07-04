@@ -139,23 +139,26 @@ def get_settings() -> Settings:
 
 @lru_cache(maxsize=128)
 def get_user_settings(user_id: str) -> Settings:
-    """Return the first effective LLM settings candidate for compatibility callers."""
-    return get_user_llm_settings(user_id)
+    """Return the first effective legacy combined settings candidate."""
+    candidates = get_user_setting_candidates(user_id)
+    if not candidates:
+        raise NoActivePresetError("No config configured. Please add one in Settings.")
+    return candidates[0]
 
 
-@lru_cache(maxsize=128)
-def get_user_llm_settings(user_id: str) -> Settings:
+@lru_cache(maxsize=256)
+def get_user_llm_settings(user_id: str, stage: str | None = None) -> Settings:
     """Return the first effective LLM settings candidate."""
-    candidates = get_user_llm_setting_candidates(user_id)
+    candidates = get_user_llm_setting_candidates(user_id, stage)
     if not candidates:
         raise NoActivePresetError("No LLM config configured. Please add one in Settings.")
     return candidates[0]
 
 
-@lru_cache(maxsize=128)
-def get_user_embedding_settings(user_id: str) -> Settings:
+@lru_cache(maxsize=256)
+def get_user_embedding_settings(user_id: str, stage: str | None = None) -> Settings:
     """Return the first effective embedding settings candidate."""
-    candidates = get_user_embedding_setting_candidates(user_id)
+    candidates = get_user_embedding_setting_candidates(user_id, stage)
     if not candidates:
         raise NoActivePresetError("No embedding config configured. Please add one in Settings.")
     return candidates[0]
@@ -163,24 +166,26 @@ def get_user_embedding_settings(user_id: str) -> Settings:
 
 @lru_cache(maxsize=128)
 def get_user_setting_candidates(user_id: str) -> tuple[Settings, ...]:
-    """Return ordered LLM candidates for compatibility callers."""
-    return get_user_llm_setting_candidates(user_id)
+    """Return ordered legacy combined candidates for compatibility callers."""
+    from src.repositories.config_presets import rotation_candidates
+
+    return _setting_candidates(user_id, rotation_candidates, "config")
 
 
-@lru_cache(maxsize=128)
-def get_user_llm_setting_candidates(user_id: str) -> tuple[Settings, ...]:
+@lru_cache(maxsize=256)
+def get_user_llm_setting_candidates(user_id: str, stage: str | None = None) -> tuple[Settings, ...]:
     """Return ordered per-job/request LLM candidates."""
-    from src.repositories.config_presets import llm_rotation_candidates
+    from src.repositories.config_profiles import llm_candidates
 
-    return _setting_candidates(user_id, llm_rotation_candidates, "LLM")
+    return _setting_candidates(user_id, lambda uid: llm_candidates(uid, stage), "LLM")
 
 
-@lru_cache(maxsize=128)
-def get_user_embedding_setting_candidates(user_id: str) -> tuple[Settings, ...]:
+@lru_cache(maxsize=256)
+def get_user_embedding_setting_candidates(user_id: str, stage: str | None = None) -> tuple[Settings, ...]:
     """Return ordered per-job/request embedding candidates."""
-    from src.repositories.config_presets import embedding_rotation_candidates
+    from src.repositories.config_profiles import embedding_candidates
 
-    return _setting_candidates(user_id, embedding_rotation_candidates, "embedding")
+    return _setting_candidates(user_id, lambda uid: embedding_candidates(uid, stage), "embedding")
 
 
 def _setting_candidates(user_id: str, loader, label: str) -> tuple[Settings, ...]:

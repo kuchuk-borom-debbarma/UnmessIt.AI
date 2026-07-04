@@ -6,9 +6,9 @@ PRs into `staging` run `.github/workflows/staging-release-gate.yml`.
 
 The gate requires:
 - `web/package.json` version is greater than `origin/staging`.
-- `CHANGELOG.md` changed in the PR.
-- `CHANGELOG.md` has release notes for the new version.
-- `web/public/version.json` can be generated from `web/package.json` and `CHANGELOG.md`.
+- `changelog/<version>.md` changed in the PR.
+- `changelog/<version>.md` has release notes headed by the new version.
+- `web/public/version.json` can be generated from `web/package.json` and `changelog/*.md`.
 - Web lint and build pass.
 
 ## Version flow
@@ -23,7 +23,9 @@ It is not a source file. Do not hand-edit or commit it.
 
 The generated JSON uses:
 - `web/package.json` for `version`.
-- `CHANGELOG.md` for the current release notes and full version history.
+- `changelog/*.md`, sorted by semantic version, for current release notes and full version history.
+
+See [`../RELEASES.md`](../RELEASES.md) for the release-note file layout.
 
 ## Prevent direct commits to staging
 

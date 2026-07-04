@@ -13,27 +13,30 @@ const currentVersion = packageJson.version
 
 console.log(`Generating version.json for v${currentVersion}...`)
 
-// 2. Read the CHANGELOG.md
-const changelogPath = path.join(rootDir, 'CHANGELOG.md')
-const changelogContent = fs.readFileSync(changelogPath, 'utf8')
-
-// 3. Extract all version sections, newest first.
-const versionHeaderRegex = /^##\s+\[?(\d+\.\d+\.\d+)\]?.*$/gm
-const matches = [...changelogContent.matchAll(versionHeaderRegex)]
-const history = matches.map((match, index) => {
-  const next = matches[index + 1]
-  return {
-    version: match[1],
-    changelog: changelogContent.substring(match.index, next?.index).trim()
-  }
-})
+// 2. Read versioned changelog files in semver order.
+const changelogDir = path.join(rootDir, 'changelog')
+const semverRegex = /^(\d+)\.(\d+)\.(\d+)\.md$/
+const history = fs.readdirSync(changelogDir)
+  .filter((file) => semverRegex.test(file))
+  .sort((a, b) => {
+    const av = a.match(semverRegex).slice(1).map(Number)
+    const bv = b.match(semverRegex).slice(1).map(Number)
+    for (let i = 0; i < 3; i += 1) {
+      if (av[i] !== bv[i]) return av[i] - bv[i]
+    }
+    return 0
+  })
+  .map((file) => ({
+    version: file.replace(/\.md$/, ''),
+    changelog: fs.readFileSync(path.join(changelogDir, file), 'utf8').trim()
+  }))
 
 const currentEntry = history.find((entry) => entry.version === currentVersion)
 let releaseNotes = currentEntry?.changelog || ''
 
 if (!releaseNotes) {
-  console.warn(`⚠️ Warning: Could not find release notes for version ${currentVersion} in CHANGELOG.md`)
-  releaseNotes = `## UnmessIt.AI ${currentVersion}\n\n*No release notes found in CHANGELOG.md.*`
+  console.warn(`⚠️ Warning: Could not find release notes for version ${currentVersion} in changelog/${currentVersion}.md`)
+  releaseNotes = `## UnmessIt.AI ${currentVersion}\n\n*No release notes found in changelog/${currentVersion}.md.*`
 }
 
 // 4. Write to web/public/version.json

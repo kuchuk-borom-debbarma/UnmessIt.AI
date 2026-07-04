@@ -107,7 +107,7 @@ echo "Server logs will appear below:"
 echo "----------------------------------------"
 cd server
 source .venv/bin/activate 2>/dev/null || true
-uvicorn src.main:create_app --reload --port 2317 &
+uvicorn src.main:create_app --reload --reload-dir src --port 2317 &
 SERVER_PID=$!
 cd ..
 sleep 1

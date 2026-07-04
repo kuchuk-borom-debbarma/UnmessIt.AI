@@ -38,7 +38,10 @@ class SseProgressReporter(ProgressReporter):
         self.topic = topic
 
     async def report(self, message: str, details: dict | None = None) -> None:
-        await self.sse.publish(self.topic, "progress", _progress_payload(message, details))
+        try:
+            await self.sse.publish(self.topic, "progress", _progress_payload(message, details))
+        except Exception as exc:
+            logger.warning("retrieval_progress_publish_failed topic=%s error=%s", self.topic, exc)
 
 
 def _progress_payload(message: str, details: dict | None = None) -> dict:

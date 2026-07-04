@@ -4,6 +4,9 @@ Retrieval is source-backed. It selects source chunks, expands through recall lin
 
 ```txt
 query
+-> exact full-result cache lookup
+-> semantic full-result cache lookup
+   -> strict verifier must approve similar cached answers before reuse
 -> breakdown into at most 6 focused sub-queries
    -> deterministic fan-out for broad multi-part, attribute, comparison, and reasoning questions
 -> per-sub-query search:
@@ -23,6 +26,8 @@ query
 The breakdown step passes simple queries through unchanged. For broad multi-part, attribute, comparison, or reasoning questions, it combines LLM decomposition with deterministic fan-out so retrieval searches for the facts needed to answer, not only the exact words the user typed. Broad enumerations can add clause-level searches without assuming any domain.
 
 Each chunk is reduced to its summary plus the most query-relevant passages before answer generation. This keeps token use low for local and cloud models.
+
+The full-result semantic cache is a shortcut before retrieval. It is allowed to reuse a prior answer only when the cached query is close enough and a strict verifier says the old answer fully covers the new query. Verifier and answer caches remain exact because their prompts include the requested wording and selected evidence.
 
 Before answer generation, the verifier judges the packed chunk payload against the original query. It keeps chunks that match the requested subject, scope, qualifiers, and sense of ambiguous terms, drops off-topic same-word matches, and can ask retrieval to retry once with a more focused query. Explicit comparison or relationship questions may keep evidence from multiple contexts when those contexts are part of the user request. If selected evidence supports only part of a multi-part query, the verifier keeps that partial evidence instead of discarding it as insufficient.
 
@@ -63,12 +68,22 @@ Attribute, comparison, and reasoning-style queries get deterministic query-term 
       "off_topic_ids": [],
       "retry_query": ""
     },
-    "verified_source_chunk_ids": []
+    "verified_source_chunk_ids": [],
+    "ui": {
+      "summary": [],
+      "flow": [],
+      "savings": {}
+    },
+    "flow_steps": []
   }
 }
 ```
 
 `citations` point to raw input ids and source chunk spans. `answer` may also contain inline citation markers that reference those source chunk ids. `directories` and `notes` point to organizational UUIDs for UI links.
+
+`retrieval_trace.ui` is the backend-driven Retrieval Analysis contract. `summary` contains display-ready metric cards, `flow` contains ordered steps with optional nested sub-steps, and `savings` contains cache, LLM-call, token, and context-packing savings. `flow_steps` mirrors `ui.flow` for older UI callers.
+
+Cache hits, misses, writes, skipped steps, verifier/answer LLM metrics, context raw/packed sizes, and per-sub-query evidence details should be added here by the backend instead of recomputed by the UI.
 
 ## Directory Filtering
 

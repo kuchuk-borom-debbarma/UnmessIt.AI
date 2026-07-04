@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from src.repositories import directories
+from src.repositories import retrieval_index
 from src.infra.sqlite import get_connection
 
 
@@ -19,6 +20,7 @@ def create(text: str, user_id: str, directory_id: str | None = None, metadata: d
         """,
         (note_id, text, directory_id, user_id, json.dumps(metadata or {}, ensure_ascii=False))
     )
+    retrieval_index.bump(user_id, db)
     if conn is None:
         db.commit()
     return note_id
@@ -58,6 +60,8 @@ def update(note_id: str, text: str, user_id: str, directory_id: str | None = Non
             """,
             (text, directory_id, note_id, user_id)
         )
+    if cursor.rowcount > 0:
+        retrieval_index.bump(user_id, db)
     if conn is None:
         db.commit()
     return cursor.rowcount > 0
@@ -70,6 +74,8 @@ def delete(note_id: str, user_id: str, conn=None) -> bool:
         "UPDATE notes SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
         (note_id, user_id)
     )
+    if cursor.rowcount > 0:
+        retrieval_index.bump(user_id, db)
     if conn is None:
         db.commit()
     return cursor.rowcount > 0
@@ -81,6 +87,8 @@ def hard_delete(note_id: str, user_id: str, conn=None) -> bool:
         "DELETE FROM notes WHERE id = ? AND user_id = ?",
         (note_id, user_id)
     )
+    if cursor.rowcount > 0:
+        retrieval_index.bump(user_id, db)
     if conn is None:
         db.commit()
     return cursor.rowcount > 0
@@ -92,6 +100,8 @@ def restore(note_id: str, user_id: str, conn=None) -> bool:
         "UPDATE notes SET deleted_at = NULL WHERE id = ? AND user_id = ?",
         (note_id, user_id)
     )
+    if cursor.rowcount > 0:
+        retrieval_index.bump(user_id, db)
     if conn is None:
         db.commit()
     return cursor.rowcount > 0

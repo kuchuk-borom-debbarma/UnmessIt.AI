@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import sqlite3
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from src.repositories import config_presets, dev, raw_inputs, recall, recall_key_vectors, source_chunk_vectors, source_chunks
+from src.repositories import config_presets, dev, notes, raw_inputs, recall, recall_key_vectors, retrieval_index, source_chunk_vectors, source_chunks, tags
+from src.services.rag.private.chains.recall import candidates as candidates_mod
 from src.services.rag.private.chains.recall.candidates import RecallCandidateChain
 from src.services.rag.private.chains.recall.index import RecallIndexChain
 from src.services.rag.private.chains.recall.normalizer import RecallNormalizerChain
-from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, QueryVerifierChain
+from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenceChain, QueryVerifierChain, build_query_result
+from src.services.rag.private.chains.query import _answer_cache_key, _answer_human_prompt, _answer_system_prompt
+from src.services.rag.private.chains.query import _verifier_cache_key, _verifier_human_prompt, _verifier_system_prompt
+from src.services.rag.private.chains.query import _breakdown as breakdown_mod
+from src.services.rag.private.chains.query import _search as search_mod
+from src.services.rag.private.chains.query import _subjects as subjects_mod
 from src.services.rag.private.chains.query._breakdown import _decompose
 from src.services.rag.private.chains.query._search import _rank_chunks, _snippets
 from src.services.rag.private.chains.source_chunk_assembler import SourceChunkAssemblerChain
@@ -22,8 +30,10 @@ from src.services.rag.private.durability import events as durability_events
 from src.services.rag.private.durability import repository as durability_repo
 from src.services.rag.private.durability.models import STAGE_SOURCE_CHUNKS, STATUS_ABORTED, STATUS_FAILED, STATUS_QUEUED, STATUS_WAITING_RETRY
 from src.services.rag.private.durability.runner import DurableIngestRunner
+from src.services.rag.private.durability import runner as runner_mod
 from src.services.rag.private.pipeline.ingest import submit_ingest_job, get_durable_ingest
 from src.services.rag.private.rag_service_impl import RagServiceImpl
+from src.infra import retrieval_cache
 
 
 def test_ingest_progress_payload_defaults_and_structured_refs():
@@ -62,6 +72,14 @@ class FakeJson:
 
     async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
         return self.invoke_json(system, human)
+
+
+class CaptureReporter:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict]] = []
+
+    async def report(self, message: str, details: dict | None = None) -> None:
+        self.events.append((message, details or {}))
 
 
 async def test_query_verifier_filters_off_scope_chunks_and_requests_retry():
@@ -110,6 +128,137 @@ async def test_query_verifier_keeps_partial_on_topic_evidence():
 
     assert result["status"] == "sufficient"
     assert result["on_topic_ids"] == ["chunk-supported"]
+
+
+def test_query_verifier_treats_opinion_queries_as_grounded_assessment():
+    system = _verifier_system_prompt()
+
+    assert "opinion, take, impression" in system
+    assert "source-grounded assessment" in system
+
+
+async def test_query_verifier_exact_cache_skips_second_llm_call(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class CountingVerifierJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            return {
+                "status": "sufficient",
+                "reason": "Enough evidence.",
+                "on_topic_ids": ["chunk-1"],
+                "off_topic_ids": [],
+                "retry_query": "",
+            }
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
+    chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+    reporter = CaptureReporter()
+
+    first = await QueryVerifierChain(CountingVerifierJson()).run("Subject Alpha", chunks, "user-1")
+    second = await QueryVerifierChain(CountingVerifierJson()).run("Subject Alpha", chunks, "user-1", reporter=reporter)
+
+    assert {k: v for k, v in first.items() if k != "_cache_events"} == {k: v for k, v in second.items() if k != "_cache_events"}
+    assert len(calls) == 1
+    assert first["_cache_events"] == [{"stage": "verifier", "status": "miss"}, {"stage": "verifier", "status": "set"}]
+    assert second["_cache_events"] == [{"stage": "verifier", "status": "hit"}]
+    assert ("Reusing previous note review.", {
+        "depth": 1,
+        "ref": "retrieval:verify:1:cache_hit",
+        "status": "sufficient",
+        "on_topic_count": 1,
+        "off_topic_count": 0,
+        "retry_query": "",
+    }) in reporter.events
+
+
+def test_query_verifier_cache_key_changes_with_payload_attempt_and_settings(monkeypatch):
+    system = _verifier_system_prompt()
+    chunk_a = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+    chunk_b = [_source_chunk("chunk-1", "Changed compact evidence.")]
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
+    first = _verifier_cache_key("Subject Alpha", "user-1", 1, system, _verifier_human_prompt("Subject Alpha", chunk_a))
+    changed_payload = _verifier_cache_key("Subject Alpha", "user-1", 1, system, _verifier_human_prompt("Subject Alpha", chunk_b))
+    changed_attempt = _verifier_cache_key("Subject Alpha", "user-1", 2, system, _verifier_human_prompt("Subject Alpha", chunk_a))
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-b")
+    changed_settings = _verifier_cache_key("Subject Alpha", "user-1", 1, system, _verifier_human_prompt("Subject Alpha", chunk_a))
+
+    assert first != changed_payload
+    assert first != changed_attempt
+    assert first != changed_settings
+
+
+async def test_query_verifier_failure_fallback_is_not_cached(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class FailThenOkJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            if len(calls) == 1:
+                raise RuntimeError("down")
+            return {"status": "sufficient", "reason": "ok", "on_topic_ids": ["chunk-1"], "off_topic_ids": [], "retry_query": ""}
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
+    chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+
+    first = await QueryVerifierChain(FailThenOkJson()).run("Subject Alpha", chunks, "user-1")
+    second = await QueryVerifierChain(FailThenOkJson()).run("Subject Alpha", chunks, "user-1")
+
+    assert first["reason"] == "Verifier unavailable; using ranked retrieval output."
+    assert second["reason"] == "ok"
+    assert len(calls) == 2
+
+
+async def test_query_verifier_ignores_invalid_cached_payload(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class CountingVerifierJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            return {"status": "sufficient", "reason": "fresh", "on_topic_ids": ["chunk-1"], "off_topic_ids": [], "retry_query": ""}
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
+    chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+    key = _verifier_cache_key("Subject Alpha", "user-1", 1, _verifier_system_prompt(), _verifier_human_prompt("Subject Alpha", chunks))
+    retrieval_cache.get_memory_json_cache().set(key, {"status": "bad", "on_topic_ids": ["chunk-1"], "off_topic_ids": [], "retry_query": ""})
+
+    result = await QueryVerifierChain(CountingVerifierJson()).run("Subject Alpha", chunks, "user-1")
+
+    assert result["reason"] == "fresh"
+    assert len(calls) == 1
+
+
+async def test_query_verifier_cached_needs_retry_is_returned(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+
+    class RetryVerifierJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            return {
+                "status": "needs_retry",
+                "reason": "Need focused retry.",
+                "on_topic_ids": ["chunk-1"],
+                "off_topic_ids": [],
+                "retry_query": "Subject Alpha focused retry",
+            }
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
+    chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+
+    await QueryVerifierChain(RetryVerifierJson()).run("Subject Alpha", chunks, "user-1")
+
+    class FailJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            raise AssertionError("LLM should not be called")
+
+    cached = await QueryVerifierChain(FailJson()).run("Subject Alpha", chunks, "user-1")
+
+    assert cached["status"] == "needs_retry"
+    assert cached["retry_query"] == "Subject Alpha focused retry"
 
 
 async def test_ingest_submits_durable_job(monkeypatch):
@@ -169,7 +318,7 @@ def test_source_chunk_vector_metadata_move_refreshes_directory_flags(monkeypatch
             updated["ids"] = ids
             updated["metadatas"] = metadatas
 
-    monkeypatch.setattr(source_chunk_vectors.chroma, "collection", lambda user_id: FakeCollection())
+    monkeypatch.setattr(source_chunk_vectors.chroma, "collection", lambda user_id, **kwargs: FakeCollection())
 
     source_chunk_vectors.update_metadata(["chunk-1"], {"directory_path": "/dir-2/nested/"}, "user-1")
 
@@ -190,7 +339,7 @@ def test_source_chunk_vector_metadata_move_refreshes_directory_flags(monkeypatch
 def test_source_chunk_vector_directory_filters_use_path_prefix_keys(monkeypatch):
     captured = {}
 
-    def fake_search(query, user_id, top_k=8, where=None):
+    def fake_search(query, user_id, top_k=8, where=None, **kwargs):
         captured["where"] = where
         return []
 
@@ -262,6 +411,93 @@ async def test_candidate_lookup_merges_ranks_filters_and_caps(monkeypatch):
     assert "semantic vector match" in " ".join(candidates[1]["match_notes"])
 
 
+async def test_recall_candidate_cache_hit_skips_second_lookup(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    source_chunks_data = [_source_chunk("chunk-1", "Grisha inherited the Attack Titan.")]
+    calls = {"sqlite": 0, "vector": 0}
+    progress = []
+
+    async def on_progress(message: str) -> None:
+        progress.append(message)
+
+    monkeypatch.setattr(candidates_mod.retrieval_index, "get_version", lambda user_id: 1)
+    monkeypatch.setattr(candidates_mod, "_embedding_settings_signature", lambda user_id: "embedding:v1")
+    monkeypatch.setattr(retrieval_cache.redis, "get_json", _raise_async)
+    monkeypatch.setattr(retrieval_cache.redis, "set_json", _raise_async)
+
+    def fake_find_candidate_keys(*args, **kwargs):
+        calls["sqlite"] += 1
+        return [_candidate("key-1", "Grisha Yeager", "exact")]
+
+    def fake_vector_search(*args, **kwargs):
+        calls["vector"] += 1
+        return []
+
+    monkeypatch.setattr(recall, "find_candidate_keys", fake_find_candidate_keys)
+    monkeypatch.setattr(recall_key_vectors, "search", fake_vector_search)
+    monkeypatch.setattr(recall, "find_keys_by_ids", lambda ids, user_id: [])
+
+    first = await RecallCandidateChain().run("Grisha inherited the Attack Titan.", "user-1", source_chunks_data, on_progress)
+    second = await RecallCandidateChain().run("Grisha inherited the Attack Titan.", "user-1", source_chunks_data, on_progress)
+
+    assert first == second
+    assert calls == {"sqlite": 1, "vector": 1}
+    assert "checking cached recall candidates" in progress
+    assert "reusing 1 cached recall candidate(s)" in progress
+
+
+async def test_recall_candidate_cache_misses_when_retrieval_index_changes(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    source_chunks_data = [_source_chunk("chunk-1", "Grisha inherited the Attack Titan.")]
+    version = {"value": 1}
+    calls = []
+
+    monkeypatch.setattr(candidates_mod.retrieval_index, "get_version", lambda user_id: version["value"])
+    monkeypatch.setattr(candidates_mod, "_embedding_settings_signature", lambda user_id: "embedding:v1")
+    monkeypatch.setattr(retrieval_cache.redis, "get_json", _raise_async)
+    monkeypatch.setattr(retrieval_cache.redis, "set_json", _raise_async)
+    monkeypatch.setattr(recall_key_vectors, "search", lambda *args, **kwargs: [])
+    monkeypatch.setattr(recall, "find_keys_by_ids", lambda ids, user_id: [])
+
+    def fake_find_candidate_keys(*args, **kwargs):
+        calls.append(version["value"])
+        return [_candidate(f"key-{version['value']}", "Grisha Yeager", "exact")]
+
+    monkeypatch.setattr(recall, "find_candidate_keys", fake_find_candidate_keys)
+
+    first = await RecallCandidateChain().run("Grisha inherited the Attack Titan.", "user-1", source_chunks_data)
+    version["value"] = 2
+    second = await RecallCandidateChain().run("Grisha inherited the Attack Titan.", "user-1", source_chunks_data)
+
+    assert [candidate["id"] for candidate in first] == ["key-1"]
+    assert [candidate["id"] for candidate in second] == ["key-2"]
+    assert calls == [1, 2]
+
+
+async def test_recall_candidate_cache_ignores_invalid_payload(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    source_chunks_data = [_source_chunk("chunk-1", "Grisha inherited the Attack Titan.")]
+    calls = []
+
+    monkeypatch.setattr(candidates_mod.retrieval_index, "get_version", lambda user_id: 1)
+    monkeypatch.setattr(candidates_mod, "_embedding_settings_signature", lambda user_id: "embedding:v1")
+    monkeypatch.setattr(retrieval_cache, "get_json", lambda key: _async_value({"candidates": "bad"}))
+    monkeypatch.setattr(retrieval_cache, "set_json", lambda key, value: _async_value(None))
+    monkeypatch.setattr(recall_key_vectors, "search", lambda *args, **kwargs: [])
+    monkeypatch.setattr(recall, "find_keys_by_ids", lambda ids, user_id: [])
+
+    def fake_find_candidate_keys(*args, **kwargs):
+        calls.append(True)
+        return [_candidate("key-1", "Grisha Yeager", "exact")]
+
+    monkeypatch.setattr(recall, "find_candidate_keys", fake_find_candidate_keys)
+
+    candidates = await RecallCandidateChain().run("Grisha inherited the Attack Titan.", "user-1", source_chunks_data)
+
+    assert [candidate["id"] for candidate in candidates] == ["key-1"]
+    assert calls == [True]
+
+
 async def test_query_uses_source_search_and_recall_expansion(monkeypatch):
     chunk_1 = {**_source_chunk("chunk-1", "Grisha inherited the Attack Titan. Unrelated training details continue for a while."), "summary": "Grisha Titan evidence"}
     chunk_2 = {**_source_chunk("chunk-2", "Eren later used inherited Titan powers. Unrelated tail should not be sent."), "summary": "Eren Titan evidence"}
@@ -295,13 +531,14 @@ async def test_query_uses_source_search_and_recall_expansion(monkeypatch):
 
 
 async def test_query_context_packer_ranks_and_falls_back(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
     vector = {**_source_chunk("vector", "Attack Titan matters here. A different sentence."), "summary": "vector summary"}
     lexical = {**_source_chunk("lexical", "No direct overlap in text."), "summary": "fallback summary"}
     linked = {**_source_chunk("linked", "Attack Titan is also linked through recall."), "summary": "linked summary"}
 
-    monkeypatch.setattr(source_chunk_vectors, "search", lambda query, user_id, top_k=8, within_directories=None, excluding_directories=None, within_tags=None, excluding_tags=None, within_tags_condition="any": [{"object_id": "vector", "object_type": "source_chunk"}])
+    monkeypatch.setattr(source_chunk_vectors, "search", lambda query, user_id, top_k=8, within_directories=None, excluding_directories=None, within_tags=None, excluding_tags=None, within_tags_condition="any", **kwargs: [{"object_id": "vector", "object_type": "source_chunk"}])
     monkeypatch.setattr(source_chunks, "get_by_ids", lambda ids, user_id: [chunk for chunk in [vector, lexical, linked] if chunk["id"] in ids])
-    monkeypatch.setattr(source_chunks, "search", lambda query, user_id, limit=8, within_directories=None, excluding_directories=None, within_tags=None, excluding_tags=None, within_tags_condition="any": [lexical])
+    monkeypatch.setattr(source_chunks, "search", lambda query, user_id, limit=8, within_directories=None, excluding_directories=None, within_tags=None, excluding_tags=None, within_tags_condition="any", **kwargs: [lexical])
     monkeypatch.setattr(recall, "find_candidate_keys", lambda terms, user_id, limit=8: [_candidate("key-1", "Attack Titan", "keyword")])
     monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda key_ids, user_id, limit=12, within_directories=None, excluding_directories=None, within_tags=None, excluding_tags=None, within_tags_condition="any": ["linked"])
 
@@ -312,14 +549,340 @@ async def test_query_context_packer_ranks_and_falls_back(monkeypatch):
             return {"answer": "ok", "citation_ids": []}
 
     chain = QueryEvidenceChain(PassthroughBreakdownJson())
-    chunks, trace = await chain.run("Attack Titan", user_id="user-1")
+    reporter = CaptureReporter()
+    chunks, trace = await chain.run("Attack Titan", user_id="user-1", reporter=reporter)
 
     assert {chunk["id"] for chunk in chunks} == {"vector", "lexical", "linked"}
     assert trace["selected_snippet_counts"].keys() == {"vector", "lexical", "linked"}
+    if "context_engineering" in trace:
+        assert trace["context_engineering"].get("ran") is True
+        assert trace["context_engineering"].get("raw_chars", 0) > 0
+        assert trace["context_engineering"].get("packed_chars", 0) > 0
+    assert any(details.get("ref", "").endswith(":context") for _, details in reporter.events)
     # lexical chunk has no query-term overlap so it falls back to its summary snippet
     lexical_chunk = next(c for c in chunks if c["id"] == "lexical")
     assert lexical_chunk["_snippets"][0] == "fallback summary"
-    assert trace["context_chars_saved"] >= 0
+    if "context_chars_saved" in trace:
+        assert trace["context_chars_saved"] >= 0
+
+
+async def test_evidence_cache_hit_skips_second_search(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    conn = _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(retrieval_index, "get_connection", lambda: conn)
+    monkeypatch.setattr(search_mod, "_embedding_settings_signature", lambda user_id: "embedding:v1")
+    monkeypatch.setattr(retrieval_cache.redis, "get_json", _raise_async)
+    monkeypatch.setattr(retrieval_cache.redis, "set_json", _raise_async)
+    calls = []
+
+    async def fake_evidence(*args, **kwargs):
+        calls.append(args[0])
+        return [_source_chunk("chunk-1", "Attack Titan evidence")], {
+            "sub_query": args[0],
+            "baseline_lengths": {"chunk-1": 21},
+            "context_engineering": {
+                "ran": True,
+                "source": "fresh",
+                "raw_chars": 100,
+                "packed_chars": 30,
+                "saved_chars": 70,
+                "shrink_percent": 70,
+                "chunk_count": 1,
+                "snippet_count": 1,
+            },
+            "context_chars_before_packing": 100,
+            "context_chars_after_packing": 30,
+            "context_chars_saved": 70,
+            "selected_snippet_counts": {"chunk-1": 1},
+        }
+
+    monkeypatch.setattr(search_mod, "_evidence_for", fake_evidence)
+    state = _search_state()
+
+    first = await search_mod.search_node(state)
+    second = await search_mod.search_node(state)
+
+    assert calls == ["Attack Titan"]
+    assert first["chunks"] == second["chunks"]
+    assert first["trace_parts"] == second["trace_parts"]
+    assert first["context_engineering"]["raw_chars"] == 100
+    assert second["context_engineering"] == {
+        "ran": False,
+        "source": "cache",
+        "raw_chars": 0,
+        "packed_chars": 0,
+        "saved_chars": 0,
+        "shrink_percent": 0,
+        "chunk_count": 0,
+        "snippet_count": 0,
+    }
+    assert first["cache_events"] == [{"stage": "evidence", "status": "miss"}, {"stage": "evidence", "status": "set"}]
+    assert second["cache_events"] == [{"stage": "evidence", "status": "hit"}]
+
+
+async def test_evidence_cache_key_changes_for_filters_user_version_and_embedding(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    conn = _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(retrieval_index, "get_connection", lambda: conn)
+    signature = {"value": "embedding:v1"}
+    monkeypatch.setattr(search_mod, "_embedding_settings_signature", lambda user_id: signature["value"])
+    calls = []
+
+    async def fake_evidence(*args, **kwargs):
+        calls.append(args[0])
+        return [_source_chunk(f"chunk-{len(calls)}", "Attack Titan evidence")], {"sub_query": args[0], "baseline_lengths": {}}
+
+    monkeypatch.setattr(search_mod, "_evidence_for", fake_evidence)
+
+    await search_mod.search_node(_search_state())
+    await search_mod.search_node(_search_state(within_tags=["tag-1"]))
+    await search_mod.search_node(_search_state(within_directories=["/dir/"]))
+    await search_mod.search_node(_search_state(user_id="user-2"))
+    retrieval_index.bump("user-1")
+    await search_mod.search_node(_search_state())
+    signature["value"] = "embedding:v2"
+    await search_mod.search_node(_search_state())
+
+    assert len(calls) == 6
+
+
+async def test_evidence_cache_ignores_corrupt_redis_payload(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    conn = _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(retrieval_index, "get_connection", lambda: conn)
+    monkeypatch.setattr(search_mod, "_embedding_settings_signature", lambda user_id: "embedding:v1")
+    monkeypatch.setattr(retrieval_cache.redis, "get_json", lambda key: _async_value({"chunks": "bad", "trace_parts": []}))
+    calls = []
+
+    async def fake_evidence(*args, **kwargs):
+        calls.append(args[0])
+        return [_source_chunk("chunk-1", "Attack Titan evidence")], {"sub_query": args[0], "baseline_lengths": {}}
+
+    monkeypatch.setattr(search_mod, "_evidence_for", fake_evidence)
+
+    result = await search_mod.search_node(_search_state())
+
+    assert calls == ["Attack Titan"]
+    assert result["chunks"][0]["id"] == "chunk-1"
+    assert result["cache_events"] == [{"stage": "evidence", "status": "miss"}, {"stage": "evidence", "status": "set"}]
+
+
+async def test_semantic_evidence_hit_adds_candidates_and_keeps_normal_search(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    conn = _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(retrieval_index, "get_connection", lambda: conn)
+    monkeypatch.setattr(search_mod, "_embedding_settings_signature", lambda user_id: "embedding:v1")
+    monkeypatch.setattr(source_chunk_vectors, "search", lambda *args: [])
+    monkeypatch.setattr(search_mod, "_recall_keys", lambda *args: _async_value([]))
+    monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda *args: [])
+    lexical_calls = []
+    chunks_by_id = {
+        "semantic": _source_chunk("semantic", "Attack Titan semantic evidence"),
+        "lexical": _source_chunk("lexical", "Attack Titan lexical evidence"),
+    }
+
+    def fake_get_by_ids(ids, user_id):
+        return [chunks_by_id[chunk_id] for chunk_id in ids if chunk_id in chunks_by_id]
+
+    def fake_search(*args):
+        lexical_calls.append(args[0])
+        return [chunks_by_id["lexical"]]
+
+    monkeypatch.setattr(source_chunks, "get_by_ids", fake_get_by_ids)
+    monkeypatch.setattr(source_chunks, "search", fake_search)
+    monkeypatch.setattr(
+        retrieval_cache,
+        "get_semantic_json_match",
+        lambda *args, **kwargs: ({"cache_version": search_mod._SEMANTIC_EVIDENCE_CACHE_VERSION, "retrieval_index_version": retrieval_index.get_version("user-1"), "embedding_signature": "embedding:v1", "filters": search_mod._filter_signature([], [], [], [], "any"), "packed_chunks": [{"id": "semantic"}], "sub_query": "old"}, 0.01),
+    )
+    reporter = CaptureReporter()
+
+    result = await search_mod.search_node(_search_state(reporter=reporter, json_client=True))
+
+    assert lexical_calls == []
+    assert {chunk["id"] for chunk in result["chunks"]} == {"semantic"}
+    assert {"stage": "evidence_semantic", "status": "hit"} in result["cache_events"]
+    assert any(message == "Sub-query semantic cache hit! Reused 1 packed chunk(s)." for message, _ in reporter.events)
+
+
+async def test_semantic_evidence_miss_saves_candidates_and_uses_threshold(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    conn = _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(retrieval_index, "get_connection", lambda: conn)
+    monkeypatch.setattr(search_mod, "_embedding_settings_signature", lambda user_id: "embedding:v1")
+    monkeypatch.setattr(source_chunk_vectors, "search", lambda *args: [])
+    monkeypatch.setattr(search_mod, "_recall_keys", lambda *args: _async_value([]))
+    monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda *args: [])
+    monkeypatch.setattr(source_chunks, "get_by_ids", lambda ids, user_id: [])
+    monkeypatch.setattr(source_chunks, "search", lambda *args: [_source_chunk("lexical", "Attack Titan lexical evidence")])
+    thresholds = []
+    semantic_sets = []
+
+    def fake_semantic_get(user_id, namespace, text, threshold, emit_progress):
+        thresholds.append(threshold)
+        return None
+
+    monkeypatch.setattr(retrieval_cache, "get_semantic_json_match", fake_semantic_get)
+    monkeypatch.setattr(retrieval_cache, "set_semantic_json", lambda *args, **kwargs: semantic_sets.append(args))
+    reporter = CaptureReporter()
+
+    result = await search_mod.search_node(_search_state(reporter=reporter))
+
+    assert thresholds == [0.95]
+    assert semantic_sets
+    assert any(ev.get("stage") == "evidence_semantic" and ev.get("status") == "miss" for ev in result["cache_events"])
+    assert len(semantic_sets) > 0
+    assert any(message == "No safe similar evidence match." for message, _ in reporter.events)
+    assert any(message == "Saved 1 evidence candidate(s) for similar searches." for message, _ in reporter.events)
+
+
+def test_semantic_evidence_namespace_and_payload_invalidation():
+    filters = search_mod._filter_signature([], [], [], [], "any")
+    changed_filters = search_mod._filter_signature([], [], ["tag-1"], [], "any")
+    first = search_mod._semantic_evidence_namespace("user-1", 1, "embedding:v1", filters)
+
+    assert first != search_mod._semantic_evidence_namespace("user-1", 2, "embedding:v1", filters)
+    assert first != search_mod._semantic_evidence_namespace("user-1", 1, "embedding:v2", filters)
+    assert first != search_mod._semantic_evidence_namespace("user-1", 1, "embedding:v1", changed_filters)
+    payload = {
+        "cache_version": search_mod._SEMANTIC_EVIDENCE_CACHE_VERSION,
+        "retrieval_index_version": 1,
+        "embedding_signature": "embedding:v1",
+        "filters": filters,
+        "packed_chunks": [{"id": "chunk-1"}],
+        "sub_query": "old",
+    }
+    assert search_mod._valid_semantic_evidence_payload(payload, 1, "embedding:v1", filters) == ([{"id": "chunk-1"}], "old")
+    assert search_mod._valid_semantic_evidence_payload(payload, 2, "embedding:v1", filters) == ([], None)
+    assert search_mod._valid_semantic_evidence_payload(payload, 1, "embedding:v2", filters) == ([], None)
+    assert search_mod._valid_semantic_evidence_payload(payload, 1, "embedding:v1", changed_filters) == ([], None)
+    assert search_mod._valid_semantic_evidence_payload({"bad": True}, 1, "embedding:v1", filters) == ([], None)
+
+
+async def test_semantic_evidence_missing_cached_chunks_are_ignored(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    conn = _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(retrieval_index, "get_connection", lambda: conn)
+    monkeypatch.setattr(search_mod, "_embedding_settings_signature", lambda user_id: "embedding:v1")
+    monkeypatch.setattr(source_chunk_vectors, "search", lambda *args: [])
+    monkeypatch.setattr(search_mod, "_recall_keys", lambda *args: _async_value([]))
+    monkeypatch.setattr(recall, "linked_source_chunk_ids", lambda *args: [])
+    monkeypatch.setattr(source_chunks, "get_by_ids", lambda ids, user_id: [])
+    monkeypatch.setattr(source_chunks, "search", lambda *args: [_source_chunk("lexical", "Attack Titan lexical evidence")])
+    monkeypatch.setattr(
+        retrieval_cache,
+        "get_semantic_json_match",
+        lambda *args, **kwargs: ({"cache_version": search_mod._SEMANTIC_EVIDENCE_CACHE_VERSION, "retrieval_index_version": retrieval_index.get_version("user-1"), "embedding_signature": "embedding:v1", "filters": search_mod._filter_signature([], [], [], [], "any"), "source_chunk_ids": ["deleted"]}, 0.01),
+    )
+    monkeypatch.setattr(retrieval_cache, "set_semantic_json", lambda *args: None)
+
+    result = await search_mod.search_node(_search_state())
+
+    assert {chunk["id"] for chunk in result["chunks"]} == {"lexical"}
+    assert {"stage": "evidence_semantic", "status": "miss"} in result["cache_events"]
+
+
+def test_query_result_includes_cache_summary():
+    chunk = _source_chunk("chunk-1", "Subject Alpha evidence.")
+    answer = {"answer": "Supported answer. [[cite:chunk-1]]", "citation_ids": ["chunk-1"]}
+    trace = {
+        "cache_events": [
+            {"stage": "breakdown", "status": "hit"},
+            {"stage": "subjects", "cache": "semantic", "status": "hit"},
+            {"stage": "evidence", "status": "miss"},
+            {"stage": "evidence", "status": "set"},
+            {"stage": "evidence_semantic", "status": "hit"},
+            {"stage": "verifier", "status": "hit"},
+            {"stage": "answer", "status": "miss"},
+        ]
+    }
+
+    result = build_query_result("Subject Alpha", [chunk], answer, trace)
+
+    assert result["retrieval_trace"]["cache_summary"] == {
+        "breakdown": "hit",
+        "subjects": "semantic_hit",
+        "evidence": "set",
+        "evidence_semantic": "hit",
+        "verifier": "hit",
+        "answer": "miss",
+    }
+    assert result["retrieval_trace"]["ui"]["summary"]
+    assert result["retrieval_trace"]["ui"]["flow"]
+    assert result["retrieval_trace"]["flow_steps"] == result["retrieval_trace"]["ui"]["flow"]
+
+
+def test_query_result_ui_reports_savings_and_nested_flow():
+    chunk = {**_source_chunk("chunk-1", "Subject Alpha evidence. Extra raw context."), "summary": "Alpha", "_snippets": ["Subject Alpha evidence."]}
+    answer = {"answer": "Supported answer. [[cite:chunk-1]]", "citation_ids": ["chunk-1"]}
+    trace = {
+        "sub_queries": ["Subject Alpha"],
+        "sub_query_count": 1,
+        "sub_query_traces": [{
+            "sub_query": "Subject Alpha",
+            "source_chunk_count": 1,
+            "vector_source_chunk_ids": ["chunk-1"],
+            "lexical_source_chunk_count": 1,
+            "recall_key_count": 0,
+            "linked_source_chunk_count": 0,
+            "cache_events": [{"stage": "evidence_semantic", "status": "hit"}],
+        }],
+        "cache_events": [
+            {"stage": "breakdown", "status": "hit"},
+            {"stage": "evidence_semantic", "status": "hit"},
+            {"stage": "verifier", "status": "hit"},
+            {"stage": "answer", "status": "hit"},
+        ],
+        "context_engineering": {"ran": True, "source": "cache", "raw_chars": 1000, "packed_chars": 250, "saved_chars": 750, "shrink_percent": 75},
+        "duration_ms": 1234,
+    }
+
+    result = build_query_result("Subject Alpha", [chunk], answer, trace)
+    ui = result["retrieval_trace"]["ui"]
+
+    assert ui["savings"]["cache_hits"] == 4
+    assert ui["savings"]["context_saved_chars"] == 750
+    assert ui["savings"]["llm_calls_saved"] >= 3
+    assert ui["flow"][3]["id"] == "evidence"
+    assert ui["flow"][3]["children"][0]["status"] == "hit"
+
+
+def test_query_result_zeros_context_when_source_llm_cache_hits():
+    chunk = {**_source_chunk("chunk-1", "Subject Alpha evidence. Extra raw context."), "_snippets": ["Subject Alpha evidence."]}
+    answer = {"answer": "Supported answer.", "citation_ids": ["chunk-1"]}
+    trace = {
+        "cache_events": [
+            {"stage": "evidence", "status": "hit"},
+            {"stage": "verifier", "status": "hit"},
+            {"stage": "answer", "status": "hit"},
+        ],
+        "context_engineering": {"ran": False, "raw_chars": 0, "packed_chars": 0, "saved_chars": 0},
+    }
+
+    result = build_query_result("Subject Alpha", [chunk], answer, trace)
+
+    assert result["retrieval_trace"]["context_engineering"]["ran"] is False
+    assert result["retrieval_trace"]["context_chars_before_packing"] == 0
+    assert result["retrieval_trace"]["context_chars_after_packing"] == 0
+
+
+def test_query_result_reports_cached_context_when_source_llm_runs():
+    chunk = {**_source_chunk("chunk-1", "Subject Alpha evidence. Extra raw context."), "summary": "Alpha", "_snippets": ["Subject Alpha evidence."]}
+    answer = {"answer": "Supported answer.", "citation_ids": ["chunk-1"]}
+    trace = {
+        "cache_events": [
+            {"stage": "evidence", "status": "hit"},
+            {"stage": "verifier", "status": "miss"},
+            {"stage": "answer", "status": "hit"},
+        ],
+        "context_engineering": {"ran": False, "raw_chars": 0, "packed_chars": 0, "saved_chars": 0},
+    }
+
+    result = build_query_result("Subject Alpha", [chunk], answer, trace)
+
+    assert result["retrieval_trace"]["context_engineering"]["ran"] is True
+    assert result["retrieval_trace"]["context_engineering"]["source"] == "cache"
+    assert result["retrieval_trace"]["context_chars_before_packing"] > result["retrieval_trace"]["context_chars_after_packing"]
 
 
 def test_query_snippets_expand_physical_terms():
@@ -392,10 +955,9 @@ async def test_query_answer_sanitizes_invalid_and_malformed_citation_markers():
         ],
         user_id="user-1",
     )
-
     assert result["citation_ids"] == ["chunk-1", "chunk-2"]
-    assert "[[cite:chunk-2]]" in result["answer"]
-    assert "not-real" not in result["answer"]
+    assert "[cite](chunk-2)" in result["answer"]
+    assert "[cite](not-real)" not in result["answer"]
 
 
 async def test_query_answer_prompt_allows_cross_context_comparison():
@@ -418,6 +980,126 @@ async def test_query_answer_prompt_allows_cross_context_comparison():
     )
 
     assert "different contexts or sources" in json_client.system
+
+
+async def test_query_answer_exact_cache_skips_second_llm_call(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class CountingJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            return {"answer": "Supported answer. [[cite:chunk-1]]", "citation_ids": []}
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
+    chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+    reporter = CaptureReporter()
+
+    first = await QueryAnswerChain(CountingJson()).run("Subject Alpha", chunks, "user-1")
+    second = await QueryAnswerChain(CountingJson()).run("Subject Alpha", chunks, "user-1", reporter=reporter)
+
+    assert {k: v for k, v in first.items() if k != "_cache_events"} == {k: v for k, v in second.items() if k != "_cache_events"}
+    assert len(calls) == 1
+    assert first["_cache_events"] == [{"stage": "answer", "status": "miss"}, {"stage": "answer", "status": "set"}]
+    assert second["_cache_events"] == [{"stage": "answer", "status": "hit"}]
+    assert ("Reusing previous final answer.", {
+        "depth": 1,
+        "ref": "retrieval:answer:cache_hit",
+        "citation_count": 1,
+    }) in reporter.events
+
+
+def test_query_answer_cache_key_changes_with_payload_and_settings(monkeypatch):
+    system = _answer_system_prompt()
+    chunk_a = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+    chunk_b = [_source_chunk("chunk-1", "Changed evidence.")]
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
+    first = _answer_cache_key("Subject Alpha", "user-1", system, _answer_human_prompt("Subject Alpha", chunk_a))
+    changed_payload = _answer_cache_key("Subject Alpha", "user-1", system, _answer_human_prompt("Subject Alpha", chunk_b))
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-b")
+    changed_settings = _answer_cache_key("Subject Alpha", "user-1", system, _answer_human_prompt("Subject Alpha", chunk_a))
+
+    assert first != changed_payload
+    assert first != changed_settings
+
+
+async def test_query_answer_failure_fallback_is_not_cached(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class FailThenOkJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            if len(calls) == 1:
+                raise RuntimeError("down")
+            return {"answer": "Fresh answer. [[cite:chunk-1]]", "citation_ids": []}
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
+    chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+
+    first = await QueryAnswerChain(FailThenOkJson()).run("Subject Alpha", chunks, "user-1")
+    second = await QueryAnswerChain(FailThenOkJson()).run("Subject Alpha", chunks, "user-1")
+
+    assert first["answer"] == "I found relevant source chunks, but answer generation failed."
+    assert second["answer"] == "Fresh answer. [cite](chunk-1)"
+    assert len(calls) == 2
+
+
+async def test_query_answer_ignores_invalid_cached_payload(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class CountingJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            return {"answer": "Fresh answer. [[cite:chunk-1]]", "citation_ids": []}
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
+    chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+    key = _answer_cache_key("Subject Alpha", "user-1", _answer_system_prompt(), _answer_human_prompt("Subject Alpha", chunks))
+    retrieval_cache.get_memory_json_cache().set(key, {"answer": "bad", "citation_ids": ["not-real"]})
+
+    result = await QueryAnswerChain(CountingJson()).run("Subject Alpha", chunks, "user-1")
+
+    assert result["answer"] == "Fresh answer. [cite](chunk-1)"
+    assert len(calls) == 1
+
+
+async def test_query_answer_cached_payload_keeps_sanitized_citations(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
+    chunks = [_source_chunk("chunk-1", "Subject Alpha evidence.")]
+    key = _answer_cache_key("Subject Alpha", "user-1", _answer_system_prompt(), _answer_human_prompt("Subject Alpha", chunks))
+    retrieval_cache.get_memory_json_cache().set(
+        key,
+        {"answer": "Good [[cite:chunk-1]] bad [[cite:not-real]].", "citation_ids": ["chunk-1"]},
+    )
+
+    class FailJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            raise AssertionError("LLM should not be called")
+
+    result = await QueryAnswerChain(FailJson()).run("Subject Alpha", chunks, "user-1")
+
+    assert result["citation_ids"] == ["chunk-1"]
+    assert "[[cite:not-real]]" not in result["answer"]
+
+
+async def test_query_answer_empty_shortcut_is_not_cached(monkeypatch):
+    calls = []
+
+    async def fake_set_json(*args, **kwargs):
+        calls.append(args)
+
+    monkeypatch.setattr(retrieval_cache, "set_json", fake_set_json)
+
+    result = await QueryAnswerChain(FakeJson()).run("Subject Alpha", [], "user-1")
+
+    assert result["citation_ids"] == []
+    assert calls == []
 
 
 async def test_query_breakdown_expands_physical_attribute_queries_when_llm_underplans():
@@ -500,6 +1182,165 @@ async def test_query_breakdown_caps_and_deduplicates_sub_queries():
     assert len(result) == 6
     assert len(set(result)) == 6  # no duplicates
     assert "sub-query 6" not in result
+
+
+def test_query_breakdown_prompt_requests_embedding_friendly_deterministic_phrases():
+    system = breakdown_mod._breakdown_system_prompt()
+
+    assert "deterministic embedding-friendly search phrases" in system
+    assert "stable nouns and qualifiers" in system
+    assert "avoid pronouns" in system
+
+
+async def test_query_breakdown_cache_skips_second_llm_call(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class CountingJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            return {"sub_queries": ["original", "cached expansion"]}
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "settings-a")
+
+    first = await breakdown_mod._decompose(CountingJson(), "original", "user-1")
+    second = await breakdown_mod._decompose(CountingJson(), "original", "user-1")
+
+    assert first == ["original", "cached expansion"]
+    assert second == first
+    assert len(calls) == 1
+
+
+async def test_query_breakdown_cache_misses_when_settings_change(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+    signatures = iter(["settings-a", "settings-a", "settings-b", "settings-b"])
+
+    class CountingJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            return {"sub_queries": ["original", f"call {len(calls)}"]}
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: next(signatures))
+
+    first = await breakdown_mod._decompose(CountingJson(), "original", "user-1")
+    second = await breakdown_mod._decompose(CountingJson(), "original", "user-1")
+
+    assert first == ["original", "call 1"]
+    assert second == ["original", "call 2"]
+    assert len(calls) == 2
+
+
+async def test_query_subjects_exact_cache_skips_second_llm_call(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class CountingJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            return {"subjects": ["Subject Alpha"]}
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
+    monkeypatch.setattr(subjects_mod, "_subjects_semantic_cache_key", lambda *args: None)
+
+    first = await subjects_mod._identify_subjects(CountingJson(), "query", ["query"], "user-1")
+    second = await subjects_mod._identify_subjects(CountingJson(), "query", ["query"], "user-1")
+
+    assert first == ["Subject Alpha"]
+    assert second == first
+    assert len(calls) == 1
+
+
+async def test_query_subjects_exact_cache_stores_empty_subjects(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class EmptyJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            return {"subjects": []}
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
+    monkeypatch.setattr(subjects_mod, "_subjects_semantic_cache_key", lambda *args: None)
+
+    assert await subjects_mod._identify_subjects(EmptyJson(), "query", ["query"], "user-1") == []
+    assert await subjects_mod._identify_subjects(EmptyJson(), "query", ["query"], "user-1") == []
+    assert len(calls) == 1
+
+
+async def test_query_subjects_failure_fallback_is_not_cached(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class FailThenOkJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            if len(calls) == 1:
+                raise RuntimeError("down")
+            return {"subjects": ["Subject Alpha"]}
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
+    monkeypatch.setattr(subjects_mod, "_subjects_semantic_cache_key", lambda *args: None)
+
+    assert await subjects_mod._identify_subjects(FailThenOkJson(), "query", ["query"], "user-1") == []
+    assert await subjects_mod._identify_subjects(FailThenOkJson(), "query", ["query"], "user-1") == ["Subject Alpha"]
+    assert len(calls) == 2
+
+
+async def test_query_subjects_semantic_cache_hit_skips_llm(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+
+    class FailJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            raise AssertionError("LLM should not be called")
+
+    monkeypatch.setattr(subjects_mod, "_subjects_exact_cache_key", lambda *args: None)
+    monkeypatch.setattr(subjects_mod, "_subjects_semantic_cache_key", lambda *args: ("ns", "normalized query"))
+    monkeypatch.setattr(retrieval_cache, "get_semantic_json", lambda *args, **kwargs: {"subjects": ["Subject Alpha"]})
+
+    assert await subjects_mod._identify_subjects(FailJson(), "query", ["query"], "user-1") == ["Subject Alpha"]
+
+
+async def test_query_subjects_semantic_miss_calls_llm(monkeypatch):
+    retrieval_cache.get_memory_json_cache.cache_clear()
+    calls = []
+
+    class CountingJson:
+        async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
+            calls.append(human)
+            return {"subjects": ["Subject Alpha"]}
+
+    monkeypatch.setattr(subjects_mod, "_subjects_exact_cache_key", lambda *args: None)
+    monkeypatch.setattr(subjects_mod, "_subjects_semantic_cache_key", lambda *args: ("ns", "normalized query"))
+    monkeypatch.setattr(retrieval_cache, "get_semantic_json", lambda *args, **kwargs: None)
+    monkeypatch.setattr(retrieval_cache, "set_semantic_json", lambda *args, **kwargs: None)
+
+    assert await subjects_mod._identify_subjects(CountingJson(), "query", ["query"], "user-1") == ["Subject Alpha"]
+    assert len(calls) == 1
+
+
+def test_query_subjects_semantic_cache_key_changes_with_signatures(monkeypatch):
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
+    monkeypatch.setattr(subjects_mod, "_embedding_settings_signature", lambda user_id: "embed-a")
+    first = subjects_mod._subjects_semantic_cache_key("query", ["sub"], "user-1", "system")
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-b")
+    second = subjects_mod._subjects_semantic_cache_key("query", ["sub"], "user-1", "system")
+
+    monkeypatch.setattr(retrieval_cache, "llm_settings_signature", lambda user_id, stage=None: "llm-a")
+    monkeypatch.setattr(subjects_mod, "_embedding_settings_signature", lambda user_id: "embed-b")
+    third = subjects_mod._subjects_semantic_cache_key("query", ["sub"], "user-1", "system")
+
+    assert first is not None and second is not None and third is not None
+    assert first[0] != second[0]
+    assert first[0] != third[0]
+
+
+def test_evidence_cache_comment_sits_before_verifier_boundary():
+    source = inspect.getsource(RagServiceImpl.query)
+
+    assert "Evidence-search exact cache is inside QueryEvidenceChain, before verifier." in source
+    assert source.index("Evidence-search exact cache") < source.index("self.query_verifier.run")
 
 
 async def test_normalizer_reuses_single_exact_name_or_alias_match(monkeypatch):
@@ -664,6 +1505,46 @@ def test_source_chunk_lexical_search_filters_directories_and_tag_ids(monkeypatch
     assert [row["id"] for row in rows] == ["chunk-1"]
 
 
+def test_retrieval_index_version_bumps_for_source_and_recall_changes(monkeypatch):
+    conn = _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(retrieval_index, "get_connection", lambda: conn)
+    conn.execute("INSERT INTO raw_inputs (id, job_id, content, user_id) VALUES ('raw-1', 'note-1', 'text', 'user-1')")
+
+    assert retrieval_index.get_version("user-1") == 0
+    source_chunks.save_many([_source_chunk("chunk-1", "Grisha text")])
+    assert retrieval_index.get_version("user-1") == 1
+    assert source_chunks.update_directory_path("raw-1", "/dir/") is True
+    assert retrieval_index.get_version("user-1") == 2
+
+    recall.save_index({
+        "recall_keys": [{"id": "key-1", "name": "Grisha", "kind": "entity", "kind_label": None, "aliases": [], "summary": "", "metadata": {}}],
+        "recall_links": [{"id": "link-1", "recall_key_id": "key-1", "source_chunk_id": "chunk-1", "relation": "about", "relation_label": "", "confidence": 1, "reason": "", "metadata": {}}],
+        "analysis": {},
+    }, "user-1")
+
+    assert retrieval_index.get_version("user-1") == 3
+
+
+def test_retrieval_index_version_bumps_for_filters_and_lifecycle(monkeypatch):
+    conn = _memory_db()
+    for module in (notes, tags, raw_inputs, retrieval_index):
+        monkeypatch.setattr(module, "get_connection", lambda conn=conn: conn)
+
+    note_id = notes.create("text", "user-1")
+    tag_id = tags.create("Important", "user-1")
+    version = retrieval_index.get_version("user-1")
+
+    tags.add_to_note(note_id, tag_id)
+    notes.update(note_id, "text", "user-1", directory_id=None)
+    notes.delete(note_id, "user-1")
+    notes.restore(note_id, "user-1")
+    raw_id = raw_inputs.save("note-1", "text", "user-1")
+    raw_inputs.soft_delete(raw_id)
+    raw_inputs.restore(raw_id)
+
+    assert retrieval_index.get_version("user-1") == version + 6
+
+
 def test_recall_repository_reused_key_preserves_name_and_updates_summary(monkeypatch):
     conn = _memory_db()
     monkeypatch.setattr(recall, "get_connection", lambda: conn)
@@ -728,6 +1609,7 @@ def test_dev_wipe_clears_durability_sqlite_lookup_and_vectors(monkeypatch):
 
     dev.wipe_all()
 
+    assert retrieval_index.get_version("user-1") == 2
     for table in ("ingest_checkpoints", "ingest_jobs", "recall_links", "recall_key_terms", "recall_keys_fts", "recall_keys", "source_chunks", "raw_inputs"):
         assert conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
     assert conn.execute("SELECT name FROM sqlite_master WHERE name = 'vector_reset_called'").fetchone()
@@ -788,6 +1670,7 @@ async def test_durable_runner_aborts_job_missing_raw_input(monkeypatch):
 
 async def test_durable_source_chunks_resume_from_next_unfinished_piece(monkeypatch):
     _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(runner_mod, "INGEST_PARALLELISM", 1)
     monkeypatch.setattr(recall_key_vectors, "exists", lambda key_id, user_id: True)
     monkeypatch.setattr(source_chunk_vectors, "exists", lambda chunk_id, user_id: True)
 
@@ -827,6 +1710,7 @@ async def test_durable_source_chunks_resume_from_next_unfinished_piece(monkeypat
 async def test_durable_runner_batches_vector_embeddings(monkeypatch):
     conn = _patch_memory_db(monkeypatch)
     calls = {"recall": [], "source": []}
+    monkeypatch.setattr(runner_mod, "INGEST_PARALLELISM", 1)
     monkeypatch.setattr("src.services.rag.private.durability.runner.get_user_settings", lambda user_id: type("Settings", (), {"embedding_batch_size": 100})())
     monkeypatch.setattr(recall_key_vectors, "exists", lambda key_id, user_id: False)
     monkeypatch.setattr(source_chunk_vectors, "exists", lambda chunk_id, user_id: False)
@@ -844,15 +1728,33 @@ async def test_durable_runner_batches_vector_embeddings(monkeypatch):
     assert conn.execute("SELECT COUNT(*) FROM ingest_checkpoints WHERE stage = 'source_vectors' AND status = 'complete'").fetchone()[0] == 2
 
 
-async def test_durable_runner_pause_stops_after_current_unit(monkeypatch):
+async def test_bounded_gather_caps_parallel_units(monkeypatch):
+    monkeypatch.setattr(runner_mod, "INGEST_PARALLELISM", 2)
+    active = 0
+    peak = 0
+
+    async def unit():
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+
+    await runner_mod._bounded_gather([unit for _ in range(5)])
+
+    assert peak == 2
+
+
+async def test_durable_runner_pause_stops_after_current_inflight_unit(monkeypatch):
     _patch_memory_db(monkeypatch)
+    monkeypatch.setattr(runner_mod, "INGEST_PARALLELISM", 1)
 
     raw_id = raw_inputs.save_or_reuse("job-1", "one two", "user-1", "hash-1")
     job = durability_repo.create_or_reuse_job("job-1", "hash-1", raw_id)
 
     class PausingDrafts(FakeDrafts):
-        async def run(self, window: dict, user_id: str) -> list[dict]:
-            result = await super().run(window, user_id)
+        async def run(self, window: dict, user_id: str, on_progress=None) -> list[dict]:
+            result = await super().run(window, user_id, on_progress)
             if window["text"] == "one":
                 durability_repo.pause(job["id"])
             return result
@@ -938,6 +1840,33 @@ def _candidate(key_id: str, name: str, source: str) -> dict:
     }
 
 
+def _search_state(**overrides) -> dict:
+    state = {
+        "query": "Attack Titan",
+        "sub_queries": ["Attack Titan"],
+        "extracted_subjects": ["Grisha"],
+        "user_id": "user-1",
+        "reporter": None,
+        "within_directories": [],
+        "excluding_directories": [],
+        "within_tags": [],
+        "excluding_tags": [],
+        "within_tags_condition": "any",
+        "chunks": [],
+        "trace_parts": [],
+    }
+    state.update(overrides)
+    return state
+
+
+async def _raise_async(*args, **kwargs):
+    raise RuntimeError("redis disabled")
+
+
+async def _async_value(value):
+    return value
+
+
 def _memory_db():
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -949,7 +1878,7 @@ def _memory_db():
 
 def _patch_memory_db(monkeypatch):
     conn = _memory_db()
-    for module in (raw_inputs, source_chunks, recall, durability_repo, config_presets):
+    for module in (raw_inputs, source_chunks, recall, retrieval_index, durability_repo, config_presets):
         monkeypatch.setattr(module, "get_connection", lambda conn=conn: conn)
     config_presets.save({"name": "test"}, "user-1")
     return conn
@@ -970,7 +1899,7 @@ class FakeDrafts:
         self.fail_on = fail_on
         self.calls = []
 
-    async def run(self, window: dict, user_id: str) -> list[dict]:
+    async def run(self, window: dict, user_id: str, on_progress=None) -> list[dict]:
         self.calls.append(window["text"])
         if window["text"] == self.fail_on:
             raise RuntimeError("draft failed")

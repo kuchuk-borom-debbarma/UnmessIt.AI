@@ -19,26 +19,22 @@ export function NoteDetailView({ token }: { token: string }) {
   const [isEditing, setIsEditing] = useState(false)
   const [editText, setEditText] = useState('')
 
-  const [expandLevel, setExpandLevel] = useState(0)
-  const contentRef = useRef<HTMLDivElement>(null)
-  const [isOverflowing, setIsOverflowing] = useState(false)
+  const [isExpanded, setIsExpanded] = useState(false)
+  const innerRef = useRef<HTMLDivElement>(null)
+  const [canExpand, setCanExpand] = useState(false)
   
   useEffect(() => {
-    if (!contentRef.current) return
+    if (!innerRef.current) return
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        // Also check if it's overflowing right now
-        setIsOverflowing(entry.target.scrollHeight > entry.target.clientHeight)
+        setCanExpand(entry.target.clientHeight > 400)
       }
     })
-    observer.observe(contentRef.current)
-    setIsOverflowing(contentRef.current.scrollHeight > contentRef.current.clientHeight)
+    observer.observe(innerRef.current)
+    setCanExpand(innerRef.current.clientHeight > 400)
     
     return () => observer.disconnect()
   }, [note, isEditing])
-
-  const CHUNK_HEIGHT = 400
-  const currentMaxHeight = (expandLevel + 1) * CHUNK_HEIGHT
 
   const [editTagsVal, setEditTagsVal] = useState('')
 
@@ -71,7 +67,7 @@ export function NoteDetailView({ token }: { token: string }) {
 
   useEffect(() => {
     if (note && hasCitationTarget) {
-      setExpandLevel((level) => Math.max(level, 1))
+      setIsExpanded(true)
       setTimeout(() => {
         const el = document.getElementById('citation-highlight')
         if (el) {
@@ -82,13 +78,6 @@ export function NoteDetailView({ token }: { token: string }) {
       }, 100)
     }
   }, [note, hasCitationTarget, highlightStart, highlightEnd])
-
-  const handleExpand = () => {
-    setExpandLevel(prev => prev + 1)
-    window.setTimeout(() => {
-      window.scrollBy({ top: Math.min(300, window.innerHeight * 0.3), behavior: 'smooth' })
-    }, 120)
-  }
 
   const renderNoteText = () => {
     if (!note) return null
@@ -316,37 +305,36 @@ export function NoteDetailView({ token }: { token: string }) {
           ) : (
             <div className="bg-card/40 backdrop-blur-sm border border-border/50 rounded-xl shadow-sm overflow-hidden flex flex-col">
               <div 
-                ref={contentRef}
-                className={`relative w-full ${hasCitationTarget ? 'overflow-y-auto custom-scrollbar' : 'overflow-hidden'}`}
+                className={`relative w-full overflow-hidden`}
                 style={{ 
-                  maxHeight: hasCitationTarget ? `min(72vh, ${Math.max(currentMaxHeight, 760)}px)` : currentMaxHeight,
-                  transition: 'max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1)',
-                  willChange: 'max-height'
+                  maxHeight: (hasCitationTarget || isExpanded) ? 'none' : 400,
                 }}
               >
-                <div className="p-6 overflow-x-auto">
+                <div ref={innerRef} className="p-6 overflow-x-auto">
                   {renderNoteText()}
                 </div>
-                {isOverflowing && (
+                {(canExpand && !isExpanded && !hasCitationTarget) && (
                   <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-card to-transparent pointer-events-none" />
                 )}
               </div>
               
-              {(isOverflowing || expandLevel > 0) && (
+              {(canExpand && !hasCitationTarget) && (
                 <div className="flex items-center justify-center gap-4 py-3 bg-card/80 backdrop-blur-md border-t border-border/50">
-                  {expandLevel > 0 && (
+                  {isExpanded ? (
                     <button 
                       className="flex items-center justify-center w-10 h-10 rounded-full bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/20 hover:text-foreground transition-all"
-                      onClick={() => setExpandLevel(0)}
+                      onClick={() => {
+                        setIsExpanded(false)
+                        window.scrollTo({ top: 0, behavior: 'smooth' })
+                      }}
                       title="Shrink"
                     >
                       <ChevronUp size={20} />
                     </button>
-                  )}
-                  {isOverflowing && (
+                  ) : (
                     <button 
                       className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-500/10 text-primary-500 hover:bg-primary-500 hover:text-white transition-all shadow-[0_0_15px_rgba(var(--primary-500),0.1)]"
-                      onClick={handleExpand}
+                      onClick={() => setIsExpanded(true)}
                       title="Expand"
                     >
                       <ChevronDown size={20} />

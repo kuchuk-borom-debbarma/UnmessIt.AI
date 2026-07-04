@@ -168,6 +168,13 @@ CREATE INDEX IF NOT EXISTS idx_recall_links_source_chunk ON recall_links(source_
 CREATE INDEX IF NOT EXISTS idx_recall_links_created_at ON recall_links(created_at);
 CREATE INDEX IF NOT EXISTS idx_recall_links_event_time ON recall_links(event_time);
 
+CREATE TABLE IF NOT EXISTS user_retrieval_index_versions (
+    user_id TEXT PRIMARY KEY,
+    version INTEGER NOT NULL DEFAULT 0,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 -- ==============================================================
 -- UNMESSIT AI: Notes and Organization Schema
 -- ==============================================================
@@ -258,6 +265,53 @@ CREATE TABLE IF NOT EXISTS user_config_presets (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_presets_active ON user_config_presets(user_id) WHERE is_active = 1;
+
+CREATE TABLE IF NOT EXISTS user_llm_configs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    llm_provider TEXT NOT NULL DEFAULT 'openai',
+    llm_model TEXT NOT NULL DEFAULT 'gpt-4o',
+    llm_base_url TEXT,
+    llm_api_key TEXT,
+    llm_temperature REAL NOT NULL DEFAULT 0,
+    llm_max_retries INTEGER NOT NULL DEFAULT 2,
+    llm_max_tokens INTEGER,
+    llm_rate_limit_per_minute INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_user_llm_configs_user ON user_llm_configs(user_id);
+
+CREATE TABLE IF NOT EXISTS user_embedding_configs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    embedding_provider TEXT NOT NULL DEFAULT 'openai',
+    embedding_model TEXT NOT NULL DEFAULT 'text-embedding-3-small',
+    embedding_base_url TEXT,
+    embedding_api_key TEXT,
+    embedding_rate_limit_per_minute INTEGER NOT NULL DEFAULT 0,
+    embedding_batch_size INTEGER NOT NULL DEFAULT 100,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_user_embedding_configs_user ON user_embedding_configs(user_id);
+
+CREATE TABLE IF NOT EXISTS user_stage_config (
+    user_id TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('llm', 'embedding')),
+    enabled INTEGER NOT NULL DEFAULT 0,
+    config_ids JSON NOT NULL DEFAULT '[]',
+    active_config_id TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(user_id, stage),
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+);
 
 CREATE TABLE IF NOT EXISTS user_processing_settings (
     user_id TEXT PRIMARY KEY,

@@ -4,6 +4,7 @@ import json
 import logging
 from typing import Any, Callable, Awaitable
 
+from src.infra import retrieval_cache
 from src.services.rag.models import SourceChunk
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,29 @@ class RecallDraftChain:
             len(candidates),
             bool(errors),
         )
+        
+        payload = _chunk_payload(source_chunks)
+        llm_signature = retrieval_cache.llm_settings_signature(user_id, "ingest.recall_draft")
+        cache_key = retrieval_cache.cache_key(
+            "ingest_recall_draft:v1",
+            llm_signature,
+            payload,
+            candidates[:12],
+            errors,
+        ) if llm_signature else None
+
+        if cache_key:
+            cached = await retrieval_cache.get_json(cache_key)
+            if cached is not None:
+                logger.info(
+                    "recall_draft_cache_hit chunks=%s candidates=%s retry=%s",
+                    len(source_chunks),
+                    len(candidates),
+                    bool(errors),
+                )
+                if on_progress: await on_progress("reusing cached recall draft")
+                return cached
+                
         if on_progress: await on_progress(f"invoking LLM for {len(source_chunks)} chunk(s) & {len(candidates)} candidate(s)")
         data = await self.json_client.async_invoke_json(
             (
@@ -68,10 +92,20 @@ class RecallDraftChain:
                 "Allowed relation: mentions, about, updates, contradicts, supports, other.\n"
                 "\n"
                 f"EXISTING_CANDIDATES:\n{json.dumps(candidates[:12], ensure_ascii=False)}\n\n"
-                f"SOURCE_CHUNKS:\n{json.dumps(_chunk_payload(source_chunks), ensure_ascii=False)}"
+                f"SOURCE_CHUNKS:\n{json.dumps(payload, ensure_ascii=False)}"
             ),
             user_id=user_id,
+            stage="ingest.recall_draft",
         )
+        if cache_key and isinstance(data, dict):
+            await retrieval_cache.set_json(cache_key, data)
+            logger.info(
+                "recall_draft_cache_set chunks=%s candidates=%s retry=%s",
+                len(source_chunks),
+                len(candidates),
+                bool(errors),
+            )
+            if on_progress: await on_progress("cached recall draft")
         if not isinstance(data, dict):
             logger.info("recall_draft_response invalid_type=%s", type(data).__name__)
             return {}

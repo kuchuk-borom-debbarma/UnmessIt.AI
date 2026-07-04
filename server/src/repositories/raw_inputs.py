@@ -3,6 +3,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from src.infra.sqlite import get_connection
+from src.repositories import retrieval_index
 
 
 def save(job_id: str, content: str, user_id: str, content_hash: str | None = None) -> str:
@@ -93,21 +94,30 @@ def list_trash() -> list[dict]:
 def soft_delete(input_id: str) -> None:
     """Move a raw input to the trash."""
     conn = get_connection()
-    conn.execute("UPDATE raw_inputs SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?", (input_id,))
+    row = conn.execute("SELECT user_id FROM raw_inputs WHERE id = ?", (input_id,)).fetchone()
+    cursor = conn.execute("UPDATE raw_inputs SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?", (input_id,))
+    if cursor.rowcount > 0:
+        retrieval_index.bump(row["user_id"] if row else None, conn)
     conn.commit()
 
 
 def restore(input_id: str) -> None:
     """Restore a raw input from the trash."""
     conn = get_connection()
-    conn.execute("UPDATE raw_inputs SET deleted_at = NULL WHERE id = ?", (input_id,))
+    row = conn.execute("SELECT user_id FROM raw_inputs WHERE id = ?", (input_id,)).fetchone()
+    cursor = conn.execute("UPDATE raw_inputs SET deleted_at = NULL WHERE id = ?", (input_id,))
+    if cursor.rowcount > 0:
+        retrieval_index.bump(row["user_id"] if row else None, conn)
     conn.commit()
 
 
 def hard_delete(input_id: str) -> None:
     """Permanently delete a raw input and cascade to chunks/links."""
     conn = get_connection()
-    conn.execute("DELETE FROM raw_inputs WHERE id = ?", (input_id,))
+    row = conn.execute("SELECT user_id FROM raw_inputs WHERE id = ?", (input_id,)).fetchone()
+    cursor = conn.execute("DELETE FROM raw_inputs WHERE id = ?", (input_id,))
+    if cursor.rowcount > 0:
+        retrieval_index.bump(row["user_id"] if row else None, conn)
     conn.commit()
 
 
