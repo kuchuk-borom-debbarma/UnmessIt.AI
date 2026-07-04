@@ -189,6 +189,27 @@ export function SettingsView({ token }: { token: string }) {
     }
   }
 
+  const pingConfig = async () => {
+    if (!splitModalOpen) return
+    setToast(null)
+    const editing = splitEditing?.id
+    const payload = splitModalOpen === 'llm' ? llmPayload(llmDraft) : embeddingPayload(embeddingDraft)
+    try {
+      await api('/api/v1/configs/test', {
+        method: 'POST',
+        token,
+        body: JSON.stringify({
+          kind: splitModalOpen,
+          config: payload,
+          config_id: editing || undefined,
+        }),
+      })
+      setToast({ tone: 'success', message: 'API ping successful!' })
+    } catch (err) {
+      setToast({ tone: 'danger', message: err instanceof Error ? err.message : 'API ping failed' })
+    }
+  }
+
   const deleteSplitConfig = async (kind: SplitKind, id: string) => {
     if (!confirm(`Delete ${kind} config?`)) return
     try {
@@ -404,6 +425,7 @@ export function SettingsView({ token }: { token: string }) {
             onEmbeddingChange={setEmbeddingDraft}
             onClose={() => setSplitModalOpen(null)}
             onSave={saveSplitConfig}
+            onPing={pingConfig}
           />
         )}
       </AnimatePresence>
@@ -552,6 +574,7 @@ function SplitConfigModal({
   onEmbeddingChange,
   onClose,
   onSave,
+  onPing,
 }: {
   kind: SplitKind
   editing: boolean
@@ -561,6 +584,7 @@ function SplitConfigModal({
   onEmbeddingChange: (draft: EmbeddingDraft) => void
   onClose: () => void
   onSave: () => void
+  onPing: () => void
 }) {
   const isLlm = kind === 'llm'
   return (
@@ -611,6 +635,7 @@ function SplitConfigModal({
 
         <div className="mt-8 flex justify-end gap-3 border-t border-border/60 pt-5">
           <button className="premium-btn premium-btn-secondary h-11 px-5" onClick={onClose}>Cancel</button>
+          <button className="premium-btn premium-btn-secondary h-11 px-5" onClick={onPing}>Ping API</button>
           <button className="premium-btn premium-btn-primary h-11 gap-2 px-5" onClick={onSave}>
             <Save size={17} /> Save Config
           </button>

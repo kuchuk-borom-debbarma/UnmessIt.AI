@@ -38,7 +38,7 @@ function GlobalConnectionBanner() {
   if (!isOffline) return null
 
   return (
-    <div className="bg-red-500 text-white px-4 py-2 shadow-lg font-space">
+    <div className="bg-red-500 text-white px-4 py-2 shadow-lg font-space pointer-events-auto">
       <div className="flex items-center justify-center gap-3">
         <ServerOff size={18} />
         <span className="font-bold tracking-tight">Server Disconnected</span>
@@ -54,7 +54,7 @@ function GlobalWarningBanner() {
   if (loading || hasActivePreset !== false) return null
   
   return (
-    <div className="bg-accent-500/10 border-b border-accent-500/20 px-4 py-2 flex items-center justify-between backdrop-blur-xl">
+    <div className="bg-accent-500/10 border-b border-accent-500/20 px-4 py-2 flex items-center justify-between backdrop-blur-xl pointer-events-auto">
       <div className="flex items-center gap-4">
         <div className="w-8 h-8 rounded-lg bg-accent-500/10 flex items-center justify-center text-accent-500 border border-accent-500/20">
           <AlertTriangle size={18} />
@@ -75,7 +75,7 @@ function GlobalUpdateBanner({ updateAvailable, versionInfo }: { updateAvailable:
   if (!updateAvailable || !versionInfo) return null
 
   return (
-    <div className="bg-primary-500/10 border-b border-primary-500/20 px-4 py-2 flex items-center justify-between backdrop-blur-xl">
+    <div className="bg-primary-500/10 border-b border-primary-500/20 px-4 py-2 flex items-center justify-between backdrop-blur-xl pointer-events-auto">
       <div className="flex items-center gap-4">
         <div className="w-8 h-8 rounded-lg bg-primary-500/10 flex items-center justify-center text-primary-500 border border-primary-500/20">
           <RefreshCw size={18} />
@@ -113,8 +113,8 @@ export function AppShell({ token, onLogout }: { token: string | null; onLogout: 
   return (
     <ConfigProvider token={token}>
       {token && (
-        <div className="fixed top-0 inset-x-0 z-[60]">
-          <div className="mx-auto flex max-w-[1600px] items-center justify-between px-4 py-3 md:px-8">
+        <div className="fixed top-0 inset-x-0 z-[60] pointer-events-none">
+          <div className="mx-auto flex max-w-[1600px] items-center justify-between px-4 py-3 md:px-8 pointer-events-auto">
             <div className="liquid-glass flex min-w-0 items-center gap-3 rounded-lg px-3 py-2">
               <UserCircle size={20} className="shrink-0 text-primary-400" />
               <div className="min-w-0">
