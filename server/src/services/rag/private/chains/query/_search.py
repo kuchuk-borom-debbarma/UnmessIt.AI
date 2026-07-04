@@ -12,6 +12,7 @@ from src.infra.settings import get_user_embedding_settings
 from src.repositories import recall, recall_key_vectors, retrieval_index, source_chunk_vectors, source_chunks
 
 from ._state import QueryState
+from ._sub_query_verifier import SemanticSubQueryVerifierChain
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +21,8 @@ MAX_SNIPPETS_PER_CHUNK = 3
 MAX_SNIPPET_CHARS = 420
 _CONTEXT_CHARS_PER_PASS = 6000
 _EVIDENCE_CACHE_VERSION = "evidence-search-v1"
-_SEMANTIC_EVIDENCE_CACHE_VERSION = "evidence-semantic-candidates-v1"
-_SEMANTIC_EVIDENCE_THRESHOLD = 0.98
+_SEMANTIC_EVIDENCE_CACHE_VERSION = "evidence-semantic-candidates-v2"
+_SEMANTIC_EVIDENCE_THRESHOLD = 0.95
 _CONTEXT_COMPACTOR_CACHE_VERSION = "context-engineering-llm:v1"
 _LLM_CONTEXT_MIN_RAW_CHARS = 9000
 _LLM_CONTEXT_MAX_PACKED_CHARS = 4500
@@ -294,6 +295,44 @@ async def _evidence_for(
     parent_ref: str = "retrieval:search",
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Run all three search paths for one sub-query concurrently where possible."""
+    # 1. Check Sub-Query Semantic Cache First!
+    semantic_chunks, semantic_trace, semantic_events = await _semantic_evidence_candidates(
+        sub_query,
+        extracted_subjects,
+        user_id,
+        index_version,
+        embedding_signature,
+        filters_signature,
+        json_client,
+        reporter,
+        parent_ref,
+    )
+    if semantic_events and semantic_events[0]["status"] == "hit":
+        trace_part = {
+            "sub_query": sub_query,
+            "extracted_subjects": extracted_subjects,
+            **semantic_trace,
+            "vector_source_chunk_ids": [],
+            "lexical_source_chunk_count": 0,
+            "recall_key_count": 0,
+            "recall_keys": [],
+            "linked_source_chunk_count": 0,
+            "source_chunk_count": len(semantic_chunks),
+            "baseline_lengths": {},
+            "context_engineering": {
+                "ran": False,
+                "source": "semantic_cache",
+                "raw_chars": 0,
+                "packed_chars": sum(len(str(c.get("summary", ""))) + sum(len(s) for s in c.get("_snippets", [])) for c in semantic_chunks),
+                "saved_chars": 0,
+                "shrink_percent": 0.0,
+                "chunk_count": len(semantic_chunks),
+                "snippet_count": sum(len(c.get("_snippets", [])) for c in semantic_chunks),
+            },
+            "cache_events": semantic_events,
+        }
+        return semantic_chunks, trace_part
+
     # Vector search and lexical search can run in parallel; recall key lookup is cheap.
     async def _vector_path():
         if reporter:
@@ -345,17 +384,8 @@ async def _evidence_for(
             f"Recall expansion returned {len(linked_chunks)} linked chunk(s)",
             {"depth": 3, "ref": f"{parent_ref}:recall:expand:done", "parent_ref": f"{parent_ref}:recall:expand", "sub_query": sub_query, "source_chunk_ids": linked_ids},
         )
-    semantic_chunks, semantic_trace, semantic_events = await _semantic_evidence_candidates(
-        sub_query,
-        extracted_subjects,
-        user_id,
-        index_version,
-        embedding_signature,
-        filters_signature,
-        reporter,
-        parent_ref,
-    )
-    chunks, _ = _rank_chunks(sub_query, [*semantic_chunks, *vector_chunks, *lexical_chunks, *linked_chunks])
+        
+    chunks, _ = _rank_chunks(sub_query, [*vector_chunks, *lexical_chunks, *linked_chunks])
     if reporter:
         await reporter.report(
             f"Ranked {len(chunks)} unique chunk(s) for sub-query",
@@ -365,9 +395,8 @@ async def _evidence_for(
     top_chunks = chunks[:MAX_EVIDENCE_CHUNKS]
     baseline_lengths = {chunk["id"]: len(str(chunk.get("text", ""))) for chunk in top_chunks}
     
-    combined_query = f"{global_query} {sub_query}".strip()
     chunks, pack_trace = await _pack_context(
-        combined_query,
+        sub_query,
         top_chunks,
         user_id=user_id,
         json_client=json_client,
@@ -405,6 +434,7 @@ async def _evidence_for(
         **pack_trace,
         "cache_events": [*semantic_events, *context_cache_events],
     }
+    
     semantic_events.extend(await _set_semantic_evidence_candidates(
         sub_query,
         extracted_subjects,
@@ -412,7 +442,7 @@ async def _evidence_for(
         index_version,
         embedding_signature,
         filters_signature,
-        [chunk["id"] for chunk in top_chunks],
+        chunks,
         bool(semantic_chunks),
         reporter,
         parent_ref,
@@ -427,6 +457,7 @@ async def _semantic_evidence_candidates(
     index_version: int,
     embedding_signature: str,
     filters_signature: dict[str, Any],
+    json_client=None,
     reporter=None,
     parent_ref: str = "retrieval:search",
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
@@ -446,34 +477,37 @@ async def _semantic_evidence_candidates(
         False,
     )
     payload, distance = match if match else (None, None)
-    source_chunk_ids = _valid_semantic_evidence_payload(payload, index_version, embedding_signature, filters_signature)
-    if source_chunk_ids:
-        chunks = await asyncio.to_thread(source_chunks.get_by_ids, source_chunk_ids, user_id)
-        if chunks:
+    packed_chunks, old_sub_query = _valid_semantic_evidence_payload(payload, index_version, embedding_signature, filters_signature)
+    
+    if packed_chunks and old_sub_query and json_client:
+        verifier = SemanticSubQueryVerifierChain(json_client)
+        is_safe = await verifier.run(sub_query, old_sub_query, user_id, reporter)
+        if is_safe:
             logger.info(
                 "semantic_evidence_cache_hit namespace=%s distance=%s candidates=%s index_version=%s",
                 namespace,
                 distance,
-                len(chunks),
+                len(packed_chunks),
                 index_version,
             )
             if reporter:
                 await reporter.report(
-                    f"Reused {len(chunks)} similar evidence candidate(s).",
+                    f"Sub-query semantic cache hit! Reused {len(packed_chunks)} packed chunk(s).",
                     {
                         "depth": 3,
                         "ref": f"{parent_ref}:semantic:hit",
                         "parent_ref": f"{parent_ref}:semantic",
                         "namespace": namespace,
                         "distance": distance,
-                        "source_chunk_ids": [chunk["id"] for chunk in chunks],
+                        "source_chunk_ids": [chunk["id"] for chunk in packed_chunks],
                     },
                 )
-            return chunks, {
-                "semantic_cached_source_chunk_ids": [chunk["id"] for chunk in chunks],
-                "semantic_candidate_count": len(chunks),
+            return packed_chunks, {
+                "semantic_cached_source_chunk_ids": [chunk["id"] for chunk in packed_chunks],
+                "semantic_candidate_count": len(packed_chunks),
                 "semantic_distance": distance,
             }, [{"stage": "evidence_semantic", "status": "hit"}]
+            
     logger.info("semantic_evidence_cache_miss namespace=%s index_version=%s", namespace, index_version)
     if reporter:
         await reporter.report(
@@ -490,12 +524,12 @@ async def _set_semantic_evidence_candidates(
     index_version: int,
     embedding_signature: str,
     filters_signature: dict[str, Any],
-    source_chunk_ids: list[str],
+    packed_chunks: list[dict[str, Any]],
     had_hit: bool,
     reporter=None,
     parent_ref: str = "retrieval:search",
 ) -> list[dict[str, Any]]:
-    if had_hit or not source_chunk_ids:
+    if had_hit or not packed_chunks:
         return []
     namespace = _semantic_evidence_namespace(user_id, index_version, embedding_signature, filters_signature)
     text = retrieval_cache.normalize_semantic_text(sub_query, extracted_subjects)
@@ -505,24 +539,25 @@ async def _set_semantic_evidence_candidates(
         "embedding_signature": embedding_signature,
         "filters": filters_signature,
         "normalized_query": text,
-        "source_chunk_ids": list(dict.fromkeys(source_chunk_ids)),
+        "sub_query": sub_query,
+        "packed_chunks": packed_chunks,
     }
     await asyncio.to_thread(retrieval_cache.set_semantic_json, user_id, namespace, text, payload)
     logger.info(
         "semantic_evidence_cache_set namespace=%s candidates=%s index_version=%s",
         namespace,
-        len(payload["source_chunk_ids"]),
+        len(packed_chunks),
         index_version,
     )
     if reporter:
         await reporter.report(
-            f"Saved {len(payload['source_chunk_ids'])} evidence candidate(s) for similar searches.",
+            f"Saved {len(packed_chunks)} evidence candidate(s) for similar searches.",
             {
                 "depth": 3,
                 "ref": f"{parent_ref}:semantic:set",
                 "parent_ref": f"{parent_ref}:semantic",
                 "namespace": namespace,
-                "source_chunk_ids": payload["source_chunk_ids"],
+                "source_chunk_ids": [chunk["id"] for chunk in packed_chunks],
             },
         )
     return [{"stage": "evidence_semantic", "status": "set"}]
@@ -548,22 +583,22 @@ def _valid_semantic_evidence_payload(
     index_version: int,
     embedding_signature: str,
     filters_signature: dict[str, Any],
-) -> list[str]:
+) -> tuple[list[dict[str, Any]], str | None]:
     if not isinstance(value, dict):
-        return []
+        return [], None
     if value.get("cache_version") != _SEMANTIC_EVIDENCE_CACHE_VERSION:
-        return []
+        return [], None
     if value.get("retrieval_index_version") != index_version:
-        return []
+        return [], None
     if value.get("embedding_signature") != embedding_signature:
-        return []
+        return [], None
     if value.get("filters") != filters_signature:
-        return []
-    ids = value.get("source_chunk_ids")
-    if not isinstance(ids, list):
-        return []
-    return [chunk_id for chunk_id in dict.fromkeys(str(item) for item in ids) if chunk_id]
-
+        return [], None
+    packed_chunks = value.get("packed_chunks")
+    old_sub_query = value.get("sub_query")
+    if not isinstance(packed_chunks, list) or not isinstance(old_sub_query, str):
+        return [], None
+    return packed_chunks, old_sub_query
 
 async def _vector_source_chunks(query: str, user_id: str, within_directories: list[str], excluding_directories: list[str], within_tags: list[str], excluding_tags: list[str], within_tags_condition: str, reporter=None, parent_ref: str = "retrieval:search") -> tuple[list[dict[str, Any]], list[str]]:
     """Use Chroma when available; lexical search still works if embeddings are down."""

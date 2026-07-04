@@ -443,6 +443,96 @@ def _cached_answer_result(value: dict[str, Any] | None, valid_ids: set[str]) -> 
     return {"answer": answer, "citation_ids": citation_ids}
 
 
+
+def _build_flow_steps(trace: dict) -> list[dict]:
+    events = trace.get("trace_events", [])
+    sub_queries = trace.get("sub_queries", [])
+    
+    steps = []
+    
+    # 1. Top-Level Cache
+    mode = trace.get("mode")
+    if mode in ("exact_cache", "semantic_cache"):
+        steps.append({
+            "id": "top_level_cache",
+            "title": "Top-Level Query Cache",
+            "type": "cache",
+            "status": "hit",
+            "details": {"mode": mode}
+        })
+        return steps
+        
+    # 2. Query Breakdown
+    breakdown_llm_events = [e for e in events if e.get("details", {}).get("ref") == "llm:usage" and e.get("details", {}).get("metrics", {}).get("stage") == "retrieval.query_breakdown"]
+    if breakdown_llm_events:
+        metrics = breakdown_llm_events[-1]["details"]["metrics"]
+        steps.append({
+            "id": "breakdown",
+            "title": "Query Breakdown",
+            "type": "llm",
+            "status": "completed",
+            "duration_ms": metrics.get("duration_ms"),
+            "model_used": metrics.get("model_used"),
+            "metrics": metrics,
+            "details": {"sub_queries": sub_queries}
+        })
+    elif sub_queries:
+        steps.append({
+            "id": "breakdown",
+            "title": "Query Breakdown",
+            "type": "cache",
+            "status": "hit",
+            "details": {"sub_queries": sub_queries}
+        })
+
+    # 3. Sub-Queries
+    for i, sq in enumerate(sub_queries):
+        search_ref = f"retrieval:search:{i+1}"
+        sq_events = [e for e in events if e.get("details", {}).get("parent_ref", "").startswith(search_ref) or e.get("details", {}).get("ref", "").startswith(search_ref)]
+        
+        semantic_hit_events = [e for e in sq_events if e.get("details", {}).get("ref") == f"{search_ref}:semantic:hit"]
+        context_llm_events = [e for e in sq_events if e.get("details", {}).get("ref") == "llm:usage" and e.get("details", {}).get("metrics", {}).get("stage") == "retrieval.context_engineering"]
+        
+        if semantic_hit_events:
+            steps.append({
+                "id": search_ref,
+                "title": f"Sub-Query: {sq}",
+                "type": "cache",
+                "status": "hit",
+                "details": semantic_hit_events[-1]["details"]
+            })
+        else:
+            step = {
+                "id": search_ref,
+                "title": f"Sub-Query: {sq}",
+                "type": "process",
+                "status": "completed",
+                "details": {}
+            }
+            if context_llm_events:
+                metrics = context_llm_events[-1]["details"]["metrics"]
+                step["type"] = "llm"
+                step["duration_ms"] = metrics.get("duration_ms")
+                step["model_used"] = metrics.get("model_used")
+                step["metrics"] = metrics
+            steps.append(step)
+            
+    # 4. Answer Generation
+    answer_llm_events = [e for e in events if e.get("details", {}).get("ref") == "llm:usage" and e.get("details", {}).get("metrics", {}).get("stage") == "retrieval.answer"]
+    if answer_llm_events:
+        metrics = answer_llm_events[-1]["details"]["metrics"]
+        steps.append({
+            "id": "answer",
+            "title": "Answer Formulation",
+            "type": "llm",
+            "status": "completed",
+            "duration_ms": metrics.get("duration_ms"),
+            "model_used": metrics.get("model_used"),
+            "metrics": metrics,
+        })
+
+    return steps
+
 def build_query_result(query: str, chunks: list[dict[str, Any]], answer: dict[str, Any], trace: dict[str, Any]) -> dict[str, Any]:
     """Build the route response shape expected by the UI."""
     citation_ids = answer.get("citation_ids") or answer.get("citations") or [chunk["id"] for chunk in chunks[:3]]
@@ -461,6 +551,7 @@ def build_query_result(query: str, chunks: list[dict[str, Any]], answer: dict[st
             **context_trace,
             "cache_summary": cache_summary,
             "citation_count": len(cited_chunks),
+            "flow_steps": _build_flow_steps(trace),
         },
     }
 

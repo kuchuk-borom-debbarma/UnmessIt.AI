@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 from functools import lru_cache
 from typing import Any
 from urllib.parse import urlsplit
@@ -32,7 +33,7 @@ class JsonLLMClient:
     def invoke_json(self, system: str, human: str, user_id: str, stage: str | None = None) -> dict[str, Any]:
         """Invoke the chat model and parse a JSON object."""
         if self.llm:
-            return self._invoke_with_settings(self.llm, get_user_llm_settings(user_id, stage), system, human)
+            return self._invoke_with_settings(self.llm, get_user_llm_settings(user_id, stage), system, human, stage)
 
         errors = []
         candidates = list(get_user_llm_setting_candidates(user_id, stage) if stage else get_user_setting_candidates(user_id))
@@ -43,7 +44,7 @@ class JsonLLMClient:
                 {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "stage": stage, "attempt": index, "total": len(candidates)},
             )
             try:
-                result = self._invoke_with_settings(_get_chat_llm(settings.llm_cache_key()), settings, system, human)
+                result = self._invoke_with_settings(_get_chat_llm(settings.llm_cache_key()), settings, system, human, stage)
                 set_last_llm_rotation_snapshot(settings.rotation_snapshot())
                 report_progress_sync(
                     f"LLM config succeeded: {settings.preset_name}",
@@ -60,7 +61,7 @@ class JsonLLMClient:
         report_progress_sync("All LLM configs failed.", {"errors": errors})
         raise ValueError("All LLM configs failed: " + "; ".join(errors))
 
-    def _invoke_with_settings(self, llm, settings: Settings, system: str, human: str) -> dict[str, Any]:
+    def _invoke_with_settings(self, llm, settings: Settings, system: str, human: str, stage: str | None = None) -> dict[str, Any]:
         messages = [SystemMessage(content=system), HumanMessage(content=human)]
         last_error: Exception | None = None
         for attempt in range(1, settings.llm_max_retries + 2):
@@ -85,7 +86,7 @@ class JsonLLMClient:
     async def async_invoke_json(self, system: str, human: str, user_id: str, stage: str | None = None) -> dict[str, Any]:
         """Async variant: awaits ainvoke() so the event loop stays free during LLM I/O."""
         if self.llm:
-            return await self._async_invoke_with_settings(self.llm, get_user_llm_settings(user_id, stage), system, human)
+            return await self._async_invoke_with_settings(self.llm, get_user_llm_settings(user_id, stage), system, human, stage)
 
         errors = []
         candidates = list(get_user_llm_setting_candidates(user_id, stage) if stage else get_user_setting_candidates(user_id))
@@ -96,7 +97,7 @@ class JsonLLMClient:
                 {"preset_id": settings.preset_id, "preset_name": settings.preset_name, "stage": stage, "attempt": index, "total": len(candidates)},
             )
             try:
-                result = await self._async_invoke_with_settings(_get_chat_llm(settings.llm_cache_key()), settings, system, human)
+                result = await self._async_invoke_with_settings(_get_chat_llm(settings.llm_cache_key()), settings, system, human, stage)
                 set_last_llm_rotation_snapshot(settings.rotation_snapshot())
                 await report_progress(
                     f"LLM config succeeded: {settings.preset_name}",
@@ -115,7 +116,7 @@ class JsonLLMClient:
         await report_progress("All LLM configs failed.", {"errors": errors})
         raise ValueError("All LLM configs failed: " + "; ".join(errors))
 
-    async def _async_invoke_with_settings(self, llm, settings: Settings, system: str, human: str) -> dict[str, Any]:
+    async def _async_invoke_with_settings(self, llm, settings: Settings, system: str, human: str, stage: str | None = None) -> dict[str, Any]:
         messages = [SystemMessage(content=system), HumanMessage(content=human)]
         last_error: Exception | None = None
         for attempt in range(1, settings.llm_max_retries + 2):
@@ -125,7 +126,9 @@ class JsonLLMClient:
                     f"Calling language model {settings.llm_model} (attempt {attempt}/{settings.llm_max_retries + 1})",
                     {"preset_id": settings.preset_id, "model": settings.llm_model, "attempt": attempt},
                 )
+                start_time = time.time()
                 response = await llm.ainvoke(messages, **_prompt_cache_kwargs(settings, system))
+                duration_ms = int((time.time() - start_time) * 1000)
                 content = response.content if hasattr(response, "content") else str(response)
                 result = JsonOutputParser().parse(content)
                 if isinstance(result, dict) and hasattr(response, "response_metadata"):
@@ -135,6 +138,9 @@ class JsonLLMClient:
                             "prompt_tokens": usage.get("prompt_tokens", 0),
                             "completion_tokens": usage.get("completion_tokens", 0),
                             "total_tokens": usage.get("total_tokens", 0),
+                            "duration_ms": duration_ms,
+                            "model_used": settings.llm_model,
+                            "stage": stage
                         }
                         result["_llm_usage"] = metrics
                         await report_progress("LLM completed", {"ref": "llm:usage", "metrics": metrics})

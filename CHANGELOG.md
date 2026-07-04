@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-07-03
 
 ### Added
+- Added sub-query semantic caching with a fast LLM verifier to safely bypass retrieval processing for repeated semantic concepts at the sub-query level.
+- Rebuilt the Retrieval Analysis UI into a Server-Driven UI timeline, perfectly tracking latencies, models, token usage, and cache hits precisely per execution step.
 - Added background cron job to periodically clean up stale semantic cache values with random jitter.
 - Fixed note creation to support choosing between Markdown and Plain Text formats.
 - Enhanced Note UI to reliably use ResizeObserver for smooth content expansion and shrinking.
