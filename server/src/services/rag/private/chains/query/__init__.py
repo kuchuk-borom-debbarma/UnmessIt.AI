@@ -383,7 +383,8 @@ def _answer_system_prompt() -> str:
         "For attribute questions, collect small details from all relevant snippets before deciding the answer is missing. "
         "For attribute answers, preserve exact counts, labels, descriptors, and qualifiers when the snippets contain them. "
         "Use cautious wording for inference, but provide the inference when the evidence supports it. "
-        "Embed source markers directly in the answer where they help verification, using [[cite:SOURCE_CHUNK_ID]] immediately after the supported claim. "
+        "Embed source markers directly in the answer where they help verification, using exactly the format [[cite:SOURCE_CHUNK_ID]] immediately after the supported claim. "
+        "Do not format citations as markdown links (e.g. avoid [cite](...)). Use the raw [[cite:...]] format. "
         "Do not show raw ids except inside [[cite:...]] markers. "
         "Citations must be source_chunk ids from SOURCE_CHUNKS."
     )

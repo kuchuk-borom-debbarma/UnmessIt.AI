@@ -227,8 +227,17 @@ function InlineAnswer({ answer, citations }: { answer: string; citations: Citati
         remarkPlugins={[remarkGfm]}
         components={{
           a: ({ node, href, children, ...props }) => {
+            let chunkId: string | null = null;
+            let indexStr = '0';
+
             if (href?.startsWith('cite:')) {
-              const [chunkId, indexStr] = href.replace('cite:', '').split(':')
+              [chunkId, indexStr] = href.replace('cite:', '').split(':')
+            } else if (href && citations.some((c) => c.source_chunk_id === href)) {
+              chunkId = href;
+              indexStr = (citeIndex++).toString();
+            }
+
+            if (chunkId) {
               const citation = citations.find((item) => item.source_chunk_id === chunkId)
               if (!citation) return null
               const sourceNumber = citations.findIndex((item) => item.source_chunk_id === chunkId) + 1
@@ -240,7 +249,10 @@ function InlineAnswer({ answer, citations }: { answer: string; citations: Citati
                   <button
                     type="button"
                     className="inline-citation-chip"
-                    onClick={() => setOpenId(isOpen ? null : markerId)}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setOpenId(isOpen ? null : markerId);
+                    }}
                   >
                     Source {sourceNumber}
                   </button>
@@ -269,7 +281,22 @@ function InlineAnswer({ answer, citations }: { answer: string; citations: Citati
                 </span>
               )
             }
-            return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{children}</a>
+            
+            return (
+              <a 
+                href={href} 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                onClick={(e) => {
+                  if (!href || href.startsWith('#') || !href.startsWith('http')) {
+                    e.preventDefault();
+                  }
+                }}
+                {...props}
+              >
+                {children}
+              </a>
+            )
           }
         }}
       >
