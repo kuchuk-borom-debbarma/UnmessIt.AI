@@ -32,8 +32,8 @@ export function useVersionCheck() {
 
     const checkForUpdate = async () => {
       try {
-        // Append timestamp to bypass caching
-        const res = await fetch(`/version.json?t=${new Date().getTime()}`)
+        // Fetch from the source of truth to detect updates even when running locally or in Docker
+        const res = await fetch(`https://raw.githubusercontent.com/kuchuk-borom-debbarma/UnmessIt.AI/staging/web/public/version.json?t=${new Date().getTime()}`)
         if (!res.ok) return
 
         const data = await res.json() as VersionInfo
