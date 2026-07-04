@@ -1,6 +1,6 @@
 # Current State
 
-Engineering snapshot as of 2026-07-01.
+Engineering snapshot as of 2026-07-05.
 
 ## Product Direction
 
@@ -24,7 +24,7 @@ The current implementation is OpenAI-standard only. Users configure specific Ope
 - Materialized-path directories for efficient subtree queries. Search leverages an O(1) Vector DB lineage optimization using injected parent boolean flags inside ChromaDB metadata.
 - Soft-delete vector synchronization (moving notes to trash masks raw inputs and evicts Chroma vectors; restoring re-indexes instantly).
 - Cross-Domain Filtering: AI queries can be explicitly constrained by or excluded from specific directories and tag combinations (supporting ANY, ALL, and NOT logic) inside the vector store.
-- Event-driven note ingestion through the in-memory event bus.
+- Event-driven note ingestion through a durable Transactional Outbox pattern in SQLite and Redis Streams pub/sub, ensuring guaranteed delivery between Notes and RAG domains.
 - Raw input storage as source truth.
 - Durable ingestion jobs with SQLite checkpoints, configurable bounded retry/backoff, pause, and stop controls.
 - Lossless source chunks chosen by source position, not by LLM importance.
@@ -36,6 +36,12 @@ The current implementation is OpenAI-standard only. Users configure specific Ope
 - Settings UI lets users choose one specific config preset or optional rotation. Config presets own LLM and embedding models/API info; advanced processing owns chunk size, overlap, batch size, and retry backoff.
 - Jobs UI for durable ingest job status, stage tracking, pause, stop, resume, and delete; updates arrive through SSE with a slow fallback refresh.
 - Paginated Note Insights UI for inspecting recall keys and links per note (replaced global memory UI).
+- Lightning-fast caching layer using exact matches (Memory/Redis) and semantic vectors (ChromaDB) to skip repeated LLM logic for identical or similar Ask AI queries.
+- Semantic Strict Verifier ensures cached answers are fully applicable to the user's new question before safely serving them.
+- Sub-query caching and verifier-decision caching, drastically accelerating complex, multi-part evidence retrieval and synthesis.
+- Automatic prompt caching compatibility for OpenAI official models, reducing prompt ingestion costs for heavy system instructions and few-shot schemas.
+- Granular Retrieval Analysis UI built around backend-driven summary cards, displaying exact token usage, cache savings, context packing reduction, and skipped pipeline steps.
+- Markdown and Plain Text note creation formats with UI selection and accurate backend round-tripping.
 
 ## Active Ingestion Shape
 
@@ -58,6 +64,9 @@ Source chunks save full citable text and point back to raw spans. LLM output can
 
 ```txt
 query
+-> exact full-result cache lookup
+-> semantic full-result cache lookup
+   -> strict verifier must approve similar cached answers before reuse
 -> breakdown into focused sub-queries
 -> parallel source vector, lexical, and recall search
 -> linked source chunk expansion
@@ -144,14 +153,11 @@ Development-only routes:
 - Chroma collection names are per user and active embedding/config signature. Rebuild/migration remains manual if embedding dimensions change.
 - Timeline answers use source order, spans, `source_time`, `event_time`, and `time_label` hints; there is no dedicated temporal ordering layer yet.
 - Recall quality controls broad reasoning quality.
-- There is no LLM response cache table.
 - There is no dead-letter/archive table for failed jobs.
 - `/dev/*` routes should stay disabled outside local debugging.
 
 ## Likely Next Steps
 
-- **Response Cache**: Add a small SQLite-backed LLM response cache first, keyed by model/settings/prompt shape, to avoid repeated query and indexing calls.
-- **Durable Pub/Sub**: After caching, implement durable pub/sub using a Transactional Outbox pattern in SQLite to guarantee event delivery between Notes and RAG domains. Add Redis Streams with consumer groups only when one-process SQLite outbox stops being enough.
 - **Custom Knowledge Connections**: Give users the ability to manually teach the AI connections by wiring explicit recall links between concepts or notes.
 - Add explicit timeline ordering for timeline-style questions if real examples need it.
 - Add a rebuild-vector-index command for embedding model changes.
@@ -189,7 +195,9 @@ npm run build
 - User config: `server/docs/USER_CONFIGURATION.md`
 - Notes and ingestion: `server/docs/NOTES_AND_INGESTION.md`
 - Indexing: `server/docs/SEAI_INDEXING_FLOW.md`
+- Query Pipeline: `server/docs/QUERY_PIPELINE.md`
 - Retrieval: `server/docs/SEAI_RETRIEVAL_FLOW.md`
 - Durability: `server/docs/RAG_DURABILITY.md`
+- Caching Eval: `server/docs/CACHE_EVALUATION_NOTES.md`
 - SSE: `server/docs/SSE_INFRASTRUCTURE.md`
 - Beta deploy: `server/docs/BETA_DEPLOY.md`

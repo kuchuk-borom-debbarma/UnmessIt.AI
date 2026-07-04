@@ -7,6 +7,8 @@ UnmessIt.AI is a RAG notes app that runs locally for now. Save messy notes, orga
 - Stores notes, nested directories, tags, user config, and durable ingest state in SQLite.
 - Builds source chunks, recall keys, recall links, and Chroma vectors from saved notes.
 - Answers questions from source chunks only, with citations and retrieval traces.
+- Lightning-fast caching layer (Exact Memory/Redis + Semantic ChromaDB) drastically reduces LLM costs and latency for similar queries.
+- Notes support Markdown and Plain Text formatting.
 - Lets retrieval include or exclude directory subtrees.
 - Runs ingest as durable background jobs that can retry, pause, resume, and survive restarts.
 - Uses Redis in Docker for cross-process events and SSE fanout.
@@ -134,5 +136,6 @@ docker compose up -d
 ## Docs
 
 - [Current State](./current-state.md)
+- [Query Pipeline](./server/docs/QUERY_PIPELINE.md)
 - [Server docs](./server/docs/)
 - [Codebase rules](./server/docs/rules/codebase_rules.md)

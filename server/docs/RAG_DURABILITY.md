@@ -36,6 +36,9 @@ This resumes `queued`, `running`, and due `waiting_retry` jobs. `paused`, `faile
 - `ingest_jobs`: one row per submitted job.
 - `ingest_checkpoints`: one row per deterministic unit inside a job.
 
+> [!NOTE]
+> All LLM-backed cache keys include a hashed `llm_settings_signature`. This guarantees that if a user changes their AI provider, model, or generation settings, the cache is safely partitioned and old answers are never incorrectly served for a new configuration.
+
 Job statuses:
 
 - `queued`
@@ -111,7 +114,6 @@ Manual resume sets a job back to `queued`, clears retry state, keeps completed c
 - The scheduler is in-process, not a distributed queue.
 - There is no cross-process job lease.
 - A crashed process may leave a checkpoint marked `running`; the next run can overwrite it when that unit is reached.
-- There is no LLM response cache table.
 - Aborted jobs stay in `ingest_jobs` with the reason in `error`.
 - Recall returning zero links is currently retryable.
 
