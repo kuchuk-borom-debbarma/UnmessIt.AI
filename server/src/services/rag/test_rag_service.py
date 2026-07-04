@@ -693,17 +693,16 @@ async def test_semantic_evidence_hit_adds_candidates_and_keeps_normal_search(mon
     monkeypatch.setattr(
         retrieval_cache,
         "get_semantic_json_match",
-        lambda *args, **kwargs: ({"cache_version": search_mod._SEMANTIC_EVIDENCE_CACHE_VERSION, "retrieval_index_version": 0, "embedding_signature": "embedding:v1", "filters": search_mod._filter_signature([], [], [], [], "any"), "source_chunk_ids": ["semantic"]}, 0.01),
+        lambda *args, **kwargs: ({"cache_version": search_mod._SEMANTIC_EVIDENCE_CACHE_VERSION, "retrieval_index_version": retrieval_index.get_version("user-1"), "embedding_signature": "embedding:v1", "filters": search_mod._filter_signature([], [], [], [], "any"), "packed_chunks": [{"id": "semantic"}], "sub_query": "old"}, 0.01),
     )
     reporter = CaptureReporter()
 
-    result = await search_mod.search_node(_search_state(reporter=reporter))
+    result = await search_mod.search_node(_search_state(reporter=reporter, json_client=True))
 
-    assert lexical_calls == ["Attack Titan"]
-    assert {chunk["id"] for chunk in result["chunks"]} == {"semantic", "lexical"}
+    assert lexical_calls == []
+    assert {chunk["id"] for chunk in result["chunks"]} == {"semantic"}
     assert {"stage": "evidence_semantic", "status": "hit"} in result["cache_events"]
-    assert any(message == "Checking similar previous evidence..." for message, _ in reporter.events)
-    assert any(message == "Reused 1 similar evidence candidate(s)." for message, _ in reporter.events)
+    assert any(message == "Sub-query semantic cache hit! Reused 1 packed chunk(s)." for message, _ in reporter.events)
 
 
 async def test_semantic_evidence_miss_saves_candidates_and_uses_threshold(monkeypatch):
@@ -729,7 +728,7 @@ async def test_semantic_evidence_miss_saves_candidates_and_uses_threshold(monkey
 
     result = await search_mod.search_node(_search_state(reporter=reporter))
 
-    assert thresholds == [0.98]
+    assert thresholds == [0.95]
     assert semantic_sets
     assert any(ev.get("stage") == "evidence_semantic" and ev.get("status") == "miss" for ev in result["cache_events"])
     assert len(semantic_sets) > 0
@@ -750,13 +749,14 @@ def test_semantic_evidence_namespace_and_payload_invalidation():
         "retrieval_index_version": 1,
         "embedding_signature": "embedding:v1",
         "filters": filters,
-        "source_chunk_ids": ["chunk-1", "chunk-1"],
+        "packed_chunks": [{"id": "chunk-1"}],
+        "sub_query": "old",
     }
-    assert search_mod._valid_semantic_evidence_payload(payload, 1, "embedding:v1", filters) == ["chunk-1"]
-    assert search_mod._valid_semantic_evidence_payload(payload, 2, "embedding:v1", filters) == []
-    assert search_mod._valid_semantic_evidence_payload(payload, 1, "embedding:v2", filters) == []
-    assert search_mod._valid_semantic_evidence_payload(payload, 1, "embedding:v1", changed_filters) == []
-    assert search_mod._valid_semantic_evidence_payload({"bad": True}, 1, "embedding:v1", filters) == []
+    assert search_mod._valid_semantic_evidence_payload(payload, 1, "embedding:v1", filters) == ([{"id": "chunk-1"}], "old")
+    assert search_mod._valid_semantic_evidence_payload(payload, 2, "embedding:v1", filters) == ([], None)
+    assert search_mod._valid_semantic_evidence_payload(payload, 1, "embedding:v2", filters) == ([], None)
+    assert search_mod._valid_semantic_evidence_payload(payload, 1, "embedding:v1", changed_filters) == ([], None)
+    assert search_mod._valid_semantic_evidence_payload({"bad": True}, 1, "embedding:v1", filters) == ([], None)
 
 
 async def test_semantic_evidence_missing_cached_chunks_are_ignored(monkeypatch):
@@ -772,7 +772,7 @@ async def test_semantic_evidence_missing_cached_chunks_are_ignored(monkeypatch):
     monkeypatch.setattr(
         retrieval_cache,
         "get_semantic_json_match",
-        lambda *args, **kwargs: ({"cache_version": search_mod._SEMANTIC_EVIDENCE_CACHE_VERSION, "retrieval_index_version": 0, "embedding_signature": "embedding:v1", "filters": search_mod._filter_signature([], [], [], [], "any"), "source_chunk_ids": ["deleted"]}, 0.01),
+        lambda *args, **kwargs: ({"cache_version": search_mod._SEMANTIC_EVIDENCE_CACHE_VERSION, "retrieval_index_version": retrieval_index.get_version("user-1"), "embedding_signature": "embedding:v1", "filters": search_mod._filter_signature([], [], [], [], "any"), "source_chunk_ids": ["deleted"]}, 0.01),
     )
     monkeypatch.setattr(retrieval_cache, "set_semantic_json", lambda *args: None)
 
@@ -1214,7 +1214,7 @@ async def test_query_breakdown_cache_skips_second_llm_call(monkeypatch):
 async def test_query_breakdown_cache_misses_when_settings_change(monkeypatch):
     retrieval_cache.get_memory_json_cache.cache_clear()
     calls = []
-    signatures = iter(["settings-a", "settings-b"])
+    signatures = iter(["settings-a", "settings-a", "settings-b", "settings-b"])
 
     class CountingJson:
         async def async_invoke_json(self, system: str, human: str, **kwargs) -> dict:
