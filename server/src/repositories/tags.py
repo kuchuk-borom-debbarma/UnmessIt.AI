@@ -24,12 +24,24 @@ def create(name: str, user_id: str, conn=None) -> str:
     return tag_id
 
 
-def list_tags(user_id: str) -> list[dict[str, Any]]:
-    rows = get_connection().execute(
-        "SELECT id, name, user_id, created_at FROM tags WHERE user_id = ? ORDER BY name ASC",
-        (user_id,)
+def list_tags(user_id: str, page: int = 1, limit: int = 20) -> dict[str, Any]:
+    conn = get_connection()
+    offset = max(0, (page - 1) * limit)
+    
+    count_row = conn.execute("SELECT COUNT(*) as c FROM tags WHERE user_id = ?", (user_id,)).fetchone()
+    total = count_row["c"] if count_row else 0
+
+    rows = conn.execute(
+        "SELECT id, name, user_id, created_at FROM tags WHERE user_id = ? ORDER BY name ASC LIMIT ? OFFSET ?",
+        (user_id, limit, offset)
     ).fetchall()
-    return [dict(row) for row in rows]
+    
+    return {
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "data": [dict(row) for row in rows]
+    }
 
 
 def search_tags(user_id: str, query: str = "", limit: int = 20, cursor: int = 0) -> list[dict[str, Any]]:
