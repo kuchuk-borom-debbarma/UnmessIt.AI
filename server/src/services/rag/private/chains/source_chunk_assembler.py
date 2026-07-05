@@ -5,6 +5,8 @@ from uuid import uuid4
 from src.services.rag.models import SourceChunk, SourceChunkDraft, Span
 
 
+from src.infra.settings import get_user_llm_settings, get_user_embedding_settings
+
 class SourceChunkAssemblerChain:
     """Turn deterministic text windows into saved source chunk records."""
 
@@ -19,6 +21,14 @@ def _chunk_from_draft(raw_input_id: str, raw_text: str, user_id: str, draft: Sou
     window = draft["window"]
     span = {"start": window["start"], "end": window["end"]}
     text = raw_text[span["start"]:span["end"]]
+    
+    metadata = dict(draft.get("metadata") or {})
+    try:
+        metadata["llm_model"] = get_user_llm_settings(user_id).llm_model
+        metadata["embedding_model"] = get_user_embedding_settings(user_id).embedding_model
+    except Exception:
+        pass
+
     return {
         "id": str(uuid4()),
         "raw_input_id": raw_input_id,
@@ -27,7 +37,7 @@ def _chunk_from_draft(raw_input_id: str, raw_text: str, user_id: str, draft: Sou
         "summary": (draft["summary"] or _summary(text))[:240],
         "spans": [span],
         "source_time": draft["source_time"],
-        "metadata": draft["metadata"],
+        "metadata": metadata,
         "directory_path": directory_path,
     }
 

@@ -22,6 +22,41 @@ async def memory(user_id: str = Depends(get_current_user_id)) -> dict:
     return {"status": "success", **dev.memory_view(user_id)}
 
 
+@router.post("/reindex")
+async def reindex(user_id: str = Depends(get_current_user_id)) -> dict:
+    get_rag_service().reindex_all(user_id)
+    return {"status": "success", "message": "Reindexing started"}
+
+
+@router.get("/index_metadata")
+async def index_metadata(user_id: str = Depends(get_current_user_id)) -> dict:
+    from src.infra.sqlite import get_connection
+    conn = get_connection()
+    rows = conn.execute("SELECT metadata FROM source_chunks WHERE user_id = ?", (user_id,)).fetchall()
+    
+    llms = {}
+    embeddings = {}
+    
+    for row in rows:
+        try:
+            meta = json.loads(row["metadata"]) if row["metadata"] else {}
+        except Exception:
+            meta = {}
+        llm = meta.get("llm_model", "unknown")
+        emb = meta.get("embedding_model", "unknown")
+        llms[llm] = llms.get(llm, 0) + 1
+        embeddings[emb] = embeddings.get(emb, 0) + 1
+        
+    return {
+        "status": "success",
+        "data": {
+            "llm_models": llms,
+            "embedding_models": embeddings,
+            "total_chunks": len(rows)
+        }
+    }
+
+
 @router.get("/recall")
 async def recall(user_id: str = Depends(get_current_user_id)) -> dict:
     return {"status": "success", **dev.recall_view(user_id)}

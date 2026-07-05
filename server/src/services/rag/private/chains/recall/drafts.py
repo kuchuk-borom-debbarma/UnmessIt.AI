@@ -67,6 +67,7 @@ class RecallDraftChain:
                 "Reuse existing_recall_key_id only when the candidate clearly matches. Create a new key only when no candidate clearly matches.\n"
                 "For reused keys, keep the candidate's identity broad: write summary as a stable merged orientation using the old candidate summary plus this new source evidence.\n"
                 "If the old summary is already good, repeat it instead of narrowing it to the latest chunk.\n"
+                "Preserve the exact actor and patient relationships from the source text. Do not invert perspective or attribute actions to the wrong subject when summarizing first-person text.\n"
                 "Canonical names must be clean, human-readable, and language-consistent; avoid mixed-script names unless the source itself uses them.\n"
                 "Prefer reusable keys a user may ask about later. Avoid tiny phrase-specific topic keys when a broader candidate fits.\n"
                 "Aim for 1-5 important recall keys per source chunk."

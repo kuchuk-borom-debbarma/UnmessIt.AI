@@ -311,6 +311,47 @@ def resume(job_id: str) -> None:
     _commit_with_changed(conn, job_id)
 
 
+def requeue_all(user_id: str) -> None:
+    """Wipe checkpoints and reset all completed jobs to queued for reindexing."""
+    conn = get_connection()
+    
+    rows = conn.execute(
+        """
+        SELECT j.id FROM ingest_jobs j 
+        JOIN raw_inputs r ON r.id = j.raw_input_id 
+        WHERE r.user_id = ?
+        """,
+        (user_id,)
+    ).fetchall()
+    
+    job_ids = [row["id"] for row in rows]
+    if not job_ids:
+        return
+        
+    placeholders = ",".join(["?"] * len(job_ids))
+    
+    conn.execute(f"DELETE FROM ingest_checkpoints WHERE job_id IN ({placeholders})", job_ids)
+    
+    conn.execute(
+        f"""
+        UPDATE ingest_jobs
+        SET status = ?, stage = ?, attempt_count = 0, next_run_at = NULL, error = NULL, 
+            metadata = '{{}}', updated_at = CURRENT_TIMESTAMP
+        WHERE id IN ({placeholders})
+        """,
+        [STATUS_QUEUED, STAGE_RAW_INPUT, *job_ids]
+    )
+    
+    if redis_enabled():
+        for jid in job_ids:
+            event_outbox.enqueue("ingest_job.changed", "ingest_job.changed", {"job_id": jid}, conn=conn)
+    conn.commit()
+    
+    if not redis_enabled():
+        for jid in job_ids:
+            _publish_changed(jid)
+
+
 def pause(job_id: str) -> None:
     """Manually pause an active job. It will remain paused until resumed."""
     conn = get_connection()

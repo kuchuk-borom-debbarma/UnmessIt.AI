@@ -15,7 +15,7 @@ from ._semantic_verifier import SemanticCacheVerifierChain
 logger = logging.getLogger(__name__)
 _CITE_MARKER_RE = re.compile(r"\[\[cite:([^\]\s]+)\]\]?")
 _VERIFIER_CACHE_VERSION = "query_verifier:v1"
-_ANSWER_CACHE_VERSION = "query_answer:v1"
+_ANSWER_CACHE_VERSION = "query_answer:v2"
 
 
 class QueryEvidenceChain:
@@ -381,6 +381,7 @@ def _answer_system_prompt() -> str:
         "Do not require a source to explicitly perform the comparison; compare the sourced facts yourself. "
         "When the user explicitly asks to compare or relate subjects, do not reject the comparison only because the subjects come from different contexts or sources. "
         "If chunks describe subject A and separate chunks describe subject B, infer similarities and differences from those facts instead of saying direct comparative analysis is unavailable. "
+        "Preserve the exact actor/patient relationships from the evidence. If the evidence states subject A acted upon subject B, do not invert the relationship, even if the query is phrased from B's perspective. "
         "For attribute questions, collect small details from all relevant snippets before deciding the answer is missing. "
         "For attribute answers, preserve exact counts, labels, descriptors, and qualifiers when the snippets contain them. "
         "Use cautious wording for inference, but provide the inference when the evidence supports it. "

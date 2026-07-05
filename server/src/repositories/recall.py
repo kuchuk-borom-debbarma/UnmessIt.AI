@@ -291,6 +291,17 @@ def save_index(index: RecallIndex, user_id: str) -> int:
     return saved_links
 
 
+def delete_all(user_id: str) -> None:
+    """Wipe all recall data for a user when reindexing."""
+    conn = get_connection()
+    conn.execute("DELETE FROM recall_key_terms WHERE recall_key_id IN (SELECT id FROM recall_keys WHERE user_id = ?)", (user_id,))
+    conn.execute("DELETE FROM recall_keys_fts WHERE recall_key_id IN (SELECT id FROM recall_keys WHERE user_id = ?)", (user_id,))
+    conn.execute("DELETE FROM recall_links WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM recall_keys WHERE user_id = ?", (user_id,))
+    retrieval_index.bump(user_id, conn)
+    conn.commit()
+
+
 def get_view(user_id: str | None = None) -> dict[str, Any]:
     """Dev view: recall keys with their linked source chunk evidence."""
     conn = get_connection()
