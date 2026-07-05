@@ -39,14 +39,20 @@ const USER_FEATURES = [
 
 export function LandingView() {
   const [demoStep, setDemoStep] = useState(0)
+  const [queryPhase, setQueryPhase] = useState(0)
 
   useEffect(() => {
     const timer = setInterval(() => {
       setDemoStep((s) => (s + 1) % 9)
     }, 1200)
+
+    const phaseTimer = setInterval(() => {
+      setQueryPhase((p) => (p + 1) % 3)
+    }, 5000)
     
     return () => {
       clearInterval(timer)
+      clearInterval(phaseTimer)
     }
   }, [])
 
@@ -120,18 +126,7 @@ export function LandingView() {
           className="w-full relative"
         >
           <div className="liquid-glass rounded-[2rem] p-2 shadow-[0_0_80px_rgba(16,185,129,0.15)] border border-white/10 dark:border-white/5 overflow-hidden backdrop-blur-3xl">
-            {/* Fake Mac titlebar */}
-            <div className="flex items-center justify-between px-4 py-3 bg-white/5 border-b border-white/5">
-               <div className="flex items-center gap-1.5">
-                 <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
-                 <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
-                 <div className="w-3 h-3 rounded-full bg-green-500/80"></div>
-               </div>
-               <div className="flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary-500 animate-pulse"></span>
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-primary-500">Live Retrieval</span>
-               </div>
-            </div>
+            {/* Fake Mac titlebar removed per user request */}
 
             <div className="bg-background/60 dark:bg-background/40 p-4 md:p-6 flex flex-col gap-6 min-h-[380px]">
               {/* Query */}
@@ -353,7 +348,7 @@ export function LandingView() {
             </div>
             <h3 className="text-3xl font-bold tracking-tight text-foreground mb-4">Skip the expensive steps.</h3>
             <p className="text-base font-medium text-muted-foreground leading-relaxed">
-              Full synthesis requires massive context windows for retrieval, graph traversal, and compaction. By utilizing Semantic Vector Caches, we can bypass these entirely. A tiny 12-token <strong>LLM Verifier</strong> confirms intent alignment and instantly returns the cached answer, saving you thousands of tokens per query.
+              Full synthesis requires massive context windows for retrieval, graph traversal, and compaction. When you ask similar or repeated questions, Semantic Vector Caches can bypass these entirely. A tiny <strong>Fast Verifier LLM</strong> confirms intent alignment and instantly returns the cached answer, saving you thousands of tokens on those queries.
             </p>
           </div>
           {/* Graphic Side */}
@@ -365,82 +360,196 @@ export function LandingView() {
                 {/* SVG Connecting Lines */}
                 <svg className="absolute inset-0 w-full h-full z-0 pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
                   {/* Query to Lookup */}
-                  <path d="M 50 10 L 50 25" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
+                  <path d="M 50 10 L 50 20" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
                   
-                  {/* Lookup to Miss (Left) */}
-                  <path d="M 50 35 C 50 45, 20 45, 20 60" fill="none" stroke="rgba(239,68,68,0.2)" strokeWidth="0.5" strokeDasharray="1,1" />
+                  {/* Lookup to Breakdown (Phase 0, 2) */}
+                  <path d="M 50 28 L 50 38" fill="none" stroke={queryPhase === 0 || queryPhase === 2 ? "rgba(59,130,246,0.3)" : "rgba(59,130,246,0.05)"} strokeWidth="0.5" style={{ transition: 'stroke 0.5s' }} />
+
+                  {/* Lookup to Match Gateway (Phase 1) */}
+                  <path d="M 50 28 C 50 35, 80 30, 80 38" fill="none" stroke={queryPhase === 1 ? "rgba(16,185,129,0.3)" : "rgba(16,185,129,0.05)"} strokeWidth="0.5" style={{ transition: 'stroke 0.5s' }} />
                   
-                  {/* Lookup to Match (Right) */}
-                  <path d="M 50 35 C 50 45, 80 45, 80 60" fill="none" stroke="rgba(16,185,129,0.3)" strokeWidth="0.5" />
+                  {/* Breakdown to Miss (Phase 0 sub 1) */}
+                  <path d="M 48 46 C 30 55, 15 55, 20 60" fill="none" stroke={queryPhase === 0 ? "rgba(239,68,68,0.3)" : "rgba(239,68,68,0.05)"} strokeWidth="0.5" strokeDasharray="1,1" style={{ transition: 'stroke 0.5s' }} />
                   
+                  {/* Breakdown to Miss (Phase 0 sub 2, Phase 2 miss) */}
+                  <path d="M 50 46 C 40 55, 25 55, 20 60" fill="none" stroke={queryPhase === 0 || queryPhase === 2 ? "rgba(239,68,68,0.3)" : "rgba(239,68,68,0.05)"} strokeWidth="0.5" strokeDasharray="1,1" style={{ transition: 'stroke 0.5s' }} />
+
+                  {/* Breakdown to Verifier (Phase 2 hit) */}
+                  <path d="M 52 46 C 60 55, 80 55, 80 60" fill="none" stroke={queryPhase === 2 ? "rgba(16,185,129,0.3)" : "rgba(16,185,129,0.05)"} strokeWidth="0.5" style={{ transition: 'stroke 0.5s' }} />
+
+                  {/* Match Gateway to Verifier (Phase 1) */}
+                  <path d="M 80 46 L 80 60" fill="none" stroke={queryPhase === 1 ? "rgba(16,185,129,0.3)" : "rgba(16,185,129,0.05)"} strokeWidth="0.5" style={{ transition: 'stroke 0.5s' }} />
+
                   {/* Miss to Response */}
-                  <path d="M 20 70 C 20 85, 50 85, 50 95" fill="none" stroke="rgba(239,68,68,0.2)" strokeWidth="0.5" strokeDasharray="1,1" />
+                  <path d="M 20 70 C 20 85, 50 85, 50 90" fill="none" stroke={queryPhase === 0 || queryPhase === 2 ? "rgba(239,68,68,0.2)" : "rgba(239,68,68,0.05)"} strokeWidth="0.5" strokeDasharray="1,1" style={{ transition: 'stroke 0.5s' }} />
                   
-                  {/* Match to Response */}
-                  <path d="M 80 70 C 80 85, 50 85, 50 95" fill="none" stroke="rgba(16,185,129,0.3)" strokeWidth="0.5" />
+                  {/* Verifier to Response */}
+                  <path d="M 80 70 C 80 85, 50 85, 50 90" fill="none" stroke={queryPhase === 1 || queryPhase === 2 ? "rgba(16,185,129,0.3)" : "rgba(16,185,129,0.05)"} strokeWidth="0.5" style={{ transition: 'stroke 0.5s' }} />
                 </svg>
 
-                {/* Animated Data Packet along the Match Path */}
-                <motion.div 
-                  className="absolute w-3 h-3 bg-emerald-500 rounded-full shadow-[0_0_15px_rgba(16,185,129,1)] z-10 -ml-1.5 -mt-1.5"
-                  animate={{
-                    left: ["50%", "50%", "80%", "50%"],
-                    top: ["10%", "25%", "60%", "95%"],
-                    opacity: [0, 1, 1, 0]
-                  }}
-                  transition={{ duration: 3, repeat: Infinity, ease: "linear", times: [0, 0.2, 0.6, 1] }}
-                />
+                {/* Animated Data Packets */}
+                
+                {/* Phase 0 Packets (100% Miss, 2 subqueries) */}
+                <AnimatePresence>
+                  {queryPhase === 0 && (
+                    <>
+                      {/* Sub 1 */}
+                      <motion.div 
+                        key="miss-1"
+                        className="absolute w-2 h-2 bg-red-500 rounded-full shadow-[0_0_15px_rgba(239,68,68,1)] z-10 -ml-1 -mt-1"
+                        animate={{
+                          left: ["50%", "50%", "50%", "25%", "20%", "35%", "50%"],
+                          top:  ["10%", "24%", "42%", "54%", "65%", "84%", "92%"],
+                          opacity: [0, 1, 1, 1, 1, 1, 0],
+                          backgroundColor: ["#3b82f6", "#3b82f6", "#ef4444", "#ef4444", "#ef4444", "#ef4444", "#ef4444"]
+                        }}
+                        transition={{ duration: 4, repeat: Infinity, ease: "linear", times: [0, 0.15, 0.3, 0.4, 0.5, 0.75, 1] }}
+                      />
+                      {/* Sub 2 */}
+                      <motion.div 
+                        key="miss-2"
+                        className="absolute w-2 h-2 bg-red-500 rounded-full shadow-[0_0_15px_rgba(239,68,68,1)] z-10 -ml-1 -mt-1"
+                        animate={{
+                          left: ["50%", "50%", "50%", "33%", "20%", "35%", "50%"],
+                          top:  ["10%", "24%", "42%", "54%", "65%", "84%", "92%"],
+                          opacity: [0, 1, 1, 1, 1, 1, 0],
+                          backgroundColor: ["#3b82f6", "#3b82f6", "#ef4444", "#ef4444", "#ef4444", "#ef4444", "#ef4444"]
+                        }}
+                        transition={{ duration: 4, repeat: Infinity, ease: "linear", times: [0, 0.15, 0.3, 0.4, 0.5, 0.75, 1] }}
+                      />
+                    </>
+                  )}
+                </AnimatePresence>
+
+                {/* Phase 1 Packet (Complete Hit) */}
+                <AnimatePresence>
+                  {queryPhase === 1 && (
+                    <motion.div 
+                      key="hit-packet"
+                      className="absolute w-3 h-3 bg-emerald-500 rounded-full shadow-[0_0_15px_rgba(16,185,129,1)] z-10 -ml-1.5 -mt-1.5"
+                      animate={{
+                        left: ["50%", "50%", "80%", "80%", "80%", "65%", "50%"],
+                        top:  ["10%", "24%", "42%", "54%", "65%", "84%", "92%"],
+                        opacity: [0, 1, 1, 1, 1, 1, 0]
+                      }}
+                      transition={{ duration: 4, repeat: Infinity, ease: "linear", times: [0, 0.15, 0.3, 0.4, 0.5, 0.75, 1] }}
+                    />
+                  )}
+                </AnimatePresence>
+
+                {/* Phase 2 Packets (Partial Hit) */}
+                <AnimatePresence>
+                  {queryPhase === 2 && (
+                    <>
+                      {/* Sub-packet 1: Miss */}
+                      <motion.div 
+                        key="partial-miss"
+                        className="absolute w-2.5 h-2.5 bg-blue-500 rounded-full shadow-[0_0_15px_rgba(59,130,246,1)] z-10 -ml-[5px] -mt-[5px]"
+                        animate={{
+                          left: ["50%", "50%", "50%", "33%", "20%", "35%", "50%"],
+                          top:  ["10%", "24%", "42%", "54%", "65%", "84%", "92%"],
+                          opacity: [0, 1, 1, 1, 1, 1, 0],
+                          backgroundColor: ["#3b82f6", "#3b82f6", "#3b82f6", "#ef4444", "#ef4444", "#ef4444", "#ef4444"]
+                        }}
+                        transition={{ duration: 4, repeat: Infinity, ease: "linear", times: [0, 0.15, 0.3, 0.4, 0.5, 0.75, 1] }}
+                      />
+                      {/* Sub-packet 2: Hit */}
+                      <motion.div 
+                        key="partial-hit"
+                        className="absolute w-2.5 h-2.5 bg-blue-500 rounded-full shadow-[0_0_15px_rgba(59,130,246,1)] z-10 -ml-[5px] -mt-[5px]"
+                        animate={{
+                          left: ["50%", "50%", "50%", "69%", "80%", "65%", "50%"],
+                          top:  ["10%", "24%", "42%", "54%", "65%", "84%", "92%"],
+                          opacity: [0, 1, 1, 1, 1, 1, 0],
+                          backgroundColor: ["#3b82f6", "#3b82f6", "#3b82f6", "#10b981", "#10b981", "#10b981", "#10b981"]
+                        }}
+                        transition={{ duration: 4, repeat: Infinity, ease: "linear", times: [0, 0.15, 0.3, 0.4, 0.5, 0.75, 1] }}
+                      />
+                    </>
+                  )}
+                </AnimatePresence>
 
                 {/* Nodes */}
                 
                 {/* 1. Incoming Query */}
-                <div className="absolute top-[10%] left-1/2 -translate-x-1/2 -translate-y-1/2 z-20">
-                  <div className="bg-background/90 border border-white/10 px-3 py-1.5 rounded-lg text-[10px] font-bold text-foreground shadow-lg flex items-center gap-1.5 whitespace-nowrap">
-                    Incoming Query
+                <div className="absolute top-[6%] left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 w-[260px] text-center">
+                  <div className="bg-background/90 border border-white/10 px-3 py-2 rounded-lg shadow-lg">
+                    <div className="text-[9px] font-bold text-foreground truncate">
+                      {queryPhase === 0 && "Query: What gift for my wife and nearest store?"}
+                      {queryPhase === 1 && "Query: What gift should I get my wife?"}
+                      {queryPhase === 2 && "Query: What gift for my wife and nearest store?"}
+                    </div>
+                    <div className={`text-[8px] mt-1 font-mono uppercase font-bold ${queryPhase === 0 ? 'text-blue-400' : queryPhase === 1 ? 'text-emerald-400' : 'text-blue-400'}`}>
+                      {queryPhase === 0 && "Complex Query"}
+                      {queryPhase === 1 && "100% Semantic Hit"}
+                      {queryPhase === 2 && "Complex Query"}
+                    </div>
                   </div>
                 </div>
 
                 {/* 2. Cache Lookup */}
-                <div className="absolute top-[25%] left-1/2 -translate-x-1/2 -translate-y-1/2 z-20">
+                <div className="absolute top-[24%] left-1/2 -translate-x-1/2 -translate-y-1/2 z-20">
                   <div className="bg-background/90 border border-primary-500/30 px-3 py-1.5 rounded-lg text-[10px] font-bold text-primary-500 shadow-lg flex flex-col items-center">
                     <Search size={12} className="mb-0.5" />
                     Cache Lookup
                   </div>
                 </div>
 
-                {/* 3. Miss (Left) */}
-                <div className="absolute top-[60%] left-[20%] -translate-x-1/2 -translate-y-1/2 z-20 opacity-40">
-                  <div className="bg-background/90 border border-red-500/30 p-2 rounded-lg text-center shadow-lg w-[120px]">
-                    <div className="text-[8px] font-bold text-red-500 uppercase tracking-widest mb-1">Miss</div>
-                    <div className="text-[9px] text-foreground font-bold uppercase mb-1.5">Full Synthesis</div>
-                    <div className="flex flex-col gap-1 mb-2 text-[7.5px] md:text-[8px] font-mono text-left bg-black/40 p-1.5 rounded border border-white/5">
-                      <div className="flex items-center gap-1 text-red-300/80"><span className="text-red-500 font-bold">1.</span> Vector Retrieve</div>
-                      <div className="flex items-center gap-1 text-red-300/80"><span className="text-red-500 font-bold">2.</span> Graph Traversal</div>
-                      <div className="flex items-center gap-1 text-red-300/80"><span className="text-red-500 font-bold">3.</span> Context Compact</div>
-                      <div className="flex items-center gap-1 text-red-300/80"><span className="text-red-500 font-bold">4.</span> LLM Generation</div>
+                {/* 3. Query Breakdown (Mid) */}
+                <div className={`absolute top-[42%] left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 transition-opacity duration-500 ${queryPhase === 0 || queryPhase === 2 ? 'opacity-100' : 'opacity-20'}`}>
+                  <div className="bg-background/90 border border-blue-500/30 p-2 rounded-lg text-center shadow-lg w-[80px]">
+                    <div className="text-[7px] font-bold text-blue-500 uppercase tracking-widest mb-1">Decompose</div>
+                    <div className="text-[8px] text-foreground font-bold uppercase">Sub-Queries</div>
+                  </div>
+                </div>
+
+                {/* 4. Match Gateway (Right) */}
+                <div className={`absolute top-[42%] left-[80%] -translate-x-1/2 -translate-y-1/2 z-20 transition-opacity duration-500 ${queryPhase === 1 ? 'opacity-100' : 'opacity-20'}`}>
+                  <div className="bg-emerald-500/10 border border-emerald-500/30 px-2 py-1 rounded text-center shadow-lg">
+                    <div className="text-[7px] font-bold text-emerald-500 uppercase tracking-widest">Match Detected</div>
+                  </div>
+                </div>
+
+                {/* 5. Full Synthesis (Left) */}
+                <div className={`absolute top-[65%] left-[20%] -translate-x-1/2 -translate-y-1/2 z-20 transition-opacity duration-500 ${queryPhase === 0 || queryPhase === 2 ? 'opacity-100' : 'opacity-20'}`}>
+                  <div className="bg-background/90 border border-red-500/30 p-2 rounded-lg text-center shadow-lg w-[110px]">
+                    <div className="text-[7px] font-bold text-red-500 uppercase tracking-widest mb-1">Miss</div>
+                    <div className="text-[8px] text-foreground font-bold uppercase mb-1.5">Full Synthesis</div>
+                    <div className="flex flex-col gap-1 mb-2 text-[7px] font-mono text-left bg-black/40 p-1.5 rounded border border-white/5">
+                      <div className="flex items-center gap-1 text-red-300/80"><span className="text-red-500 font-bold">1.</span> Retrieve</div>
+                      <div className="flex items-center gap-1 text-red-300/80"><span className="text-red-500 font-bold">2.</span> Traversal</div>
+                      <div className="flex items-center gap-1 text-red-300/80"><span className="text-red-500 font-bold">3.</span> Compact</div>
+                      <div className="flex items-center gap-1 text-red-300/80"><span className="text-red-500 font-bold">4.</span> Generate</div>
                     </div>
-                    <div className="text-[8px] font-bold text-red-400 bg-red-500/10 rounded py-0.5 border border-red-500/20">Cost: 5,000+ tkns</div>
+                    <div className="text-[8px] font-bold text-red-400 bg-red-500/10 rounded py-0.5 border border-red-500/20">Cost: {queryPhase === 0 ? "12,000+" : "6,000+"} tkns</div>
                   </div>
                 </div>
 
-                {/* 4. Match (Right) */}
-                <div className="absolute top-[60%] left-[80%] -translate-x-1/2 -translate-y-1/2 z-20">
-                  <div className="bg-background/90 border border-emerald-500/30 p-2 rounded-lg text-center shadow-lg w-[110px]">
-                    <div className="text-[8px] font-bold text-emerald-500 uppercase tracking-widest mb-1">Match</div>
-                    <div className="text-[9px] text-foreground font-bold uppercase">LLM Verifier</div>
-                    <div className="text-[8px] text-emerald-400 font-mono mt-1 bg-emerald-500/10 px-1 rounded inline-block">12 tkns</div>
+                {/* 6. Verifier (Far Right) */}
+                <div className={`absolute top-[65%] left-[80%] -translate-x-1/2 -translate-y-1/2 z-20 transition-opacity duration-500 ${queryPhase === 1 || queryPhase === 2 ? 'opacity-100' : 'opacity-20'}`}>
+                  <div className="bg-background/90 border border-emerald-500/30 p-2 rounded-lg text-center shadow-lg w-[80px]">
+                    <div className="text-[7px] font-bold text-emerald-500 uppercase tracking-widest mb-1">Match</div>
+                    <div className="text-[8px] text-foreground font-bold uppercase">Fast Verifier LLM</div>
                   </div>
                 </div>
 
-                {/* 5. Cache Hit / Response */}
-                <div className="absolute top-[95%] left-1/2 -translate-x-1/2 -translate-y-1/2 z-20">
-                  <div className="bg-emerald-500/10 border border-emerald-500/50 px-4 py-2 rounded-lg text-center shadow-[0_0_20px_rgba(16,185,129,0.15)] flex flex-col items-center">
-                    <div className="text-[9px] font-bold text-emerald-500 uppercase tracking-widest mb-1 flex items-center gap-1"><Zap size={10}/> Cache Hit</div>
-                    <div className="text-[10px] text-emerald-400 font-bold uppercase">Instant Response</div>
+                {/* 7. Cache Hit / Response */}
+                <div className="absolute top-[92%] left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 w-[180px]">
+                  <div className={`transition-all duration-500 px-4 py-2 rounded-lg text-center flex flex-col items-center shadow-lg ${
+                    queryPhase === 0 
+                      ? "bg-red-500/10 border border-red-500/30 shadow-[0_0_20px_rgba(239,68,68,0.1)]" 
+                      : queryPhase === 1 
+                        ? "bg-emerald-500/10 border border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.15)]"
+                        : "bg-blue-500/10 border border-blue-500/40 shadow-[0_0_20px_rgba(59,130,246,0.15)]"
+                  }`}>
+                    <div className={`text-[9px] font-bold uppercase tracking-widest flex items-center justify-center gap-1 ${
+                      queryPhase === 0 ? "text-red-500" : queryPhase === 1 ? "text-emerald-500" : "text-blue-500"
+                    }`}>
+                      <Zap size={10}/> {queryPhase === 0 ? "Fresh Response" : queryPhase === 1 ? "Instant Response" : "Partial Synthesis"}
+                    </div>
                   </div>
                 </div>
-
-             </div>
+              </div>
           </div>
         </motion.div>
       </div>
