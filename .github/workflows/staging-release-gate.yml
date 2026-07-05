@@ -8,6 +8,8 @@ on:
 jobs:
   release-gate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,6 +28,11 @@ jobs:
         run: npm ci
       - name: Generate version.json
         run: node scripts/generate_version.js
+      - name: Commit version.json
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: auto-generate version.json"
+          file_pattern: "web/public/version.json"
       - name: Verify generated version.json exists
         run: test -s web/public/version.json
       - name: Lint web

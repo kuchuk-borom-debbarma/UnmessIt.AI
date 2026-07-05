@@ -1,7 +1,15 @@
 {
-  "version": "0.1.4",
-  "changelog": "## 0.1.4\n**Release Date**: 2026-07-05\n\n## Improvements\n- **Release History**: The release history in the UI is now sorted in descending order, showing the latest changes at the very top.",
+  "version": "0.1.6",
+  "changelog": "## 0.1.6\n\n- Fix: Ensure `version.json` is committed to Git so the frontend update checker correctly triggers new update banners.",
   "history": [
+    {
+      "version": "0.1.6",
+      "changelog": "## 0.1.6\n\n- Fix: Ensure `version.json` is committed to Git so the frontend update checker correctly triggers new update banners."
+    },
+    {
+      "version": "0.1.5",
+      "changelog": "## 0.1.5\n\n- **Fix**: Allowed documentation-only PRs to bypass the version bump requirement in the staging release gate.\n- **Fix (Web)**: Resolved a UI bug where the \"expand/collapse\" button on very long notes failed to render on initial page load due to clipped height measurements.\n- **Build**: Dramatically improved Docker and GitHub Actions CI build times (especially for multi-arch/QEMU) by fixing layer caching, adding proper BuildKit cache mounts (`--mount=type=cache`), and removing redundant `uv` syncs.\n- **Docs**: Massively overhauled the documentation structure in `server/docs/`, deleting obsolete documents and creating the definitive `ARCHITECTURE_DEEP_DIVE.md` engineering specification.\n- **Docs**: Rewrote the `README.md` and `current-state.md` to cleanly separate user-facing features from internal system architecture (EDA, RAG, Idempotency)."
+    },
     {
       "version": "0.1.4",
       "changelog": "## 0.1.4\n**Release Date**: 2026-07-05\n\n## Improvements\n- **Release History**: The release history in the UI is now sorted in descending order, showing the latest changes at the very top."
