@@ -27,23 +27,31 @@ export function NoteDetailView({ token }: { token: string }) {
     if (!innerRef.current) return
     const el = innerRef.current
     
+    let isActive = true
     const checkHeight = () => {
-      if (el) {
-        setCanExpand(el.scrollHeight > 400 || el.clientHeight > 400)
+      if (!isActive || !el) return
+      const contentEl = el.firstElementChild || el
+      if (contentEl.scrollHeight > 350 || el.scrollHeight > 350) {
+        setCanExpand(true)
       }
     }
 
     const observer = new ResizeObserver(() => checkHeight())
     observer.observe(el)
+    if (el.firstElementChild) {
+      observer.observe(el.firstElementChild)
+    }
     
     checkHeight()
-    const timer1 = setTimeout(checkHeight, 50)
-    const timer2 = setTimeout(checkHeight, 300)
+    // Aggressive polling for the first 2 seconds to catch any late layout shifts
+    const interval = setInterval(checkHeight, 100)
+    const timeout = setTimeout(() => clearInterval(interval), 2000)
     
     return () => {
+      isActive = false
       observer.disconnect()
-      clearTimeout(timer1)
-      clearTimeout(timer2)
+      clearInterval(interval)
+      clearTimeout(timeout)
     }
   }, [note, isEditing])
 
