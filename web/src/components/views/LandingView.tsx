@@ -410,10 +410,16 @@ export function LandingView() {
 
                 {/* 3. Miss (Left) */}
                 <div className="absolute top-[60%] left-[20%] -translate-x-1/2 -translate-y-1/2 z-20 opacity-40">
-                  <div className="bg-background/90 border border-red-500/30 p-2 rounded-lg text-center shadow-lg w-[110px]">
+                  <div className="bg-background/90 border border-red-500/30 p-2 rounded-lg text-center shadow-lg w-[120px]">
                     <div className="text-[8px] font-bold text-red-500 uppercase tracking-widest mb-1">Miss</div>
-                    <div className="text-[9px] text-foreground font-bold uppercase">Full Synthesis</div>
-                    <div className="text-[8px] text-muted-foreground mt-1">5,000+ tkns</div>
+                    <div className="text-[9px] text-foreground font-bold uppercase mb-1.5">Full Synthesis</div>
+                    <div className="flex flex-col gap-1 mb-2 text-[7.5px] md:text-[8px] font-mono text-left bg-black/40 p-1.5 rounded border border-white/5">
+                      <div className="flex items-center gap-1 text-red-300/80"><span className="text-red-500 font-bold">1.</span> Vector Retrieve</div>
+                      <div className="flex items-center gap-1 text-red-300/80"><span className="text-red-500 font-bold">2.</span> Graph Traversal</div>
+                      <div className="flex items-center gap-1 text-red-300/80"><span className="text-red-500 font-bold">3.</span> Context Compact</div>
+                      <div className="flex items-center gap-1 text-red-300/80"><span className="text-red-500 font-bold">4.</span> LLM Generation</div>
+                    </div>
+                    <div className="text-[8px] font-bold text-red-400 bg-red-500/10 rounded py-0.5 border border-red-500/20">Cost: 5,000+ tkns</div>
                   </div>
                 </div>
 
