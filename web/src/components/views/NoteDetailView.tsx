@@ -329,8 +329,10 @@ export function NoteDetailView({ token }: { token: string }) {
                   maxHeight: (hasCitationTarget || isExpanded) ? 'none' : 400,
                 }}
               >
-                <div ref={innerRef} className="p-6 overflow-x-auto">
-                  {renderNoteText()}
+                <div className="p-6 overflow-x-auto">
+                  <div ref={innerRef}>
+                    {renderNoteText()}
+                  </div>
                 </div>
                 {(canExpand && !isExpanded && !hasCitationTarget) && (
                   <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-card to-transparent pointer-events-none" />
