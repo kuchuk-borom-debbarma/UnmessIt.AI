@@ -7,12 +7,12 @@ WORKDIR /app
 
 # Cache dependency installation
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --no-dev
 
-# Copy source and sync the project
+# Copy source
 COPY src ./src
 COPY resources ./resources
-RUN uv sync --frozen --no-dev
 
 # Final slim runtime image
 FROM python:3.12-slim
