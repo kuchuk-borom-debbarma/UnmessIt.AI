@@ -2,14 +2,14 @@ import { Outlet } from 'react-router-dom'
 import { FloatingDock } from './FloatingDock'
 import { useVersionCheck } from '../../lib/useVersionCheck'
 import { ReleaseHistoryModal } from '../ui/ReleaseHistoryModal'
-import { ExternalLink, RefreshCw, UserCircle } from 'lucide-react'
+import { ExternalLink, RefreshCw, GitBranch } from 'lucide-react'
 // import { motion } from 'framer-motion'
 import { ConfigProvider } from '../../lib/context/ConfigContext'
 import { useConfig } from '../../lib/context/useConfig'
 import { AlertTriangle, ChevronRight, ServerOff } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { useEffect, useState } from 'react'
-import { API_BASE, authApi } from '../../lib/api'
+import { API_BASE } from '../../lib/api'
 
 const REPOSITORY_URL = 'https://github.com/kuchuk-borom-debbarma/UnmessIt.AI'
 
@@ -94,41 +94,34 @@ function GlobalUpdateBanner({ updateAvailable, versionInfo }: { updateAvailable:
 
 export function AppShell({ token, onLogout }: { token: string | null; onLogout: () => void }) {
   const [showChangelog, setShowChangelog] = useState(false)
-  const [user, setUser] = useState<{ id: string; identifier: string } | null>(null)
   const { updateAvailable, versionInfo, currentVersion } = useVersionCheck()
   // const location = useLocation()
-
-  useEffect(() => {
-    if (!token) {
-      setUser(null)
-      return
-    }
-    let mounted = true
-    authApi.me(token)
-      .then((next) => { if (mounted) setUser(next) })
-      .catch(() => { if (mounted) setUser(null) })
-    return () => { mounted = false }
-  }, [token])
 
   return (
     <ConfigProvider token={token}>
       {token && (
         <div className="fixed top-0 inset-x-0 z-[60] pointer-events-none">
           <div className="mx-auto flex max-w-[1600px] items-center justify-between px-4 py-3 md:px-8 pointer-events-auto">
-            <div className="liquid-glass flex min-w-0 items-center gap-3 rounded-lg px-3 py-2">
-              <UserCircle size={20} className="shrink-0 text-primary-400" />
-              <div className="min-w-0">
-                <div className="truncate text-sm font-bold">{user?.identifier || 'Signed in'}</div>
-                <div className="truncate text-[11px] font-medium text-muted-foreground">Local workspace</div>
-              </div>
+            <div className="flex items-center gap-2">
+              <a
+                href={REPOSITORY_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="liquid-glass inline-flex h-10 w-10 items-center justify-center rounded-lg text-muted-foreground transition-all hover:text-foreground active:scale-95"
+                title="Star on GitHub"
+              >
+                <GitBranch size={20} />
+              </a>
             </div>
-            <button
-              className="liquid-glass inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-bold text-muted-foreground transition-colors hover:text-foreground"
-              onClick={() => setShowChangelog(true)}
-            >
-              v{currentVersion}
-              <span className="hidden text-xs font-semibold text-primary-400 sm:inline">Release history</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                className="liquid-glass inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-bold text-muted-foreground transition-all hover:text-foreground active:scale-95"
+                onClick={() => setShowChangelog(true)}
+              >
+                v{currentVersion}
+                <span className="hidden text-xs font-semibold text-primary-400 sm:inline">Release history</span>
+              </button>
+            </div>
           </div>
           <GlobalConnectionBanner />
           <GlobalWarningBanner />

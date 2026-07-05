@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { FileText, Bot, Activity, Settings, LogOut, Moon, Sun, LogIn, UserPlus } from 'lucide-react'
+import { FileText, Bot, Activity, Settings, LogOut, Moon, Sun, LogIn, UserPlus, UserCircle } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { useTheme } from '../../lib/context/useTheme'
 
@@ -82,14 +82,24 @@ export function FloatingDock({ isAuthenticated, onLogout }: { isAuthenticated: b
           {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
         </button>
         {isAuthenticated && (
-          <button
-            onClick={onLogout}
-            className="nav-pill hover:text-red-400 hover:bg-red-500/10"
-            aria-label="Logout"
-            title="Logout"
-          >
-            <LogOut size={20} />
-          </button>
+          <>
+            <div className="nav-pill group relative cursor-default">
+              <div className="flex h-11 w-11 items-center justify-center">
+                <UserCircle size={20} className="text-primary-400" />
+              </div>
+              <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none liquid-glass px-3 py-1.5 rounded-lg whitespace-nowrap text-xs font-bold shadow-xl">
+                Profile Active
+              </div>
+            </div>
+            <button
+              onClick={onLogout}
+              className="nav-pill hover:text-red-400 hover:bg-red-500/10"
+              aria-label="Logout"
+              title="Logout"
+            >
+              <LogOut size={20} />
+            </button>
+          </>
         )}
       </div>
     </div>
