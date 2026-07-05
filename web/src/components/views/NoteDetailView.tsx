@@ -25,15 +25,26 @@ export function NoteDetailView({ token }: { token: string }) {
   
   useEffect(() => {
     if (!innerRef.current) return
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setCanExpand(entry.target.clientHeight > 400)
-      }
-    })
-    observer.observe(innerRef.current)
-    setCanExpand(innerRef.current.clientHeight > 400)
+    const el = innerRef.current
     
-    return () => observer.disconnect()
+    const checkHeight = () => {
+      if (el) {
+        setCanExpand(el.scrollHeight > 400 || el.clientHeight > 400)
+      }
+    }
+
+    const observer = new ResizeObserver(() => checkHeight())
+    observer.observe(el)
+    
+    checkHeight()
+    const timer1 = setTimeout(checkHeight, 50)
+    const timer2 = setTimeout(checkHeight, 300)
+    
+    return () => {
+      observer.disconnect()
+      clearTimeout(timer1)
+      clearTimeout(timer2)
+    }
   }, [note, isEditing])
 
   const [editTagsVal, setEditTagsVal] = useState('')
