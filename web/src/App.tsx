@@ -45,11 +45,11 @@ function App() {
     <Routes>
       <Route
         path="/login"
-        element={token ? <Navigate to="/" replace /> : <AuthScreen initialMode="signin" onAuthSuccess={saveToken} />}
+        element={token ? <Navigate to="/notes" replace /> : <AuthScreen initialMode="signin" onAuthSuccess={saveToken} />}
       />
       <Route
         path="/signup"
-        element={token ? <Navigate to="/" replace /> : <AuthScreen initialMode="signup" onAuthSuccess={saveToken} />}
+        element={token ? <Navigate to="/notes" replace /> : <AuthScreen initialMode="signup" onAuthSuccess={saveToken} />}
       />
       <Route element={<AskProvider><AppShell token={token} onLogout={() => saveToken(null)} /></AskProvider>}>
         <Route path="/" element={<LandingView />} />

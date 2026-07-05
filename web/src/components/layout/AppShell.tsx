@@ -1,13 +1,11 @@
-import { Outlet } from 'react-router-dom'
+import { Outlet, NavLink, useLocation } from 'react-router-dom'
 import { FloatingDock } from './FloatingDock'
 import { useVersionCheck } from '../../lib/useVersionCheck'
 import { ReleaseHistoryModal } from '../ui/ReleaseHistoryModal'
-import { ExternalLink, RefreshCw, GitBranch } from 'lucide-react'
-// import { motion } from 'framer-motion'
+import { ExternalLink, RefreshCw, AlertTriangle, ChevronRight, ServerOff, Sun, Moon, Settings } from 'lucide-react'
 import { ConfigProvider } from '../../lib/context/ConfigContext'
 import { useConfig } from '../../lib/context/useConfig'
-import { AlertTriangle, ChevronRight, ServerOff } from 'lucide-react'
-import { NavLink } from 'react-router-dom'
+import { useTheme } from '../../lib/context/useTheme'
 import { useEffect, useState } from 'react'
 import { API_BASE } from '../../lib/api'
 
@@ -95,7 +93,9 @@ function GlobalUpdateBanner({ updateAvailable, versionInfo }: { updateAvailable:
 export function AppShell({ token, onLogout }: { token: string | null; onLogout: () => void }) {
   const [showChangelog, setShowChangelog] = useState(false)
   const { updateAvailable, versionInfo, currentVersion } = useVersionCheck()
-  // const location = useLocation()
+  const location = useLocation()
+  const { theme, setTheme } = useTheme()
+  const isLanding = location.pathname === '/'
 
   return (
     <ConfigProvider token={token}>
@@ -103,19 +103,33 @@ export function AppShell({ token, onLogout }: { token: string | null; onLogout: 
         <div className="fixed top-0 inset-x-0 z-[60] pointer-events-none">
           <div className="mx-auto flex max-w-[1600px] items-center justify-between px-4 py-3 md:px-8 pointer-events-auto">
             <div className="flex items-center gap-2">
-              <a
-                href={REPOSITORY_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="liquid-glass inline-flex h-10 w-10 items-center justify-center rounded-lg text-muted-foreground transition-all hover:text-foreground active:scale-95"
-                title="Star on GitHub"
+              <NavLink
+                to="/"
+                className="liquid-glass inline-flex h-10 w-10 items-center justify-center rounded-lg text-muted-foreground transition-all hover:scale-105 active:scale-95 hover:text-foreground"
+                title="UnmessIt.AI Home"
               >
-                <GitBranch size={20} />
-              </a>
+                <img src="/favicon.svg" alt="UnmessIt.AI Logo" className="w-5 h-5" />
+              </NavLink>
             </div>
             <div className="flex items-center gap-2">
               <button
-                className="liquid-glass inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-bold text-muted-foreground transition-all hover:text-foreground active:scale-95"
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                className="liquid-glass inline-flex h-10 w-10 items-center justify-center rounded-lg text-muted-foreground transition-all hover:text-foreground active:scale-95"
+                title="Toggle Theme"
+              >
+                {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+              </button>
+              {token && !isLanding && (
+                <NavLink
+                  to="/settings"
+                  className="liquid-glass inline-flex h-10 w-10 items-center justify-center rounded-lg text-muted-foreground transition-all hover:text-foreground active:scale-95"
+                  title="Settings"
+                >
+                  <Settings size={20} />
+                </NavLink>
+              )}
+              <button
+                className="liquid-glass inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-bold text-muted-foreground transition-all hover:text-foreground active:scale-95 ml-2"
                 onClick={() => setShowChangelog(true)}
               >
                 v{currentVersion}
@@ -135,7 +149,7 @@ export function AppShell({ token, onLogout }: { token: string | null; onLogout: 
         </div>
       </main>
 
-      <FloatingDock isAuthenticated={Boolean(token)} onLogout={onLogout} />
+      {!isLanding && <FloatingDock token={token} onLogout={onLogout} />}
       
       <ReleaseHistoryModal 
         isOpen={showChangelog} 
