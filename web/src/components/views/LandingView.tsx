@@ -351,113 +351,90 @@ export function LandingView() {
               <Zap size={18} />
               <span className="text-xs font-bold uppercase tracking-widest">LLM-Verified Caching</span>
             </div>
-            <h3 className="text-3xl font-bold tracking-tight text-foreground mb-4">Instant answers. Zero hallucinations.</h3>
+            <h3 className="text-3xl font-bold tracking-tight text-foreground mb-4">Skip the expensive steps.</h3>
             <p className="text-base font-medium text-muted-foreground leading-relaxed">
-              Save on token costs and get instant responses. By utilizing Exact Caches and Semantic Vector Caches, we skip expensive synthesis passes. For borderline semantic matches, a fast <strong>LLM Semantic Verifier</strong> double-checks query alignment before returning the cached result, guaranteeing accuracy.
+              Full synthesis requires massive context windows for retrieval, graph traversal, and compaction. By utilizing Semantic Vector Caches, we can bypass these entirely. A tiny 12-token <strong>LLM Verifier</strong> confirms intent alignment and instantly returns the cached answer, saving you thousands of tokens per query.
             </p>
           </div>
           {/* Graphic Side */}
-          <div className="liquid-glass rounded-2xl p-0 border border-border/50 shadow-sm relative overflow-hidden flex flex-col h-[400px]">
-             {/* Header */}
-             <div className="bg-background/80 px-4 py-3 border-b border-white/5 flex items-center justify-between">
-               <div className="flex items-center gap-2">
-                 <Bot size={14} className="text-amber-500" />
-                 <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Pipeline Race</span>
-               </div>
-               <div className="text-[10px] font-mono text-muted-foreground bg-white/5 px-2 py-0.5 rounded">Query ID: 8f92a</div>
-             </div>
+          <div className="liquid-glass rounded-2xl p-6 border border-border/50 shadow-sm relative overflow-hidden flex items-center justify-center min-h-[420px]">
+             
+             {/* Flowchart Container */}
+             <div className="relative w-full max-w-sm h-[360px]">
+                
+                {/* SVG Connecting Lines */}
+                <svg className="absolute inset-0 w-full h-full z-0 pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
+                  {/* Query to Lookup */}
+                  <path d="M 50 10 L 50 25" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="0.5" />
+                  
+                  {/* Lookup to Miss (Left) */}
+                  <path d="M 50 35 C 50 45, 20 45, 20 60" fill="none" stroke="rgba(239,68,68,0.2)" strokeWidth="0.5" strokeDasharray="1,1" />
+                  
+                  {/* Lookup to Match (Right) */}
+                  <path d="M 50 35 C 50 45, 80 45, 80 60" fill="none" stroke="rgba(16,185,129,0.3)" strokeWidth="0.5" />
+                  
+                  {/* Miss to Response */}
+                  <path d="M 20 70 C 20 85, 50 85, 50 95" fill="none" stroke="rgba(239,68,68,0.2)" strokeWidth="0.5" strokeDasharray="1,1" />
+                  
+                  {/* Match to Response */}
+                  <path d="M 80 70 C 80 85, 50 85, 50 95" fill="none" stroke="rgba(16,185,129,0.3)" strokeWidth="0.5" />
+                </svg>
 
-             <div className="flex-1 flex p-4 md:p-6 gap-4 md:gap-6 relative bg-black/20">
-               
-               {/* Left: Standard Pipeline */}
-               <div className="flex-1 flex flex-col">
-                 <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-3 text-center bg-background/50 py-1.5 rounded border border-white/5">Full Synthesis</div>
-                 
-                 {/* Progress Bar Container */}
-                 <div className="flex-1 bg-black/60 dark:bg-black/40 rounded-xl border border-white/5 relative overflow-hidden flex flex-col justify-end p-2 md:p-3">
-                   {/* Ghost Bar */}
-                   <div className="absolute inset-x-3 bottom-3 top-3 bg-white/5 rounded-lg border border-white/5"></div>
-                   
-                   <motion.div 
-                     className="bg-red-500/20 border border-red-500/40 w-full rounded-lg relative flex flex-col justify-start items-center overflow-hidden z-10"
-                     initial={{ height: "0%" }}
-                     animate={{ height: demoStep === 0 ? "0%" : demoStep < 8 ? `${demoStep * 12}%` : "0%" }}
-                     transition={{ duration: 1.2, ease: "linear" }}
-                   >
-                      {/* Token Counter */}
-                      {demoStep > 0 && (
-                        <div className="pt-2 text-[10px] md:text-xs font-mono font-bold text-red-400 drop-shadow-md">
-                          -{demoStep * 562} tkns
-                        </div>
-                      )}
-                   </motion.div>
-                 </div>
-               </div>
+                {/* Animated Data Packet along the Match Path */}
+                <motion.div 
+                  className="absolute w-3 h-3 bg-emerald-500 rounded-full shadow-[0_0_15px_rgba(16,185,129,1)] z-10 -ml-1.5 -mt-1.5"
+                  animate={{
+                    left: ["50%", "50%", "80%", "50%"],
+                    top: ["10%", "25%", "60%", "95%"],
+                    opacity: [0, 1, 1, 0]
+                  }}
+                  transition={{ duration: 3, repeat: Infinity, ease: "linear", times: [0, 0.2, 0.6, 1] }}
+                />
 
-               {/* VS Divider */}
-               <div className="w-px bg-white/5 h-full relative flex items-center justify-center shrink-0">
-                 <div className="bg-background border border-white/10 px-2 py-1 rounded text-[9px] font-black tracking-widest text-muted-foreground absolute shadow-sm z-10">VS</div>
-               </div>
-               
-               {/* Right: Cache Pipeline */}
-               <div className="flex-1 flex flex-col">
-                 <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-500 mb-3 text-center bg-emerald-500/10 py-1.5 rounded border border-emerald-500/20">Verified Cache</div>
-                 
-                 <div className="flex-1 flex flex-col gap-3 md:gap-4 relative">
-                   {/* Verifier block */}
-                   <div className="bg-background/90 border border-amber-500/30 p-3 rounded-xl flex flex-col items-center justify-center h-20 relative shadow-sm z-20">
-                     <span className="text-[10px] font-bold uppercase tracking-wider text-amber-500 mb-1.5">Verifier</span>
-                     {demoStep >= 1 && demoStep < 3 ? (
-                       <span className="text-xs font-mono font-bold text-amber-400 animate-pulse">checking...</span>
-                     ) : demoStep >= 3 ? (
-                       <span className="text-xs font-mono font-bold text-emerald-500 flex items-center gap-1"><CheckCircle2 size={12}/> Match</span>
-                     ) : (
-                       <span className="text-xs font-mono text-muted-foreground opacity-50">idle</span>
-                     )}
-                   </div>
-                   
-                   {/* Connector Line */}
-                   <div className="absolute top-[80px] bottom-[140px] left-1/2 -translate-x-1/2 w-px bg-emerald-500/30 z-10">
-                     {demoStep >= 3 && (
-                       <motion.div 
-                         initial={{ top: 0, height: 0 }}
-                         animate={{ height: "100%" }}
-                         className="absolute top-0 w-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,1)]" 
-                       />
-                     )}
-                   </div>
+                {/* Nodes */}
+                
+                {/* 1. Incoming Query */}
+                <div className="absolute top-[10%] left-1/2 -translate-x-1/2 -translate-y-1/2 z-20">
+                  <div className="bg-background/90 border border-white/10 px-3 py-1.5 rounded-lg text-[10px] font-bold text-foreground shadow-lg flex items-center gap-1.5 whitespace-nowrap">
+                    Incoming Query
+                  </div>
+                </div>
 
-                   {/* Cache Hit Result */}
-                   <div className="flex-1 bg-black/60 dark:bg-black/40 rounded-xl border border-white/5 relative overflow-hidden flex flex-col justify-end p-2 md:p-3 z-20">
-                     <AnimatePresence>
-                       {demoStep >= 3 && (
-                         <motion.div 
-                           initial={{ height: "0%", opacity: 0 }}
-                           animate={{ height: "100%", opacity: 1 }}
-                           exit={{ opacity: 0 }}
-                           className="bg-emerald-500/20 border border-emerald-500/50 w-full rounded-lg flex items-center justify-center shadow-[0_0_30px_rgba(16,185,129,0.15)] relative overflow-hidden"
-                         >
-                           {/* Shimmer effect */}
-                           <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-emerald-400/10 to-transparent translate-x-[-100%] animate-[shimmer_2s_infinite]" />
-                           
-                           <div className="text-center relative z-10">
-                             <Zap size={28} className="text-emerald-500 mx-auto mb-2 drop-shadow-[0_0_15px_rgba(16,185,129,0.8)]" />
-                             <div className="text-[10px] md:text-xs font-black tracking-widest text-emerald-400">INSTANT</div>
-                             <div className="text-[9px] md:text-[10px] font-mono font-bold text-emerald-500/70 mt-1">0 tokens used</div>
-                           </div>
-                         </motion.div>
-                       )}
-                     </AnimatePresence>
-                   </div>
-                 </div>
-               </div>
+                {/* 2. Cache Lookup */}
+                <div className="absolute top-[25%] left-1/2 -translate-x-1/2 -translate-y-1/2 z-20">
+                  <div className="bg-background/90 border border-primary-500/30 px-3 py-1.5 rounded-lg text-[10px] font-bold text-primary-500 shadow-lg flex flex-col items-center">
+                    <Search size={12} className="mb-0.5" />
+                    Cache Lookup
+                  </div>
+                </div>
+
+                {/* 3. Miss (Left) */}
+                <div className="absolute top-[60%] left-[20%] -translate-x-1/2 -translate-y-1/2 z-20 opacity-40">
+                  <div className="bg-background/90 border border-red-500/30 p-2 rounded-lg text-center shadow-lg w-[110px]">
+                    <div className="text-[8px] font-bold text-red-500 uppercase tracking-widest mb-1">Miss</div>
+                    <div className="text-[9px] text-foreground font-bold uppercase">Full Synthesis</div>
+                    <div className="text-[8px] text-muted-foreground mt-1">5,000+ tkns</div>
+                  </div>
+                </div>
+
+                {/* 4. Match (Right) */}
+                <div className="absolute top-[60%] left-[80%] -translate-x-1/2 -translate-y-1/2 z-20">
+                  <div className="bg-background/90 border border-emerald-500/30 p-2 rounded-lg text-center shadow-lg w-[110px]">
+                    <div className="text-[8px] font-bold text-emerald-500 uppercase tracking-widest mb-1">Match</div>
+                    <div className="text-[9px] text-foreground font-bold uppercase">LLM Verifier</div>
+                    <div className="text-[8px] text-emerald-400 font-mono mt-1 bg-emerald-500/10 px-1 rounded inline-block">12 tkns</div>
+                  </div>
+                </div>
+
+                {/* 5. Cache Hit / Response */}
+                <div className="absolute top-[95%] left-1/2 -translate-x-1/2 -translate-y-1/2 z-20">
+                  <div className="bg-emerald-500/10 border border-emerald-500/50 px-4 py-2 rounded-lg text-center shadow-[0_0_20px_rgba(16,185,129,0.15)] flex flex-col items-center">
+                    <div className="text-[9px] font-bold text-emerald-500 uppercase tracking-widest mb-1 flex items-center gap-1"><Zap size={10}/> Cache Hit</div>
+                    <div className="text-[10px] text-emerald-400 font-bold uppercase">Instant Response</div>
+                  </div>
+                </div>
 
              </div>
-             <style dangerouslySetInnerHTML={{__html: `
-               @keyframes shimmer {
-                 100% { transform: translateX(100%); }
-               }
-             `}} />
           </div>
         </motion.div>
       </div>
