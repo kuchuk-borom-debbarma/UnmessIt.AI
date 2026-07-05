@@ -22,7 +22,7 @@ const history = fs.readdirSync(changelogDir)
     const av = a.match(semverRegex).slice(1).map(Number)
     const bv = b.match(semverRegex).slice(1).map(Number)
     for (let i = 0; i < 3; i += 1) {
-      if (av[i] !== bv[i]) return av[i] - bv[i]
+      if (av[i] !== bv[i]) return bv[i] - av[i]
     }
     return 0
   })
