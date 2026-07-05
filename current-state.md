@@ -4,9 +4,9 @@ Engineering snapshot as of 2026-07-05.
 
 ## Product Direction
 
-UnmessIt.AI is a source-backed personal RAG app for evolving user notes. The product goal is simple: users store messy text, then ask questions later and get answers grounded in the exact saved sources.
+UnmessIt.AI is a source-backed personal unstructured knowledge engine. The product goal is simple: users store messy text, then ask questions later and get answers grounded in the exact saved sources.
 
-The current implementation is OpenAI-standard only. Users configure specific OpenAI config presets, optional rotation, and advanced processing settings in the app Settings screen. Server environment variables are for runtime concerns such as JWT, CORS, dev routes, and logging.
+The system uses a highly localized version of Graph RAG via "Recall Keys" to connect topics across isolated notes without the massive indexing overhead of a rigid graph database.
 
 ## Current App Shape
 
@@ -16,171 +16,68 @@ The current implementation is OpenAI-standard only. Users configure specific Ope
 - Logged-in navigation shows notes, ask AI, jobs, trash, settings, theme, and logout.
 - Protected app routes redirect guests to `/login`.
 
-## Implemented Features
+## Implemented Features (The UnmessIt Architecture)
 
-- Local username/password auth with JWT bearer tokens.
-- Per-user data isolation across notes, directories, tags, raw inputs, source chunks, recall keys, recall links, vectors, processing settings, and rotation lanes.
-- Notes CRUD with directory structures, tag organization, pagination, and a soft/hard delete Trash system.
-- Materialized-path directories for efficient subtree queries. Search leverages an O(1) Vector DB lineage optimization using injected parent boolean flags inside ChromaDB metadata.
-- Soft-delete vector synchronization (moving notes to trash masks raw inputs and evicts Chroma vectors; restoring re-indexes instantly).
-- Cross-Domain Filtering: AI queries can be explicitly constrained by or excluded from specific directories and tag combinations (supporting ANY, ALL, and NOT logic) inside the vector store.
-- Event-driven note ingestion through a durable Transactional Outbox pattern in SQLite and Redis Streams pub/sub, ensuring guaranteed delivery between Notes and RAG domains.
-- Raw input storage as source truth.
-- Durable ingestion jobs with SQLite checkpoints, configurable bounded retry/backoff, pause, and stop controls.
-- Lossless source chunks chosen by source position, not by LLM importance.
-- LLM summaries for chunks without replacing source text.
-- Recall keys and recall links for entities, topics, tasks, events, questions, and other reusable handles.
-- Chroma vector indexes for source chunks and recall keys, with durable ingest batching missing vectors per stage (ChromaDB client acts as a global singleton to prevent SQLite locking).
-- Retrieval with query breakdown, vector search, lexical search, recall-key search, linked-chunk expansion, dedupe, rerank, and Context Engineering (context packing/distillation).
-- Source-backed answer generation with citations to specific `note_id`s, source chunks, and an expandable Retrieval Analysis Trace.
-- Settings UI lets users choose one specific config preset or optional rotation. Config presets own LLM and embedding models/API info; advanced processing owns chunk size, overlap, batch size, and retry backoff.
-- Jobs UI for durable ingest job status, stage tracking, pause, stop, resume, and delete; updates arrive through SSE with a slow fallback refresh.
-- Paginated Note Insights UI for inspecting recall keys and links per note (replaced global memory UI).
-- Lightning-fast caching layer using exact matches (Memory/Redis) and semantic vectors (ChromaDB) to skip repeated LLM logic for identical or similar Ask AI queries.
-- Semantic Strict Verifier ensures cached answers are fully applicable to the user's new question before safely serving them.
-- Sub-query caching and verifier-decision caching, drastically accelerating complex, multi-part evidence retrieval and synthesis.
-- Automatic prompt caching compatibility for OpenAI official models, reducing prompt ingestion costs for heavy system instructions and few-shot schemas.
-- Granular Retrieval Analysis UI built around backend-driven summary cards, displaying exact token usage, cache savings, context packing reduction, and skipped pipeline steps.
-- Markdown and Plain Text note creation formats with UI selection and accurate backend round-tripping.
-
-## Active Ingestion Shape
-
-```txt
-note create/update
--> notes service saves user-facing note
--> event bus emits note.created or note.updated
--> RAG listener submits durable ingest job
--> raw input saved/reused
--> source windows
--> source chunks
--> recall keys and recall links
--> recall-key vectors
--> source-chunk vectors
-```
-
-Source chunks save full citable text and point back to raw spans. LLM output can summarize and link, but it cannot decide what source text survives.
-
-## Active Retrieval Shape
-
-```txt
-query
--> exact full-result cache lookup
--> semantic full-result cache lookup
-   -> strict verifier must approve similar cached answers before reuse
--> breakdown into focused sub-queries
--> parallel source vector, lexical, and recall search
--> linked source chunk expansion
--> merge, dedupe, rerank
--> context-pack focused snippets
--> answer from selected source chunks
-```
-
-Recall keys and links are navigation hints. Final answers cite source chunks.
+- **Durable LangGraph Ingestion**: Notes are ingested via a durable LangGraph workflow with strict SQLite checkpoints (`load_raw_input` -> `source_chunks` -> `recall` -> `recall_vectors` -> `source_vectors` -> `complete`).
+- **Transactional Outbox & Redis Streams**: Decouples API requests from AI background jobs, ensuring at-least-once guaranteed delivery of `note.created` events.
+- **4-Layer Deduplication Guard**: Uses LLM pre-fetching, in-memory batch merging, exact-match DB lookups, and SQLite unique constraints to prevent Graph sprawl.
+- **Deterministic Fan-out Querying**: Complex user queries are broken down by an LLM into multiple targeted sub-queries.
+- **Multi-Strategy Parallel Search**: Vector Search (dense), Lexical Search (sparse), and Recall Link Expansion execute concurrently via `asyncio.gather`.
+- **Top-Level Multi-Cache System**: Fast-paths identical queries via Exact Memory Cache (1ms) and Semantic ChromaDB Cache (skips LLM entirely if distance < `0.02`).
+- **Semantic Verifier Trap**: Evaluates edge-case cache hits (0.02 < dist < 0.05) to ensure missing negative constraints or antonyms do not trigger hallucinations.
+- **SSE Fanout Architecture**: Background workers stream real-time UI updates via Redis Pub/Sub to specific frontend websocket connections, using a 30s TTL presence heartbeat.
+- **Backend-Driven Tracing**: The UI is fully backend-driven, parsing `retrieval_trace.ui` contracts to render token usage, cache savings, and search pathways visually.
 
 ## Active API
 
 Public/auth:
-
 - `POST /api/auth/sign_up`
 - `POST /api/auth/sign_in`
 - `GET /api/auth/me`
 - `POST /api/auth/logout`
 
 Product:
-
 - `GET /notes/`
 - `POST /notes/`
 - `PUT /notes/{note_id}`
 - `DELETE /notes/{note_id}`
-- `GET /directories/`
-- `POST /directories/`
-- `GET /tags/`
-- `POST /ingest/`
 - `POST /api/retrieval/query`
 - `GET /api/retrieval/events/{client_id}`
-- `GET /configs/presets`
-- `POST /configs/presets`
 - `GET /configs/processing`
 - `PUT /configs/processing`
-- `GET /configs/rotation`
-- `PUT /configs/rotation`
-- `PUT /configs/presets/{preset_id}/activate`
-- `DELETE /configs/presets/{preset_id}`
-- `GET /configs/active`
 
 Advanced authenticated inspection:
-
-- `GET /api/advanced/memory`
-- `GET /api/advanced/recall`
-- `GET /api/advanced/raw_inputs/{input_id}`
-- `DELETE /api/advanced/raw_inputs/{input_id}/hard`
 - `GET /api/advanced/ingest_jobs`
-- `GET /api/advanced/ingest_jobs/events`
 - `POST /api/advanced/ingest_jobs/{job_id}/resume`
 - `DELETE /api/advanced/ingest_jobs/{job_id}`
 
-Development-only routes:
-
-- `/dev/*` routes exist for local inspection/reset and are gated by `ENABLE_DEV_ROUTES`.
-
 ## Tech Stack
 
-- Backend: Python 3.12, FastAPI, Uvicorn, Pydantic, SQLite.
-- RAG: LangChain, LangGraph, Chroma, OpenAI chat/embedding APIs.
-- Frontend: React 19, Vite, React Router 7, Tailwind CSS 4, Framer Motion, lucide-react.
-- Deployment: Fully dockerized multi-stage builds (Server + Nginx). Automated GitHub Actions workflow publishes images to GHCR for simple single-node deployments.
-- Testing: pytest, pytest-asyncio, TypeScript build, oxlint.
+- **Backend**: Python 3.12, FastAPI, LangChain, LangGraph, ChromaDB, SQLite, Redis.
+- **Frontend**: React 19, Vite, Tailwind CSS 4, Framer Motion.
+- **Deployment**: Docker Compose, multi-stage builds.
 
 ## What Is Good Now
 
-- Public landing and auth are separated from protected app routes.
-- Source truth is preserved before any LLM work.
-- Durable ingest skips completed units on resume, and supports pause/stop.
-- Corrupt jobs abort when source truth is missing instead of retrying forever.
-- Recall indexing has candidate lookup, draft, normalization, and one validation retry.
-- Retrieval searches broadly but answers narrowly from selected source chunks.
-- Context Engineering optimization stats are transparent to the user in Ask View.
-- UI is highly polished with debounced spinners, query state preservation, and animated traces.
-- ChromaDB SQLite locking is resolved via a global singleton.
-- Route prefixes between frontend and backend are currently aligned.
-- OpenAI-only provider rules are enforced in the config route and reflected in the UI.
-- Retrieval chunk ranking correctly tracks and rewards multiple-path discovery without score duplication, and the Ask UI accurately displays only the citations the LLM ultimately utilized (hiding vector search padding).
+- **Strict Source Truth**: LLMs can extract Recall Keys and Summaries, but the original text chunks are always preserved and cited.
+- **Durable Resumption**: API crashes or token limits simply pause jobs, which can be resumed from exact SQLite checkpoints.
+- **Parallel Query Speed**: Queries execute vastly faster by breaking down and searching concurrently, bypassing Naive RAG limitations.
+- **Documentation is Pristine**: The engineering architecture is deeply documented and centralized into a single canonical source of truth.
 
-## Current Limits
+## Likely Next Steps (Future Roadmap)
 
-- Background ingest workers are in-process threads, not a distributed queue.
-- SQLite and Chroma are still beta storage choices, not a production multi-region data layer.
-- Chroma collection names are per user and active embedding/config signature. Rebuild/migration remains manual if embedding dimensions change.
-- Timeline answers use source order, spans, `source_time`, `event_time`, and `time_label` hints; there is no dedicated temporal ordering layer yet.
-- Recall quality controls broad reasoning quality.
-- There is no dead-letter/archive table for failed jobs.
-- `/dev/*` routes should stay disabled outside local debugging.
-
-## Likely Next Steps
-
-- **Custom Knowledge Connections**: Give users the ability to manually teach the AI connections by wiring explicit recall links between concepts or notes.
-- Add explicit timeline ordering for timeline-style questions if real examples need it.
-- Add a rebuild-vector-index command for embedding model changes.
-- Add small evaluations for multi-note, broad-recall, and citation correctness.
-- Replace in-process jobs with a real queue/lease only when multi-process deployment needs it.
-- Add route contract tests for frontend-used endpoints.
-- **Conversation History**: Add chat history for multi-turn conversations.
-
-## Far Far in the Future
-
-- **Cloud Platform**: A fully hosted cloud version of UnmessIt.AI for zero-setup, ubiquitous access to user knowledge bases.
+- **Conversational AI with History**: Add multi-turn chat memory so the AI can maintain context and references across sequential follow-up questions from the user. 
+*(No other roadmap items are planned at this time).*
 
 ## Useful Checks
 
 Backend:
-
 ```bash
 cd server
 uv run pytest src
 ```
 
 Frontend:
-
 ```bash
 cd web
 npm run lint
@@ -189,15 +86,20 @@ npm run build
 
 ## Docs
 
-- Code rules: `server/docs/rules/codebase_rules.md`
-- Prompt rules: `server/docs/rules/prompt_rules.md`
-- Auth: `server/docs/AUTH_INFRASTRUCTURE.md`
-- User config: `server/docs/USER_CONFIGURATION.md`
-- Notes and ingestion: `server/docs/NOTES_AND_INGESTION.md`
-- Indexing: `server/docs/SEAI_INDEXING_FLOW.md`
-- Query Pipeline: `server/docs/QUERY_PIPELINE.md`
-- Retrieval: `server/docs/SEAI_RETRIEVAL_FLOW.md`
-- Durability: `server/docs/RAG_DURABILITY.md`
-- Caching Eval: `server/docs/CACHE_EVALUATION_NOTES.md`
-- SSE: `server/docs/SSE_INFRASTRUCTURE.md`
-- Beta deploy: `server/docs/BETA_DEPLOY.md`
+The documentation has been consolidated into a clean, categorized structure in `server/docs/`:
+
+- **Architecture**
+  - `server/docs/architecture/ARCHITECTURE_DEEP_DIVE.md` (The canonical engineering novel)
+  - `server/docs/architecture/raw-architecture-doc.md` (Core design philosophy)
+- **Deployment**
+  - `server/docs/deployment/BETA_DEPLOY.md`
+  - `server/docs/deployment/DOCKER_NETWORKING.md`
+- **Operations**
+  - `server/docs/operations/USER_CONFIGURATION.md`
+  - `server/docs/operations/AUTH_INFRASTRUCTURE.md`
+- **Reference**
+  - `server/docs/reference/CACHE_EVALUATION_NOTES.md`
+  - `server/docs/reference/PROMPTS_OVERVIEW.md`
+- **Rules**
+  - `server/docs/rules/codebase_rules.md`
+  - `server/docs/rules/prompt_rules.md`

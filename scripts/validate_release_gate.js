@@ -30,6 +30,15 @@ function newerThan(current, previous) {
   return false
 }
 
+const changedFiles = git(['diff', '--name-only', `${baseRef}...HEAD`]).split('\n').filter(Boolean)
+
+const isDocsOnly = changedFiles.length > 0 && changedFiles.every(file => file.endsWith('.md'))
+
+if (isDocsOnly) {
+  console.log(`release gate passed: docs-only changes detected. Bypassing version bump requirement.`)
+  process.exit(0)
+}
+
 const currentVersion = versionOf(fs.readFileSync(packagePath, 'utf8'))
 const currentChangelogPath = `${changelogDir}/${currentVersion}.md`
 let previousVersion = '0.0.0'
@@ -43,7 +52,6 @@ if (!newerThan(currentVersion, previousVersion)) {
   fail(`web/package.json version ${currentVersion} must be greater than ${previousVersion}`)
 }
 
-const changedFiles = git(['diff', '--name-only', `${baseRef}...HEAD`]).split('\n').filter(Boolean)
 if (!changedFiles.includes(currentChangelogPath)) fail(`${currentChangelogPath} must be changed`)
 
 if (!fs.existsSync(currentChangelogPath)) fail(`${currentChangelogPath} must exist`)

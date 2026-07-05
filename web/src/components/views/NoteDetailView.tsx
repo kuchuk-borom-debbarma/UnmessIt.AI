@@ -25,15 +25,34 @@ export function NoteDetailView({ token }: { token: string }) {
   
   useEffect(() => {
     if (!innerRef.current) return
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setCanExpand(entry.target.clientHeight > 400)
-      }
-    })
-    observer.observe(innerRef.current)
-    setCanExpand(innerRef.current.clientHeight > 400)
+    const el = innerRef.current
     
-    return () => observer.disconnect()
+    let isActive = true
+    const checkHeight = () => {
+      if (!isActive || !el) return
+      const contentEl = el.firstElementChild || el
+      if (contentEl.scrollHeight > 350 || el.scrollHeight > 350) {
+        setCanExpand(true)
+      }
+    }
+
+    const observer = new ResizeObserver(() => checkHeight())
+    observer.observe(el)
+    if (el.firstElementChild) {
+      observer.observe(el.firstElementChild)
+    }
+    
+    checkHeight()
+    // Aggressive polling for the first 2 seconds to catch any late layout shifts
+    const interval = setInterval(checkHeight, 100)
+    const timeout = setTimeout(() => clearInterval(interval), 2000)
+    
+    return () => {
+      isActive = false
+      observer.disconnect()
+      clearInterval(interval)
+      clearTimeout(timeout)
+    }
   }, [note, isEditing])
 
   const [editTagsVal, setEditTagsVal] = useState('')
@@ -310,8 +329,10 @@ export function NoteDetailView({ token }: { token: string }) {
                   maxHeight: (hasCitationTarget || isExpanded) ? 'none' : 400,
                 }}
               >
-                <div ref={innerRef} className="p-6 overflow-x-auto">
-                  {renderNoteText()}
+                <div className="p-6 overflow-x-auto">
+                  <div ref={innerRef}>
+                    {renderNoteText()}
+                  </div>
                 </div>
                 {(canExpand && !isExpanded && !hasCitationTarget) && (
                   <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-card to-transparent pointer-events-none" />
