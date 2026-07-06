@@ -12,7 +12,7 @@ from src.services.rag.private.pipeline.ingest import get_durable_ingest
 from src.infra import retrieval_cache
 from src.repositories import queries
 
-_QUERY_RESULT_SEMANTIC_THRESHOLD = 0.85
+_QUERY_RESULT_SEMANTIC_THRESHOLD = 0.75
 
 
 class RagServiceImpl:
