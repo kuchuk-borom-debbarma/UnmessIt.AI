@@ -574,13 +574,13 @@ export function LandingView() {
             
             {/* CTA 2 */}
             <div className="flex flex-col items-center text-center p-8 bg-white/5 border border-white/5 hover:border-white/20 transition-colors rounded-3xl h-full shadow-lg">
-              <a 
-                href="#" 
+              <Link 
+                to="/architecture" 
                 className="w-full flex items-center justify-center gap-2 bg-transparent hover:bg-white/5 border border-white/10 text-foreground font-bold text-lg py-4 px-8 rounded-2xl transition-all hover:scale-[1.02] active:scale-95 group backdrop-blur-md mb-6"
               >
                 <BookOpen size={20} className="text-muted-foreground group-hover:text-foreground transition-colors" />
                 Explore the Architecture
-              </a>
+              </Link>
               <p className="text-sm text-muted-foreground leading-relaxed">
                 Dive deep into our comprehensive documentation. Discover how the whole system works under the hood from the indexing pipeline to the query pipeline, durability design, and caching.
               </p>

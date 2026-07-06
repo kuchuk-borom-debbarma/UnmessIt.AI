@@ -64,7 +64,7 @@ When the LLM hallucinates slightly different entities (e.g., "Python 3" and "Pyt
 
 ```mermaid
 flowchart TD
-    LLM_KEYS["Raw LLM Recall Keys"] --> L1["1. Pre-prompt Candidate Retrieval\n(Anchors LLM to existing terms)"]
+    LLM_KEYS["Raw LLM Recall Keys"] --> L1["1. Pre-prompt Candidate Retrieval\n(Extracts salient entities, runs concurrent FTS + Vector DB lookup)"]
     L1 --> L2["2. In-Memory Batch Merge\n(Normalizes terms within the same job)"]
     L2 --> L3["3. Exact-Match Repository Lookup\n(Merges new aliases into existing DB keys)"]
     L3 --> L4[/"4. SQLite Unique Constraints\n(Database-level lock prevention)"/]
