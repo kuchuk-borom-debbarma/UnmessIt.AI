@@ -462,7 +462,7 @@ async def _semantic_evidence_candidates(
     parent_ref: str = "retrieval:search",
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
     namespace = _semantic_evidence_namespace(user_id, index_version, embedding_signature, filters_signature)
-    text = retrieval_cache.normalize_semantic_text(sub_query, extracted_subjects)
+    text = retrieval_cache.normalize_semantic_text(sub_query)
     if reporter:
         await reporter.report(
             "Checking similar previous evidence...",
@@ -537,7 +537,7 @@ async def _set_semantic_evidence_candidates(
     if had_hit or not packed_chunks:
         return []
     namespace = _semantic_evidence_namespace(user_id, index_version, embedding_signature, filters_signature)
-    text = retrieval_cache.normalize_semantic_text(sub_query, extracted_subjects)
+    text = retrieval_cache.normalize_semantic_text(sub_query)
     payload = {
         "cache_version": _SEMANTIC_EVIDENCE_CACHE_VERSION,
         "retrieval_index_version": index_version,

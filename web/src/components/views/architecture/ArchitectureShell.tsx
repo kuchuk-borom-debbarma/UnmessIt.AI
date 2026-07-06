@@ -1,12 +1,14 @@
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Database, Search, Layers, BrainCircuit, Combine } from 'lucide-react'
+import { Database, Search, BrainCircuit, Combine, Zap, GitBranch, Radio } from 'lucide-react'
 
 const SECTIONS = [
   { id: 'overview', title: 'The Core Concept', icon: BrainCircuit, path: '/architecture/overview' },
   { id: 'indexing', title: 'The Indexing Engine', icon: Database, path: '/architecture/indexing' },
   { id: 'querying', title: 'The Query Engine', icon: Search, path: '/architecture/querying' },
-  { id: 'supporting-systems', title: 'Supporting Systems', icon: Layers, path: '/architecture/supporting-systems' },
+  { id: 'caching', title: 'Caching Architecture', icon: Zap, path: '/architecture/caching' },
+  { id: 'eda', title: 'Event-Driven Design', icon: GitBranch, path: '/architecture/eda' },
+  { id: 'sse', title: 'SSE & Streaming', icon: Radio, path: '/architecture/sse' },
   { id: 'integrated', title: 'The Integrated Engine', icon: Combine, path: '/architecture/integrated' },
 ]
 

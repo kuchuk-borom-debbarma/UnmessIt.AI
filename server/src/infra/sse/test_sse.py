@@ -79,7 +79,7 @@ async def test_redis_sse_pubsub_and_presence(monkeypatch):
     presence = []
 
     class FakePubSub:
-        async def psubscribe(self, _pattern):
+        async def subscribe(self, _channel):
             return None
 
         async def listen(self):
@@ -94,10 +94,20 @@ async def test_redis_sse_pubsub_and_presence(monkeypatch):
             return FakePubSub()
 
         async def publish(self, channel, data):
-            await queue.put({"type": "pmessage", "channel": channel, "data": data})
+            await queue.put({"type": "message", "channel": channel, "data": data})
 
         async def delete(self, key):
             deleted.append(key)
+            
+        async def zadd(self, name, mapping):
+            pass
+            
+        async def zremrangebyscore(self, name, min, max):
+            pass
+            
+        async def zrangebyscore(self, name, min, max):
+            # mock getting the instance_id
+            return ["fake_instance_id"]
 
     async def fake_set_json(key, value, ttl_seconds):
         presence.append((key, value, ttl_seconds))
@@ -107,6 +117,7 @@ async def test_redis_sse_pubsub_and_presence(monkeypatch):
     monkeypatch.setattr(redis_sse, "set_json", fake_set_json)
 
     service = RedisSseService()
+    service._instance_id = "fake_instance_id"
     await service.start()
     sub1 = service.subscribe("topic")
     sub2 = service.subscribe("topic")
@@ -173,12 +184,12 @@ async def test_redis_sse_listener_ignores_non_messages_and_stops(monkeypatch):
     closed = []
 
     class FakePubSub:
-        async def psubscribe(self, _pattern):
+        async def subscribe(self, _channel):
             return None
 
         async def listen(self):
             yield {"type": "subscribe", "data": "ok"}
-            yield {"type": "pmessage", "data": '{"topic":"topic","event":"message","data":{"ok":true}}'}
+            yield {"type": "message", "data": '{"topic":"topic","event":"message","data":{"ok":true}}'}
 
         async def close(self):
             closed.append(True)
@@ -214,12 +225,12 @@ async def test_redis_sse_listener_breaks_when_stopped(monkeypatch):
     closed = []
 
     class FakePubSub:
-        async def psubscribe(self, _pattern):
+        async def subscribe(self, _channel):
             return None
 
         async def listen(self):
             service._stopped.set()
-            yield {"type": "pmessage", "data": '{"topic":"topic"}'}
+            yield {"type": "message", "data": '{"topic":"topic"}'}
 
         async def close(self):
             closed.append(True)
@@ -241,7 +252,7 @@ async def test_redis_sse_listener_recovers_after_pubsub_error(monkeypatch):
     closed = []
 
     class FakePubSub:
-        async def psubscribe(self, _pattern):
+        async def subscribe(self, _channel):
             raise RuntimeError("pubsub down")
 
         async def close(self):
