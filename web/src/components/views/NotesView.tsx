@@ -472,6 +472,8 @@ export function NotesView({ token }: { token: string }) {
   // Navigation State
   
   const filterTagVal = searchParams.get('tag_val') || ''
+  const filterTagMode = (searchParams.get('tag_mode') as 'any' | 'all') || 'any'
+  
   const handleSelectTag = (val: string) => {
     const next = new URLSearchParams(searchParams)
     if (val) {
@@ -482,7 +484,17 @@ export function NotesView({ token }: { token: string }) {
     setSearchParams(next)
     setNotePage(1)
   }
-  const filterTagId = filterTagVal ? filterTagVal.split('|')[0] : null
+
+  const handleTagModeChange = (val: 'any' | 'all') => {
+    const next = new URLSearchParams(searchParams)
+    next.set('tag_mode', val)
+    setSearchParams(next)
+    setNotePage(1)
+  }
+
+  const filterTagIds = filterTagVal 
+    ? filterTagVal.split(',').map(t => t.split('|')[0].trim()).filter(Boolean).join(',') 
+    : null
 
   const selectedDir = searchParams.get('dir')
 
@@ -570,7 +582,7 @@ export function NotesView({ token }: { token: string }) {
     loadSeq.current = seq
     try {
       const parentQuery = selectedDir ? `&directory_id=${selectedDir}` : ''
-      const tagQuery = filterTagId ? `&tag_id=${filterTagId}` : ''
+      const tagQuery = filterTagIds ? `&tag_ids=${filterTagIds}&tag_mode=${filterTagMode}` : ''
       const dirParentQuery = selectedDir ? `&parent_id=${selectedDir}` : ''
 
       const [n, d] = await Promise.all([
@@ -587,7 +599,7 @@ export function NotesView({ token }: { token: string }) {
     } finally {
       if (seq === loadSeq.current) setLoading(false)
     }
-  }, [token, selectedDir, filterTagId, notePage, noteLimit, dirPage, dirLimit])
+  }, [token, selectedDir, filterTagIds, filterTagMode, notePage, noteLimit, dirPage, dirLimit])
 
   useEffect(() => {
     load()
@@ -817,6 +829,8 @@ export function NotesView({ token }: { token: string }) {
           mode="include"
           value={filterTagVal}
           onChange={handleSelectTag}
+          condition={filterTagMode}
+          onConditionChange={handleTagModeChange}
           token={token}
         />
       </div>

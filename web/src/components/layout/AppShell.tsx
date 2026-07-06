@@ -1,15 +1,13 @@
-import { Outlet } from 'react-router-dom'
+import { Outlet, NavLink, useLocation } from 'react-router-dom'
 import { FloatingDock } from './FloatingDock'
 import { useVersionCheck } from '../../lib/useVersionCheck'
 import { ReleaseHistoryModal } from '../ui/ReleaseHistoryModal'
-import { ExternalLink, RefreshCw, UserCircle } from 'lucide-react'
-// import { motion } from 'framer-motion'
+import { ExternalLink, RefreshCw, AlertTriangle, ChevronRight, ServerOff, Sun, Moon, Settings } from 'lucide-react'
 import { ConfigProvider } from '../../lib/context/ConfigContext'
 import { useConfig } from '../../lib/context/useConfig'
-import { AlertTriangle, ChevronRight, ServerOff } from 'lucide-react'
-import { NavLink } from 'react-router-dom'
+import { useTheme } from '../../lib/context/useTheme'
 import { useEffect, useState } from 'react'
-import { API_BASE, authApi } from '../../lib/api'
+import { API_BASE } from '../../lib/api'
 
 const REPOSITORY_URL = 'https://github.com/kuchuk-borom-debbarma/UnmessIt.AI'
 
@@ -94,41 +92,50 @@ function GlobalUpdateBanner({ updateAvailable, versionInfo }: { updateAvailable:
 
 export function AppShell({ token, onLogout }: { token: string | null; onLogout: () => void }) {
   const [showChangelog, setShowChangelog] = useState(false)
-  const [user, setUser] = useState<{ id: string; identifier: string } | null>(null)
   const { updateAvailable, versionInfo, currentVersion } = useVersionCheck()
-  // const location = useLocation()
-
-  useEffect(() => {
-    if (!token) {
-      setUser(null)
-      return
-    }
-    let mounted = true
-    authApi.me(token)
-      .then((next) => { if (mounted) setUser(next) })
-      .catch(() => { if (mounted) setUser(null) })
-    return () => { mounted = false }
-  }, [token])
+  const location = useLocation()
+  const { theme, setTheme } = useTheme()
+  const isLanding = location.pathname === '/'
 
   return (
     <ConfigProvider token={token}>
       {token && (
         <div className="fixed top-0 inset-x-0 z-[60] pointer-events-none">
           <div className="mx-auto flex max-w-[1600px] items-center justify-between px-4 py-3 md:px-8 pointer-events-auto">
-            <div className="liquid-glass flex min-w-0 items-center gap-3 rounded-lg px-3 py-2">
-              <UserCircle size={20} className="shrink-0 text-primary-400" />
-              <div className="min-w-0">
-                <div className="truncate text-sm font-bold">{user?.identifier || 'Signed in'}</div>
-                <div className="truncate text-[11px] font-medium text-muted-foreground">Local workspace</div>
-              </div>
+            <div className="flex items-center gap-2">
+              <NavLink
+                to="/"
+                className="liquid-glass inline-flex h-10 w-10 items-center justify-center rounded-lg text-muted-foreground transition-all hover:scale-105 active:scale-95 hover:text-foreground"
+                title="UnmessIt.AI Home"
+              >
+                <img src="/favicon.svg" alt="UnmessIt.AI Logo" className="w-5 h-5" />
+              </NavLink>
             </div>
-            <button
-              className="liquid-glass inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-bold text-muted-foreground transition-colors hover:text-foreground"
-              onClick={() => setShowChangelog(true)}
-            >
-              v{currentVersion}
-              <span className="hidden text-xs font-semibold text-primary-400 sm:inline">Release history</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                className="liquid-glass inline-flex h-10 w-10 items-center justify-center rounded-lg text-muted-foreground transition-all hover:text-foreground active:scale-95"
+                title="Toggle Theme"
+              >
+                {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+              </button>
+              {token && !isLanding && (
+                <NavLink
+                  to="/settings"
+                  className="liquid-glass inline-flex h-10 w-10 items-center justify-center rounded-lg text-muted-foreground transition-all hover:text-foreground active:scale-95"
+                  title="Settings"
+                >
+                  <Settings size={20} />
+                </NavLink>
+              )}
+              <button
+                className="liquid-glass inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-bold text-muted-foreground transition-all hover:text-foreground active:scale-95 ml-2"
+                onClick={() => setShowChangelog(true)}
+              >
+                v{currentVersion}
+                <span className="hidden text-xs font-semibold text-primary-400 sm:inline">Release history</span>
+              </button>
+            </div>
           </div>
           <GlobalConnectionBanner />
           <GlobalWarningBanner />
@@ -142,7 +149,7 @@ export function AppShell({ token, onLogout }: { token: string | null; onLogout: 
         </div>
       </main>
 
-      <FloatingDock isAuthenticated={Boolean(token)} onLogout={onLogout} />
+      {!isLanding && <FloatingDock token={token} onLogout={onLogout} />}
       
       <ReleaseHistoryModal 
         isOpen={showChangelog} 

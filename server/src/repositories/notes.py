@@ -106,20 +106,27 @@ def restore(note_id: str, user_id: str, conn=None) -> bool:
         db.commit()
     return cursor.rowcount > 0
 
-def list_notes(user_id: str, directory_id: str | None = None, tag_id: str | None = None, include_all: bool = False, page: int = 1, limit: int = 20) -> dict[str, Any]:
+def list_notes(user_id: str, directory_id: str | None = None, tag_ids: str | None = None, tag_mode: str = "any", include_all: bool = False, page: int = 1, limit: int = 20) -> dict[str, Any]:
     conn = get_connection()
     offset = max(0, (page - 1) * limit)
     
     query = "FROM notes n LEFT JOIN ingest_jobs j ON j.id = n.id "
-    if tag_id:
-        query += "INNER JOIN note_tags nt ON nt.note_id = n.id "
+    params = []
+    
+    if tag_ids:
+        tags = [t.strip() for t in tag_ids.split(",") if t.strip()]
+        if tags:
+            placeholders = ','.join(['?'] * len(tags))
+            if tag_mode == "all":
+                query += f"INNER JOIN (SELECT note_id FROM note_tags WHERE tag_id IN ({placeholders}) GROUP BY note_id HAVING COUNT(DISTINCT tag_id) = ?) nt ON nt.note_id = n.id "
+                params.extend(tags)
+                params.append(len(tags))
+            else:
+                query += f"INNER JOIN (SELECT DISTINCT note_id FROM note_tags WHERE tag_id IN ({placeholders})) nt ON nt.note_id = n.id "
+                params.extend(tags)
     
     query += "WHERE n.user_id = ? AND n.deleted_at IS NULL"
-    params = [user_id]
-    
-    if tag_id:
-        query += " AND nt.tag_id = ?"
-        params.append(tag_id)
+    params.append(user_id)
     
     if not include_all:
         if directory_id:

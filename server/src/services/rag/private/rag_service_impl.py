@@ -62,6 +62,15 @@ class RagServiceImpl:
         """Delete one durable job."""
         return get_durable_ingest().delete_job(job_id)
 
+    def reindex_all(self, user_id: str) -> None:
+        """Trigger a complete re-indexing for a user by wiping derived data and requeuing."""
+        from src.repositories import source_chunks, source_chunk_vectors, recall
+        from src.services.rag.private.durability.repository import requeue_all
+        source_chunks.delete_all(user_id)
+        source_chunk_vectors.reset(user_id)
+        recall.delete_all(user_id)
+        requeue_all(user_id)
+
     async def query(self, data: str, user_id: str, reporter: ProgressReporter | None = None, within_directories: list[str] | None = None, excluding_directories: list[str] | None = None, within_tags: list[str] | None = None, excluding_tags: list[str] | None = None, within_tags_condition: str = "any") -> QueryResult:
         """Search source chunks, expand through recall links, then answer."""
         reporter = reporter or NullProgressReporter()

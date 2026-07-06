@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useRef } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Tag, RefreshCw, Trash2, FolderOpen, BrainCircuit, Edit2, Save, X, ChevronDown, ChevronUp, FileText } from 'lucide-react'
 import { api, type Note, type Directory } from '../../lib/api'
@@ -20,42 +20,9 @@ export function NoteDetailView({ token }: { token: string }) {
   const [editText, setEditText] = useState('')
 
   const [isExpanded, setIsExpanded] = useState(false)
-  const innerRef = useRef<HTMLDivElement>(null)
-  const [canExpand, setCanExpand] = useState(false)
-  
-  useEffect(() => {
-    if (!innerRef.current) return
-    const el = innerRef.current
-    
-    let isActive = true
-    const checkHeight = () => {
-      if (!isActive || !el) return
-      const contentEl = el.firstElementChild || el
-      if (contentEl.scrollHeight > 350 || el.scrollHeight > 350) {
-        setCanExpand(true)
-      }
-    }
-
-    const observer = new ResizeObserver(() => checkHeight())
-    observer.observe(el)
-    if (el.firstElementChild) {
-      observer.observe(el.firstElementChild)
-    }
-    
-    checkHeight()
-    // Aggressive polling for the first 2 seconds to catch any late layout shifts
-    const interval = setInterval(checkHeight, 100)
-    const timeout = setTimeout(() => clearInterval(interval), 2000)
-    
-    return () => {
-      isActive = false
-      observer.disconnect()
-      clearInterval(interval)
-      clearTimeout(timeout)
-    }
-  }, [note, isEditing])
-
   const [editTagsVal, setEditTagsVal] = useState('')
+
+  const canExpand = note ? (note.text.length > 600 || note.text.split('\n').length > 15) : false
 
   const highlightStart = parseInt(searchParams.get('start') || '-1', 10)
   const highlightEnd = parseInt(searchParams.get('end') || '-1', 10)
@@ -322,15 +289,15 @@ export function NoteDetailView({ token }: { token: string }) {
               />
             </>
           ) : (
-            <div className="bg-card/40 backdrop-blur-sm border border-border/50 rounded-xl shadow-sm overflow-hidden flex flex-col">
+            <div className="bg-card/40 backdrop-blur-sm border border-border/50 rounded-xl shadow-sm overflow-hidden flex flex-col relative">
               <div 
-                className={`relative w-full overflow-hidden`}
+                className={`relative w-full overflow-hidden transition-all duration-300`}
                 style={{ 
                   maxHeight: (hasCitationTarget || isExpanded) ? 'none' : 400,
                 }}
               >
                 <div className="p-6 overflow-x-auto">
-                  <div ref={innerRef}>
+                  <div>
                     {renderNoteText()}
                   </div>
                 </div>
@@ -343,7 +310,7 @@ export function NoteDetailView({ token }: { token: string }) {
                 <div className="flex items-center justify-center gap-4 py-3 bg-card/80 backdrop-blur-md border-t border-border/50">
                   {isExpanded ? (
                     <button 
-                      className="flex items-center justify-center w-10 h-10 rounded-full bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/20 hover:text-foreground transition-all"
+                      className="flex items-center justify-center w-12 h-12 rounded-full bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/20 hover:text-foreground active:scale-95 transition-all duration-200"
                       onClick={() => {
                         setIsExpanded(false)
                         window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -354,7 +321,7 @@ export function NoteDetailView({ token }: { token: string }) {
                     </button>
                   ) : (
                     <button 
-                      className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-500/10 text-primary-500 hover:bg-primary-500 hover:text-white transition-all shadow-[0_0_15px_rgba(var(--primary-500),0.1)]"
+                      className="flex items-center justify-center w-12 h-12 rounded-full bg-primary-500/10 text-primary-500 hover:bg-primary-500 hover:text-white active:scale-95 transition-all duration-200 shadow-[0_0_15px_rgba(var(--primary-500),0.1)]"
                       onClick={() => setIsExpanded(true)}
                       title="Expand"
                     >

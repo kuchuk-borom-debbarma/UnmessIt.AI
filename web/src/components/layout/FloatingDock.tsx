@@ -1,55 +1,70 @@
+import { useState, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
-import { FileText, Bot, Activity, Settings, LogOut, Moon, Sun, LogIn, UserPlus } from 'lucide-react'
+import { FileText, Bot, Activity, LogOut, LogIn, UserPlus } from 'lucide-react'
 import { cn } from '../../lib/utils'
-import { useTheme } from '../../lib/context/useTheme'
+import { authApi } from '../../lib/api'
 
 const dockItems = [
   { path: '/notes', label: 'Notes', icon: FileText },
   { path: '/ask', label: 'Ask AI', icon: Bot },
   { path: '/jobs', label: 'Jobs', icon: Activity },
-  { path: '/settings', label: 'Config', icon: Settings },
 ]
 
-export function FloatingDock({ isAuthenticated, onLogout }: { isAuthenticated: boolean; onLogout: () => void }) {
-  const { theme, setTheme } = useTheme()
+export function FloatingDock({ token, onLogout }: { token: string | null; onLogout: () => void }) {
+  const isAuthenticated = Boolean(token)
+  const [username, setUsername] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (token) {
+      authApi.me(token)
+        .then(res => setUsername(res.identifier))
+        .catch(() => setUsername(null))
+    } else {
+      setUsername(null)
+    }
+  }, [token])
 
   return (
-    <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex h-16 items-center gap-2 p-2 liquid-glass rounded-2xl">
-      {/* Brand Icon */}
-      <NavLink to="/" className="w-11 h-11 rounded-lg flex items-center justify-center bg-foreground/5 hover:bg-foreground/10 transition-colors">
-        <img src="/favicon.svg" alt="UnmessIt.AI" className="w-6 h-6 object-contain" />
-      </NavLink>
-
-      <div className="w-px h-8 bg-border/50 mx-1" />
-
+    <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex h-16 items-center justify-between w-[calc(100%-2rem)] max-w-4xl px-2 py-2 liquid-glass rounded-2xl gap-2">
       {isAuthenticated ? (
-        <nav className="flex items-center gap-1">
+        <>
           {dockItems.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
               className={({ isActive }) => cn(
-                'nav-pill group',
+                'nav-pill w-full flex-1 group px-2',
                 isActive && 'active'
               )}
               aria-label={item.label}
               title={item.label}
             >
               {({ isActive }) => (
-                <>
-                  <div className="relative z-10 flex h-11 w-11 flex-col items-center justify-center gap-0.5">
-                    <item.icon size={20} className={cn("transition-colors", isActive ? "text-primary-400" : "")} />
-                    <span className={cn("text-[8px] font-bold uppercase tracking-wider hidden md:block leading-none", isActive ? "text-primary-400" : "opacity-0 group-hover:opacity-100 transition-opacity")}>
-                      {item.label}
-                    </span>
-                  </div>
-                </>
+                <div className="relative z-10 flex h-11 items-center justify-center gap-2.5">
+                  <item.icon size={18} className={cn("transition-colors shrink-0", isActive ? "text-primary-400" : "")} />
+                  <span className={cn("text-[11px] font-bold uppercase tracking-widest leading-none mt-0.5 whitespace-nowrap", isActive ? "text-primary-400" : "opacity-50 group-hover:opacity-100 transition-opacity", "hidden md:block")}>
+                    {item.label}
+                  </span>
+                </div>
               )}
             </NavLink>
           ))}
-        </nav>
+          <div className="nav-pill w-full flex-1 group relative cursor-default px-4 h-11 flex items-center justify-center bg-white/5 border border-white/5">
+            <span className="text-sm font-bold text-primary-400 truncate max-w-[150px] whitespace-nowrap">
+              {username || 'Profile'}
+            </span>
+          </div>
+          <button
+            onClick={onLogout}
+            className="nav-pill shrink-0 hover:text-red-400 hover:bg-red-500/10 h-11 w-11 flex items-center justify-center"
+            aria-label="Logout"
+            title="Logout"
+          >
+            <LogOut size={18} />
+          </button>
+        </>
       ) : (
-        <nav className="flex items-center gap-2">
+        <nav className="flex items-center gap-2 w-full justify-center">
           <NavLink
             to="/login"
             className="guest-nav-link"
@@ -68,30 +83,6 @@ export function FloatingDock({ isAuthenticated, onLogout }: { isAuthenticated: b
           </NavLink>
         </nav>
       )}
-
-      <div className="w-px h-8 bg-border/50 mx-1" />
-
-      {/* Actions */}
-      <div className="flex items-center gap-1 pr-2">
-        <button
-          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-          className="nav-pill"
-          aria-label="Toggle Theme"
-          title="Toggle Theme"
-        >
-          {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
-        </button>
-        {isAuthenticated && (
-          <button
-            onClick={onLogout}
-            className="nav-pill hover:text-red-400 hover:bg-red-500/10"
-            aria-label="Logout"
-            title="Logout"
-          >
-            <LogOut size={20} />
-          </button>
-        )}
-      </div>
     </div>
   )
 }

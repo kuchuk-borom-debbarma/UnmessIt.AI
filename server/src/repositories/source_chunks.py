@@ -148,6 +148,14 @@ def delete_by_raw_input_id(raw_input_id: str) -> None:
     conn.commit()
 
 
+def delete_all(user_id: str) -> None:
+    """Wipe all source chunks for a user when reindexing."""
+    conn = get_connection()
+    conn.execute("DELETE FROM source_chunks WHERE user_id = ?", (user_id,))
+    retrieval_index.bump(user_id, conn)
+    conn.commit()
+
+
 def search(query: str, user_id: str, limit: int = 8, within_directories: list[str] | None = None, excluding_directories: list[str] | None = None, within_tags: list[str] | None = None, excluding_tags: list[str] | None = None, within_tags_condition: str = "any") -> list[dict[str, Any]]:
     """Small lexical fallback over source text and summaries."""
     terms = _terms(query)

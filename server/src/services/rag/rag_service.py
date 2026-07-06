@@ -32,6 +32,9 @@ class RagService(Protocol):
     def delete_ingest_job(self, job_id: str) -> bool:
         ...
 
+    def reindex_all(self, user_id: str) -> None:
+        ...
+
 
 @lru_cache(maxsize=1)
 def get_rag_service_impl() -> RagServiceImpl:

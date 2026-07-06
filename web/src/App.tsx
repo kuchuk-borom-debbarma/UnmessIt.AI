@@ -15,6 +15,12 @@ import { LandingView } from './components/views/LandingView'
 import { NoteDetailView } from './components/views/NoteDetailView'
 import { NoteInsightsView } from './components/views/NoteInsightsView'
 import { TrashView } from './components/views/TrashView'
+import { ArchitectureShell } from './components/views/architecture/ArchitectureShell'
+import { OverviewView } from './components/views/architecture/OverviewView'
+import { IndexingView } from './components/views/architecture/IndexingView'
+import { QueryingView } from './components/views/architecture/QueryingView'
+import { SupportingSystemsView } from './components/views/architecture/SupportingSystemsView'
+import { IntegratedView } from './components/views/architecture/IntegratedView'
 
 // Contexts
 import { AskProvider } from './contexts/AskContext'
@@ -45,12 +51,20 @@ function App() {
     <Routes>
       <Route
         path="/login"
-        element={token ? <Navigate to="/" replace /> : <AuthScreen initialMode="signin" onAuthSuccess={saveToken} />}
+        element={token ? <Navigate to="/notes" replace /> : <AuthScreen initialMode="signin" onAuthSuccess={saveToken} />}
       />
       <Route
         path="/signup"
-        element={token ? <Navigate to="/" replace /> : <AuthScreen initialMode="signup" onAuthSuccess={saveToken} />}
+        element={token ? <Navigate to="/notes" replace /> : <AuthScreen initialMode="signup" onAuthSuccess={saveToken} />}
       />
+      <Route path="/architecture" element={<ArchitectureShell />}>
+        <Route index element={<Navigate to="overview" replace />} />
+        <Route path="overview" element={<OverviewView />} />
+        <Route path="indexing" element={<IndexingView />} />
+        <Route path="querying" element={<QueryingView />} />
+        <Route path="supporting-systems" element={<SupportingSystemsView />} />
+        <Route path="integrated" element={<IntegratedView />} />
+      </Route>
       <Route element={<AskProvider><AppShell token={token} onLogout={() => saveToken(null)} /></AskProvider>}>
         <Route path="/" element={<LandingView />} />
         <Route
