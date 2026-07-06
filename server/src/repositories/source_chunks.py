@@ -156,6 +156,23 @@ def delete_all(user_id: str) -> None:
     conn.commit()
 
 
+def delete_for_note(note_id: str, user_id: str) -> bool:
+    """Delete all source chunks linked to a specific note."""
+    conn = get_connection()
+    conn.execute(
+        """
+        DELETE FROM source_chunks 
+        WHERE raw_input_id IN (
+            SELECT id FROM raw_inputs WHERE job_id = ? AND user_id = ?
+        )
+        """,
+        (note_id, user_id)
+    )
+    retrieval_index.bump(user_id, conn)
+    conn.commit()
+    return True
+
+
 def search(query: str, user_id: str, limit: int = 8, within_directories: list[str] | None = None, excluding_directories: list[str] | None = None, within_tags: list[str] | None = None, excluding_tags: list[str] | None = None, within_tags_condition: str = "any") -> list[dict[str, Any]]:
     """Small lexical fallback over source text and summaries."""
     terms = _terms(query)

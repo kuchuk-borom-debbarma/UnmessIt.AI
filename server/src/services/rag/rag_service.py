@@ -35,6 +35,9 @@ class RagService(Protocol):
     def reindex_all(self, user_id: str) -> None:
         ...
 
+    def reindex_note(self, user_id: str, note_id: str) -> None:
+        ...
+
 
 @lru_cache(maxsize=1)
 def get_rag_service_impl() -> RagServiceImpl:

@@ -72,6 +72,24 @@ class RagServiceImpl:
         recall.delete_all(user_id)
         requeue_all(user_id)
 
+    def reindex_note(self, user_id: str, note_id: str) -> None:
+        """Trigger a complete re-indexing for a single note."""
+        from src.repositories import source_chunks, source_chunk_vectors, recall
+        from src.services.rag.private.durability.repository import requeue_note
+        
+        page = 1
+        while True:
+            res = source_chunks.get_paginated_for_note(note_id, user_id, page=page, limit=100)
+            chunks = res.get("data", [])
+            if not chunks:
+                break
+            source_chunk_vectors.delete([c["id"] for c in chunks], user_id)
+            page += 1
+            
+        source_chunks.delete_for_note(note_id, user_id)
+        recall.delete_for_note(note_id, user_id)
+        requeue_note(user_id, note_id)
+
     async def query(self, data: str, user_id: str, reporter: ProgressReporter | None = None, within_directories: list[str] | None = None, excluding_directories: list[str] | None = None, within_tags: list[str] | None = None, excluding_tags: list[str] | None = None, within_tags_condition: str = "any") -> QueryResult:
         """Search source chunks, expand through recall links, then answer."""
         reporter = reporter or NullProgressReporter()

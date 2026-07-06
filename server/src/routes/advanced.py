@@ -28,6 +28,12 @@ async def reindex(user_id: str = Depends(get_current_user_id)) -> dict:
     return {"status": "success", "message": "Reindexing started"}
 
 
+@router.post("/reindex/{note_id}")
+async def reindex_note(note_id: str, user_id: str = Depends(get_current_user_id)) -> dict:
+    get_rag_service().reindex_note(user_id, note_id)
+    return {"status": "success", "message": f"Reindexing started for note {note_id}"}
+
+
 @router.get("/index_metadata")
 async def index_metadata(user_id: str = Depends(get_current_user_id)) -> dict:
     from src.infra.sqlite import get_connection
