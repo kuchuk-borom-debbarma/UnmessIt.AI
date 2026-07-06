@@ -36,6 +36,17 @@ def list_queries(user_id: str, limit: int = 50) -> list[dict]:
         results.append(d)
     return results
 
+def cleanup_stale(days: int = 7) -> int:
+    """Delete queries older than the specified number of days."""
+    conn = get_connection()
+    _ensure_table(conn)
+    cursor = conn.execute(
+        "DELETE FROM queries WHERE created_at < datetime('now', ?)",
+        (f"-{days} days",)
+    )
+    conn.commit()
+    return cursor.rowcount
+
 def _ensure_table(conn) -> None:
     """Allow tests/scripts that touch repositories before app startup migration."""
     # We rely on init_db() in sqlite.py for main table creation, 
