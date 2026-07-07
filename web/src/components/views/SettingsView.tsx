@@ -11,6 +11,7 @@ import {
   Trash2,
   X,
   Info,
+  Activity,
 } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { api } from '../../lib/api'
@@ -99,6 +100,7 @@ export function SettingsView({ token }: { token: string }) {
   const [llmConfigs, setLlmConfigs] = useState<LLMConfig[]>([])
   const [embeddingConfigs, setEmbeddingConfigs] = useState<EmbeddingConfig[]>([])
   const [stageConfig, setStageConfig] = useState<StageConfig>(defaultStageConfig)
+  const [isPinging, setIsPinging] = useState(false)
   const [processing, setProcessing] = useState<ProcessingSettings>(defaultProcessing)
   const [llmDraft, setLlmDraft] = useState<LlmDraft>(defaultLlmDraft)
   const [embeddingDraft, setEmbeddingDraft] = useState<EmbeddingDraft>(defaultEmbeddingDraft)
@@ -190,7 +192,8 @@ export function SettingsView({ token }: { token: string }) {
   }
 
   const pingConfig = async () => {
-    if (!splitModalOpen) return
+    if (!splitModalOpen || isPinging) return
+    setIsPinging(true)
     setToast(null)
     const editing = splitEditing?.id
     const payload = splitModalOpen === 'llm' ? llmPayload(llmDraft) : embeddingPayload(embeddingDraft)
@@ -207,6 +210,8 @@ export function SettingsView({ token }: { token: string }) {
       setToast({ tone: 'success', message: 'API ping successful!' })
     } catch (err) {
       setToast({ tone: 'danger', message: err instanceof Error ? err.message : 'API ping failed' })
+    } finally {
+      setIsPinging(false)
     }
   }
 
@@ -426,6 +431,7 @@ export function SettingsView({ token }: { token: string }) {
             onClose={() => setSplitModalOpen(null)}
             onSave={saveSplitConfig}
             onPing={pingConfig}
+            isPinging={isPinging}
           />
         )}
       </AnimatePresence>
@@ -575,6 +581,7 @@ function SplitConfigModal({
   onClose,
   onSave,
   onPing,
+  isPinging,
 }: {
   kind: SplitKind
   editing: boolean
@@ -585,6 +592,7 @@ function SplitConfigModal({
   onClose: () => void
   onSave: () => void
   onPing: () => void
+  isPinging: boolean
 }) {
   const isLlm = kind === 'llm'
   return (
@@ -634,9 +642,16 @@ function SplitConfigModal({
         )}
 
         <div className="mt-8 flex justify-end gap-3 border-t border-border/60 pt-5">
-          <button className="premium-btn premium-btn-secondary h-11 px-5" onClick={onClose}>Cancel</button>
-          <button className="premium-btn premium-btn-secondary h-11 px-5" onClick={onPing}>Ping API</button>
-          <button className="premium-btn premium-btn-primary h-11 gap-2 px-5" onClick={onSave}>
+          <button className="premium-btn premium-btn-secondary h-11 px-5" onClick={onClose} disabled={isPinging}>Cancel</button>
+          <button 
+            className="premium-btn premium-btn-secondary h-11 gap-2 px-5 disabled:opacity-50" 
+            onClick={onPing} 
+            disabled={isPinging}
+          >
+            {isPinging ? <RefreshCw className="animate-spin" size={16} /> : <Activity size={16} />}
+            {isPinging ? 'Pinging...' : 'Ping API'}
+          </button>
+          <button className="premium-btn premium-btn-primary h-11 gap-2 px-5" onClick={onSave} disabled={isPinging}>
             <Save size={17} /> Save Config
           </button>
         </div>
