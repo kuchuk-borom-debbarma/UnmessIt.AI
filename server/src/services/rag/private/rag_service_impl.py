@@ -10,8 +10,9 @@ from src.services.rag.private.chains.query import QueryAnswerChain, QueryEvidenc
 from src.services.rag.private.chains.query._search import finalize_chunks
 from src.services.rag.private.pipeline.ingest import get_durable_ingest
 from src.infra import retrieval_cache
+from src.repositories import queries
 
-_QUERY_RESULT_SEMANTIC_THRESHOLD = 0.85
+_QUERY_RESULT_SEMANTIC_THRESHOLD = 0.75
 
 
 class RagServiceImpl:
@@ -71,6 +72,24 @@ class RagServiceImpl:
         recall.delete_all(user_id)
         requeue_all(user_id)
 
+    def reindex_note(self, user_id: str, note_id: str) -> None:
+        """Trigger a complete re-indexing for a single note."""
+        from src.repositories import source_chunks, source_chunk_vectors, recall
+        from src.services.rag.private.durability.repository import requeue_note
+        
+        page = 1
+        while True:
+            res = source_chunks.get_paginated_for_note(note_id, user_id, page=page, limit=100)
+            chunks = res.get("data", [])
+            if not chunks:
+                break
+            source_chunk_vectors.delete([c["id"] for c in chunks], user_id)
+            page += 1
+            
+        source_chunks.delete_for_note(note_id, user_id)
+        recall.delete_for_note(note_id, user_id)
+        requeue_note(user_id, note_id)
+
     async def query(self, data: str, user_id: str, reporter: ProgressReporter | None = None, within_directories: list[str] | None = None, excluding_directories: list[str] | None = None, within_tags: list[str] | None = None, excluding_tags: list[str] | None = None, within_tags_condition: str = "any") -> QueryResult:
         """Search source chunks, expand through recall links, then answer."""
         reporter = reporter or NullProgressReporter()
@@ -79,7 +98,9 @@ class RagServiceImpl:
         if not query:
             trace = {"mode": "empty_query", "query": query, "source_chunk_count": 0}
             answer = {"answer": "Ask a question to search your source chunks.", "citations": [], "directories": [], "notes": []}
-            return build_query_result(query, [], answer, trace)
+            result = build_query_result(query, [], answer, trace)
+            asyncio.create_task(asyncio.to_thread(queries.save, user_id, query, 0, result))
+            return result
 
         loop = asyncio.get_running_loop()
         started_at = time.time()
@@ -127,6 +148,7 @@ class RagServiceImpl:
                     summary["query"] = "exact_hit"
                     exact_cached["retrieval_trace"]["ui"] = _top_level_cache_ui("exact", None, int((time.time() - started_at) * 1000))
                     await reporter.report("Retrieval complete (Exact Cache Hit).", {"depth": 0, "ref": "retrieval:done"})
+                    asyncio.create_task(asyncio.to_thread(queries.save, user_id, query, int((time.time() - started_at) * 1000), exact_cached))
                     return exact_cached
 
             # ── 2. Semantic cache (embedding + vector search) ─────────────────
@@ -167,6 +189,7 @@ class RagServiceImpl:
                     summary["semantic_query"] = "semantic_hit"
                     cached_payload["retrieval_trace"]["ui"] = _top_level_cache_ui("semantic", distance, int((time.time() - started_at) * 1000))
 
+                    asyncio.create_task(asyncio.to_thread(queries.save, user_id, query, int((time.time() - started_at) * 1000), cached_payload))
                     return cached_payload
 
             await reporter.report("Preparing search...", {"depth": 0, "ref": "retrieval:normalize", "query_chars": len(query)})
@@ -255,6 +278,7 @@ class RagServiceImpl:
             reset_progress_reporters(tokens)
             set_active_parent_ref(None)
         
+        asyncio.create_task(asyncio.to_thread(queries.save, user_id, query, int((time.time() - started_at) * 1000), result))
         return result
 
 

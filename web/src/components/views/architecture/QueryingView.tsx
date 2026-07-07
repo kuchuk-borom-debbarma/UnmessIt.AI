@@ -1,12 +1,12 @@
 import { motion } from 'framer-motion'
-import { SearchIcon, Network, Zap, ArrowRight, Waypoints, Shrink, ShieldCheck, MonitorSmartphone, Database, BrainCircuit, Activity, RefreshCw } from 'lucide-react'
+import { SearchIcon, Network, Zap, ArrowRight, Waypoints, Shrink, ShieldCheck, MonitorSmartphone, Database, BrainCircuit } from 'lucide-react'
 
 export function QueryingView() {
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="max-w-5xl mx-auto space-y-32 pb-32"
+      className="max-w-6xl mx-auto space-y-32 pb-32"
     >
       <section id="query-engine" className="scroll-mt-32">
         <div className="mb-12">
@@ -87,9 +87,6 @@ export function QueryingView() {
               If all caches miss, we decompose the user's query into up to 6 distinct sub-queries.
               We then run a deterministic fan-out, checking for Attribute, Comparison, and Reasoning triggers to inject explicit terms (e.g., adding "parallels", "differences").
             </p>
-            <p className="text-lg text-muted-foreground leading-relaxed max-w-4xl">
-              Finally, we run an LLM Subject Extraction to identify named entities (e.g. translating "that guy with the car" into explicit noun targets) to anchor our exact-match lexical searches.
-            </p>
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -111,16 +108,59 @@ export function QueryingView() {
           </div>
         </div>
 
-        {/* Stage 3: Batch Evidence Cache */}
+        {/* Stage 3: Batch Evidence Cache & Cross-Query Recycling */}
         <div className="space-y-8 mt-24">
           <div>
             <h3 className="text-3xl font-bold text-white flex items-center gap-4 mb-6">
               <span className="w-10 h-10 rounded-full bg-accent-500/20 flex items-center justify-center text-accent-400 text-lg border border-accent-500/30 shadow-[0_0_15px_rgba(239,68,68,0.2)]">3</span>
-              Batch Evidence Exact Cache
+              Cross-Query Evidence Recycling (Sub-Query Cache)
             </h3>
             <p className="text-lg text-muted-foreground leading-relaxed max-w-4xl mb-6">
-              We now have an exact array of sub-queries and subjects. Before running the database searches, we hash this entire array and check the Batch Evidence Exact Cache. If another user recently ran these exact same atomic searches, we instantly retrieve the Chunks and skip all Vector/Lexical IO.
+              Because query processing is so expensive, we execute a massive optimization trick: <strong>Independent Sub-Query Caching</strong>. When a user asks a compound question like <span className="italic">"tell me about amy and tell me about food too"</span>, it breaks down into two distinct sub-queries.
             </p>
+            <p className="text-lg text-muted-foreground leading-relaxed max-w-4xl mb-6">
+              If the user previously asked <span className="italic">"tell me about food"</span>, the sub-query string <code>"tell me about food"</code> acts as an exact cache key. The system instantly recycles the deeply processed, compacted chunks from the previous query without touching the DB.
+            </p>
+          </div>
+
+          <div className="bg-[#050505] rounded-3xl border border-white/10 overflow-hidden shadow-2xl relative">
+             <div className="bg-black/60 border-b border-white/10 px-6 py-4 flex items-center justify-between">
+                <div className="flex gap-3"><div className="w-3 h-3 rounded-full bg-red-500/50"></div><div className="w-3 h-3 rounded-full bg-yellow-500/50"></div><div className="w-3 h-3 rounded-full bg-emerald-500/50"></div></div>
+                <div className="font-mono text-xs text-white/40 uppercase tracking-widest flex items-center gap-2">
+                  <SearchIcon size={12} /> Execution Trace: Cross-Query Cache
+                </div>
+             </div>
+             <div className="p-8 font-mono text-sm leading-relaxed overflow-x-auto">
+               <div className="min-w-[800px] flex flex-col space-y-3">
+                 <div className="text-white/50"># User asks: "tell me about amy and tell me about food too"</div>
+                 <div className="text-emerald-400">› LLM decomposed query into 2 sub-queries:</div>
+                 <div className="ml-6 text-white bg-white/5 p-2 rounded border border-white/10 w-fit">[1] "tell me about amy"</div>
+                 <div className="ml-6 text-white bg-white/5 p-2 rounded border border-white/10 w-fit">[2] "tell me about food"</div>
+                 
+                 <div className="mt-4 text-purple-400">› EXECUTING asyncio.gather() across sub-queries...</div>
+                 
+                 {/* Thread 1 */}
+                 <div className="mt-2 ml-6 border-l-2 border-orange-500/30 pl-4">
+                    <div className="text-orange-400 font-bold">[Sub-Query 1] "tell me about amy"</div>
+                    <div className="text-white/50 mt-1">Checking exact cache key: `unmessit:retrieval:evidence:v1:tell me about amy`</div>
+                    <div className="text-red-400">❌ CACHE MISS</div>
+                    <div className="text-slate-300">Proceeding to 3-Prong Parallel Traversal (DB Search)...</div>
+                 </div>
+
+                 {/* Thread 2 */}
+                 <div className="mt-4 ml-6 border-l-2 border-emerald-500/30 pl-4">
+                    <div className="text-emerald-400 font-bold">[Sub-Query 2] "tell me about food"</div>
+                    <div className="text-white/50 mt-1">Checking exact cache key: `unmessit:retrieval:evidence:v1:tell me about food`</div>
+                    <div className="text-emerald-400 font-bold flex items-center gap-2">
+                      ✅ CACHE HIT <span className="bg-emerald-500/20 px-2 py-0.5 rounded text-xs">1ms</span>
+                    </div>
+                    <div className="text-slate-300">Recycled 12 compacted chunks from memory!</div>
+                 </div>
+
+                 <div className="mt-4 text-blue-400">› MERGING RESULTS</div>
+                 <div className="text-white">Combined and deduplicated chunks from [1] and [2] successfully.</div>
+               </div>
+             </div>
           </div>
         </div>
 
@@ -132,38 +172,31 @@ export function QueryingView() {
               Parallel 3-Prong Traversal
             </h3>
             <p className="text-lg text-muted-foreground leading-relaxed max-w-4xl mb-8">
-              If the Batch Evidence cache misses, we execute a concurrent per-sub-query scatter-gather. We fire 3 simultaneous searches in <code>_search.py</code> using <code>asyncio.gather</code>.
+              For any sub-queries that missed the cache, we execute a concurrent scatter-gather search. We fire 3 simultaneous searches in <code>_search.py</code> using <code>asyncio.gather</code>, merging the results to create a highly accurate ranking.
             </p>
           </div>
 
-          <div className="bg-white/5 p-8 rounded-3xl border border-white/10 shadow-xl relative overflow-hidden">
-             <div className="flex flex-col gap-6">
-               <div className="flex items-center gap-4 p-4 rounded-xl bg-blue-500/10 border border-blue-500/20">
-                 <div className="p-3 bg-blue-500/20 rounded-lg text-blue-400"><Network size={24}/></div>
-                 <div>
-                   <div className="font-bold text-white text-lg">1. Vector Search (Chroma)</div>
-                   <div className="text-sm text-blue-200/70 mt-1">Finds chunks by semantic distance (topic meaning).</div>
-                 </div>
-               </div>
-               <div className="flex items-center gap-4 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-                 <div className="p-3 bg-emerald-500/20 rounded-lg text-emerald-400"><Database size={24}/></div>
-                 <div>
-                   <div className="font-bold text-white text-lg">2. Lexical Search (SQLite FTS)</div>
-                   <div className="text-sm text-emerald-200/70 mt-1">Finds chunks by exact keyword and extracted subject matches.</div>
-                 </div>
-               </div>
-               <div className="flex items-center gap-4 p-4 rounded-xl bg-purple-500/10 border border-purple-500/20">
-                 <div className="p-3 bg-purple-500/20 rounded-lg text-purple-400"><Waypoints size={24}/></div>
-                 <div>
-                   <div className="font-bold text-white text-lg">3. Graph Traversal (Recall Links)</div>
-                   <div className="text-sm text-purple-200/70 mt-1">Queries FTS and Vector DBs to find Recall Keys (nodes), then traverses Recall Links (edges) to pull connected Source Chunks.</div>
-                 </div>
-               </div>
-             </div>
-             <div className="mt-8 text-center bg-white/5 py-4 rounded-xl border border-white/10">
-               <div className="text-white font-bold mb-2">Merge, Dedupe & Score</div>
-               <div className="text-sm text-muted-foreground px-4">Chunks discovered via multiple independent paths receive a massive ranking boost. The top 12 chunks are selected.</div>
-             </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-6 shadow-xl relative overflow-hidden group hover:border-blue-500/40 transition-colors">
+              <div className="absolute top-0 right-0 p-4 text-blue-500/10 group-hover:text-blue-500/20"><Network size={64}/></div>
+              <div className="p-3 bg-blue-500/20 rounded-xl text-blue-400 w-fit mb-4"><Network size={20}/></div>
+              <h4 className="font-bold text-white text-lg mb-2">1. Vector Search (Chroma)</h4>
+              <p className="text-sm text-blue-200/70">Finds chunks by semantic distance (topic meaning) matching the sub-query string directly.</p>
+            </div>
+            
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-6 shadow-xl relative overflow-hidden group hover:border-emerald-500/40 transition-colors">
+              <div className="absolute top-0 right-0 p-4 text-emerald-500/10 group-hover:text-emerald-500/20"><Database size={64}/></div>
+              <div className="p-3 bg-emerald-500/20 rounded-xl text-emerald-400 w-fit mb-4"><Database size={20}/></div>
+              <h4 className="font-bold text-white text-lg mb-2">2. Lexical Search (SQLite)</h4>
+              <p className="text-sm text-emerald-200/70">Finds chunks by exact keyword and executing FTS matching using the extracted LLM Subjects.</p>
+            </div>
+            
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-6 shadow-xl relative overflow-hidden group hover:border-purple-500/40 transition-colors">
+              <div className="absolute top-0 right-0 p-4 text-purple-500/10 group-hover:text-purple-500/20"><Waypoints size={64}/></div>
+              <div className="p-3 bg-purple-500/20 rounded-xl text-purple-400 w-fit mb-4"><Waypoints size={20}/></div>
+              <h4 className="font-bold text-white text-lg mb-2">3. Graph Traversal</h4>
+              <p className="text-sm text-purple-200/70">Queries FTS and Vector DBs to find Recall Keys (nodes), then traverses Recall Links (edges) to pull connected Source Chunks.</p>
+            </div>
           </div>
         </div>
 
@@ -282,196 +315,6 @@ export function QueryingView() {
                  The raw <code>[cite](id)</code> markdown is translated into interactive superscript elements linking to the Source Chunks.
                </div>
             </div>
-          </div>
-        </div>
-
-        {/* Stage 8: SSE Trace Reality */}
-        <div className="space-y-8 mt-24">
-          <div>
-            <h3 className="text-3xl font-bold text-white flex items-center gap-4 mb-6">
-              <span className="w-10 h-10 rounded-full bg-accent-500/20 flex items-center justify-center text-accent-400 text-lg border border-accent-500/30 shadow-[0_0_15px_rgba(239,68,68,0.2)]">8</span>
-              SSE Trace Compilation
-            </h3>
-            <p className="text-lg text-muted-foreground leading-relaxed max-w-4xl mb-6">
-              Throughout this entire LangGraph execution, the backend emits <code>retrieval_trace.ui</code> events over Server-Sent Events (SSE). 
-              The frontend catches these real-time streams to render exactly which caches hit, how many LLM tokens were saved, and the sub-millisecond execution times for every step.
-            </p>
-          </div>
-          
-          <div className="bg-white/5 border border-white/10 rounded-3xl p-8 flex flex-col md:flex-row items-center gap-8 shadow-2xl relative overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-transparent pointer-events-none" />
-            <div className="p-6 bg-black/40 rounded-2xl border border-white/5 shadow-inner flex-1 w-full relative z-10">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2 text-white font-bold"><Activity size={16} className="text-emerald-400"/> Live Trace Stream</div>
-                <div className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span><span className="text-xs text-muted-foreground font-mono">Connected</span></div>
-              </div>
-              <div className="space-y-3 font-mono text-xs">
-                <div className="flex justify-between items-center text-slate-300"><span className="flex items-center gap-2"><RefreshCw size={12} className="animate-spin text-blue-400" /> Searching Vector DB...</span> <span>42ms</span></div>
-                <div className="flex justify-between items-center text-slate-400"><span className="flex items-center gap-2 text-emerald-400">✓ Context Compactor Cache Hit</span> <span>1ms</span></div>
-                <div className="flex justify-between items-center text-slate-400"><span className="flex items-center gap-2 text-emerald-400">✓ Evidence Verifier Completed</span> <span>845ms</span></div>
-                <div className="flex justify-between items-center text-slate-300"><span className="flex items-center gap-2"><RefreshCw size={12} className="animate-spin text-purple-400" /> Generating Answer...</span> <span>In Progress</span></div>
-              </div>
-            </div>
-            <div className="flex-1 text-center md:text-left z-10">
-              <h4 className="text-2xl font-bold text-white mb-3">Transparent Engine</h4>
-              <p className="text-muted-foreground text-sm leading-relaxed max-w-sm mx-auto md:mx-0">
-                The user is never left waiting in the dark. Every single decision, cache hit, and parallel search is streamed directly to the UI, proving the engine's complexity and speed in real-time.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Stage 9: The Complete Flow */}
-        <div className="space-y-8 mt-32 border-t border-white/10 pt-16">
-          <div>
-            <h3 className="text-3xl font-bold text-white flex items-center gap-4 mb-6">
-              <span className="w-10 h-10 rounded-full bg-accent-500/20 flex items-center justify-center text-accent-400 text-lg border border-accent-500/30 shadow-[0_0_15px_rgba(239,68,68,0.2)]">9</span>
-              The Complete Query Execution Flow
-            </h3>
-            <p className="text-lg text-muted-foreground leading-relaxed max-w-4xl mb-12">
-              This is the literal execution path from <code>server/src/services/rag/private/chains/query/__init__.py</code>. It brings all of the caches, verifiers, and parallel searches together into a single, cohesive timeline.
-            </p>
-          </div>
-
-          <div className="bg-white/5 border border-white/10 rounded-3xl p-8 lg:p-12 shadow-2xl relative overflow-hidden">
-             <div className="absolute top-0 right-0 p-8 opacity-5">
-               <Network size={200} />
-             </div>
-             
-             <div className="relative z-10 max-w-4xl mx-auto">
-                <div className="flex flex-col relative">
-                  
-                  {/* Vertical Line */}
-                  <div className="absolute left-[27px] top-4 bottom-4 w-0.5 bg-gradient-to-b from-accent-500 via-orange-500 to-indigo-500 opacity-30" />
-
-                  <div className="flex flex-col gap-6">
-                    {/* Step 1 */}
-                    <div className="flex items-start gap-6">
-                       <div className="w-14 h-14 shrink-0 rounded-2xl bg-black/50 border border-white/10 flex items-center justify-center z-10 shadow-lg">
-                          <Activity className="text-accent-400" />
-                       </div>
-                       <div className="bg-black/40 border border-white/5 rounded-2xl p-5 flex-1 relative mt-1">
-                          <div className="absolute -left-2 top-6 w-2 h-0.5 bg-white/20" />
-                          <div className="flex items-center gap-4 mb-2">
-                            <span className="text-white font-bold text-lg">Receive QueryInput</span>
-                            <span className="bg-accent-500/20 text-accent-300 px-2 py-0.5 rounded text-[10px] font-mono border border-accent-500/30">SSE stream started</span>
-                          </div>
-                          <div className="text-sm text-muted-foreground">The API accepts the query and begins streaming <code>retrieval_trace.ui</code> events.</div>
-                       </div>
-                    </div>
-
-                    {/* Step 2 */}
-                    <div className="flex items-start gap-6">
-                       <div className="w-14 h-14 shrink-0 rounded-2xl bg-black/50 border border-emerald-500/30 flex items-center justify-center z-10 shadow-lg shadow-emerald-500/10">
-                          <Zap className="text-emerald-400" />
-                       </div>
-                       <div className="bg-black/40 border border-white/5 rounded-2xl p-5 flex-1 relative mt-1">
-                          <div className="absolute -left-2 top-6 w-2 h-0.5 bg-white/20" />
-                          <div className="flex items-center gap-4 mb-3">
-                            <span className="text-white font-bold text-lg">Top-Level Caches</span>
-                            <span className="bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded text-[10px] font-mono border border-emerald-500/30">1ms Hit</span>
-                          </div>
-                          <div className="flex flex-col gap-2 pl-4 border-l border-emerald-500/20 text-sm font-mono mt-2">
-                             <div className="text-white/70">1. Exact Cache Check (SHA256)</div>
-                             <div className="text-white/70">2. Semantic Cache Check (Distance &lt; 0.02)</div>
-                             <div className="text-white/70">3. Semantic Verifier (Distance &lt; 0.05)</div>
-                          </div>
-                       </div>
-                    </div>
-
-                    {/* Step 3 */}
-                    <div className="flex items-start gap-6">
-                       <div className="w-14 h-14 shrink-0 rounded-2xl bg-black/50 border border-white/10 flex items-center justify-center z-10 shadow-lg">
-                          <BrainCircuit className="text-indigo-400" />
-                       </div>
-                       <div className="bg-black/40 border border-white/5 rounded-2xl p-5 flex-1 relative mt-1">
-                          <div className="absolute -left-2 top-6 w-2 h-0.5 bg-white/20" />
-                          <div className="flex items-center gap-4 mb-2">
-                            <span className="text-white font-bold text-lg">Query Engineering Pipeline</span>
-                            <span className="bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded text-[10px] font-mono border border-indigo-500/30">LLM + Logic</span>
-                          </div>
-                          <div className="flex gap-4 mt-4">
-                            <div className="bg-indigo-500/10 border border-indigo-500/20 p-2 rounded flex-1 text-center text-xs text-indigo-200">Decompose</div>
-                            <div className="bg-indigo-500/10 border border-indigo-500/20 p-2 rounded flex-1 text-center text-xs text-indigo-200">Fan-Out</div>
-                            <div className="bg-indigo-500/10 border border-indigo-500/20 p-2 rounded flex-1 text-center text-xs text-indigo-200">Extract Nouns</div>
-                          </div>
-                       </div>
-                    </div>
-
-                    {/* Step 4 */}
-                    <div className="flex items-start gap-6">
-                       <div className="w-14 h-14 shrink-0 rounded-2xl bg-black/50 border border-white/10 flex items-center justify-center z-10 shadow-lg">
-                          <SearchIcon className="text-orange-400" />
-                       </div>
-                       <div className="bg-black/40 border border-white/5 rounded-2xl p-5 flex-1 relative mt-1">
-                          <div className="absolute -left-2 top-6 w-2 h-0.5 bg-white/20" />
-                          <div className="flex items-center gap-4 mb-2">
-                            <span className="text-white font-bold text-lg">Parallel 3-Prong Traversal</span>
-                            <span className="bg-orange-500/20 text-orange-300 px-2 py-0.5 rounded text-[10px] font-mono border border-orange-500/30">asyncio.gather</span>
-                          </div>
-                          <div className="text-sm text-muted-foreground mb-3">Checks the Batch Evidence Cache first. On miss, searches concurrently:</div>
-                          <div className="flex flex-col gap-2 pl-4 border-l border-orange-500/20 text-sm font-mono">
-                             <div className="text-white/80 flex items-center gap-2"><Database size={12} className="text-blue-400" /> Vector DB (Semantic)</div>
-                             <div className="text-white/80 flex items-center gap-2"><Database size={12} className="text-emerald-400" /> SQLite FTS (Lexical)</div>
-                             <div className="text-white/80 flex items-center gap-2"><Network size={12} className="text-purple-400" /> Recall Graph Traversal (Edges)</div>
-                          </div>
-                          <div className="mt-4 bg-orange-500/10 border border-orange-500/30 p-2 rounded text-xs text-orange-200 text-center font-bold">
-                             Merge & Dedupe (Massive boost for multi-path discoveries)
-                          </div>
-                       </div>
-                    </div>
-
-                    {/* Step 5 */}
-                    <div className="flex items-start gap-6">
-                       <div className="w-14 h-14 shrink-0 rounded-2xl bg-black/50 border border-white/10 flex items-center justify-center z-10 shadow-lg">
-                          <Shrink className="text-pink-400" />
-                       </div>
-                       <div className="bg-black/40 border border-white/5 rounded-2xl p-5 flex-1 relative mt-1">
-                          <div className="absolute -left-2 top-6 w-2 h-0.5 bg-white/20" />
-                          <div className="flex items-center gap-4 mb-2">
-                            <span className="text-white font-bold text-lg">Context Compaction</span>
-                          </div>
-                          <div className="text-sm text-muted-foreground">Compresses up to 12,000 chars of source chunks down to 4,500 chars containing only highly relevant sentences.</div>
-                       </div>
-                    </div>
-
-                    {/* Step 6 */}
-                    <div className="flex items-start gap-6">
-                       <div className="w-14 h-14 shrink-0 rounded-2xl bg-black/50 border border-white/10 flex items-center justify-center z-10 shadow-lg">
-                          <ShieldCheck className="text-red-400" />
-                       </div>
-                       <div className="bg-black/40 border border-white/5 rounded-2xl p-5 flex-1 relative mt-1">
-                          <div className="absolute -left-2 top-6 w-2 h-0.5 bg-white/20" />
-                          <div className="flex items-center gap-4 mb-2">
-                            <span className="text-white font-bold text-lg">Evidence Verifier</span>
-                            <span className="bg-red-500/20 text-red-300 px-2 py-0.5 rounded text-[10px] font-mono border border-red-500/30">Guardrail</span>
-                          </div>
-                          <div className="text-sm text-muted-foreground">Drops off-topic chunks. If context is insufficient, automatically triggers a highly focused <strong>2nd Pass Search</strong>.</div>
-                       </div>
-                    </div>
-
-                    {/* Step 7 */}
-                    <div className="flex items-start gap-6">
-                       <div className="w-14 h-14 shrink-0 rounded-2xl bg-gradient-to-br from-accent-500 to-orange-500 border border-white/20 flex items-center justify-center z-10 shadow-[0_0_20px_rgba(239,68,68,0.3)]">
-                          <MonitorSmartphone className="text-white" />
-                       </div>
-                       <div className="bg-black/40 border border-white/5 rounded-2xl p-5 flex-1 relative mt-1 shadow-xl">
-                          <div className="absolute -left-2 top-6 w-2 h-0.5 bg-white/20" />
-                          <div className="flex items-center gap-4 mb-2">
-                            <span className="text-white font-bold text-lg">Answer Generation</span>
-                          </div>
-                          <div className="text-sm text-muted-foreground mb-3">The final LLM synthesizes the verified chunks, embedding <code>[cite](id)</code> inline.</div>
-                          <div className="bg-black/50 border border-white/5 p-3 rounded-lg flex items-center gap-3">
-                             <RefreshCw className="text-accent-400 animate-spin" size={16} />
-                             <span className="text-sm text-white font-mono">_normalize_answer_result(data, chunks)</span>
-                          </div>
-                          <div className="text-xs text-accent-300 mt-2">Strips hallucinated citations, validates IDs, and caches the final JSON payload.</div>
-                       </div>
-                    </div>
-
-                  </div>
-                </div>
-             </div>
           </div>
         </div>
 

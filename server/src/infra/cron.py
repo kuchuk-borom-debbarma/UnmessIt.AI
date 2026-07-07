@@ -5,6 +5,7 @@ import random
 from src.infra.embedding_cache import get_memory_embedding_cache
 from src.infra.retrieval_cache import get_memory_json_cache
 from src.infra.chroma import cleanup_stale_semantic_collections
+from src.repositories import queries
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 EMBEDDING_CACHE_TTL = 3600  # 1 hour
 RETRIEVAL_CACHE_TTL = 3600  # 1 hour
 SEMANTIC_CACHE_TTL = 86400  # 24 hours
+QUERIES_TTL_DAYS = 7        # 7 days
 
 # Loop intervals
 MEMORY_CACHE_INTERVAL = 600  # 10 minutes
@@ -61,6 +63,19 @@ async def _chroma_semantic_cron():
             logger.warning("cron_semantic_cache_cleanup_error error=%s", exc)
 
 
+async def _queries_cron():
+    while True:
+        try:
+            await asyncio.sleep(SEMANTIC_CACHE_INTERVAL * random.uniform(0.9, 1.1))
+            count = await asyncio.to_thread(queries.cleanup_stale, QUERIES_TTL_DAYS)
+            if count > 0:
+                logger.info("cron_queries_cleanup evicted=%d", count)
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            logger.warning("cron_queries_cleanup_error error=%s", exc)
+
+
 def start_cache_crons():
     """Start background cache cleanup workers."""
     if _tasks:
@@ -70,6 +85,7 @@ def start_cache_crons():
     _tasks.append(loop.create_task(_embedding_memory_cron()))
     _tasks.append(loop.create_task(_retrieval_memory_cron()))
     _tasks.append(loop.create_task(_chroma_semantic_cron()))
+    _tasks.append(loop.create_task(_queries_cron()))
 
 
 async def stop_cache_crons():

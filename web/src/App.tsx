@@ -19,8 +19,10 @@ import { ArchitectureShell } from './components/views/architecture/ArchitectureS
 import { OverviewView } from './components/views/architecture/OverviewView'
 import { IndexingView } from './components/views/architecture/IndexingView'
 import { QueryingView } from './components/views/architecture/QueryingView'
-import { SupportingSystemsView } from './components/views/architecture/SupportingSystemsView'
 import { IntegratedView } from './components/views/architecture/IntegratedView'
+import { CachingView } from './components/views/architecture/CachingView'
+import { EDAView } from './components/views/architecture/EDAView'
+import { SSEView } from './components/views/architecture/SSEView'
 
 // Contexts
 import { AskProvider } from './contexts/AskContext'
@@ -62,7 +64,9 @@ function App() {
         <Route path="overview" element={<OverviewView />} />
         <Route path="indexing" element={<IndexingView />} />
         <Route path="querying" element={<QueryingView />} />
-        <Route path="supporting-systems" element={<SupportingSystemsView />} />
+        <Route path="caching" element={<CachingView />} />
+        <Route path="eda" element={<EDAView />} />
+        <Route path="sse" element={<SSEView />} />
         <Route path="integrated" element={<IntegratedView />} />
       </Route>
       <Route element={<AskProvider><AppShell token={token} onLogout={() => saveToken(null)} /></AskProvider>}>

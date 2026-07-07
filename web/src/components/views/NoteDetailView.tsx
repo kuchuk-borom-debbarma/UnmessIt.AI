@@ -253,6 +253,22 @@ export function NoteDetailView({ token }: { token: string }) {
                   <BrainCircuit size={16} /> Insights
                 </button>
                 <button 
+                  className="flex items-center gap-2 h-10 px-4 rounded-lg bg-orange-500/10 text-orange-500 hover:bg-orange-500 hover:text-white transition-colors text-sm font-bold"
+                  onClick={async () => {
+                    if (confirm('Reindex this note? This will wipe its semantic cache and queue it for fresh ingestion.')) {
+                      try {
+                        await api(`/api/v1/advanced/reindex/${note.id}`, { method: 'POST', token })
+                        alert('Reindexing queued successfully! The background worker will pick it up momentarily.')
+                      } catch (err) {
+                        alert('Failed to reindex note.')
+                        console.error(err)
+                      }
+                    }
+                  }}
+                >
+                  <RefreshCw size={16} /> Reindex Note
+                </button>
+                <button 
                   className="flex items-center gap-2 h-10 px-4 rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white transition-colors text-sm font-bold"
                   onClick={async () => {
                     if (confirm('Delete this note?')) {

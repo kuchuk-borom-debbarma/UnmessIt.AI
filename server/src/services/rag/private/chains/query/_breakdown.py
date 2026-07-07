@@ -175,6 +175,7 @@ def _breakdown_system_prompt() -> str:
         "Include the original query as the first item. "
         f"Return at most {_MAX_SUB_QUERIES} sub-queries. "
         "For multi-part questions, include focused searches for each requested subject, scope, and comparison or reasoning dimension. "
+        "Decompose multi-subject queries into independent sub-queries for each distinct subject. For example, 'A and B' should generate standalone searches for 'A' and 'B' before a combined search for their relationship. "
         "For attribute questions, include specific detail searches for the requested subject and attribute family. "
         "Preserve query qualifiers such as source, time, place, folder, product, work, or domain so same-word matches from another context do not dominate. "
         "If the query is already simple and focused, return only the original query."

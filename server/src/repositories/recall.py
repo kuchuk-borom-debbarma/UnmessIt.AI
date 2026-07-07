@@ -302,6 +302,22 @@ def delete_all(user_id: str) -> None:
     conn.commit()
 
 
+def delete_for_note(note_id: str, user_id: str) -> None:
+    """Wipe all recall data for a specific note."""
+    conn = get_connection()
+    # Delete links and keys related to source chunks from this note
+    conn.execute("""
+        DELETE FROM recall_links 
+        WHERE source_chunk_id IN (
+            SELECT id FROM source_chunks WHERE raw_input_id IN (
+                SELECT id FROM raw_inputs WHERE job_id = ? AND user_id = ?
+            )
+        )
+    """, (note_id, user_id))
+    retrieval_index.bump(user_id, conn)
+    conn.commit()
+
+
 def get_view(user_id: str | None = None) -> dict[str, Any]:
     """Dev view: recall keys with their linked source chunk evidence."""
     conn = get_connection()

@@ -73,6 +73,16 @@ def init_db() -> None:
             FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS queries (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            query_text TEXT NOT NULL,
+            duration_ms INTEGER NOT NULL,
+            result_json TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_queries_user_id ON queries(user_id);
+
         CREATE TABLE IF NOT EXISTS user_processing_settings (
             user_id TEXT PRIMARY KEY,
             embedding_provider TEXT NOT NULL DEFAULT 'openai',

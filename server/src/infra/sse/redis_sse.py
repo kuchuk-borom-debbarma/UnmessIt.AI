@@ -45,7 +45,17 @@ class RedisSseService(SseService):
         if client is None:
             await self._local.publish(topic, event, data)
             return
-        await client.publish(_channel(topic), json.dumps({"topic": topic, "event": event, "data": data}, ensure_ascii=False))
+            
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        min_score = now_ts - PRESENCE_TTL_SECONDS
+        
+        topic_key = f"{CHANNEL_PREFIX}topics:{topic}"
+        await client.zremrangebyscore(topic_key, "-inf", min_score)
+        active_instances = await client.zrangebyscore(topic_key, min_score, "+inf")
+        
+        payload = json.dumps({"topic": topic, "event": event, "data": data}, ensure_ascii=False)
+        for instance in active_instances:
+            await client.publish(f"{CHANNEL_PREFIX}instance:{instance}", payload)
 
     async def subscribe(self, topic: str) -> AsyncGenerator[ServerSentEvent, None]:
         connection_id = str(uuid4())
@@ -84,11 +94,11 @@ class RedisSseService(SseService):
                 continue
             pubsub = client.pubsub()
             try:
-                await pubsub.psubscribe(f"{CHANNEL_PREFIX}*")
+                await pubsub.subscribe(f"{CHANNEL_PREFIX}instance:{self._instance_id}")
                 async for message in pubsub.listen():
                     if self._stopped.is_set():
                         break
-                    if message.get("type") != "pmessage":
+                    if message.get("type") != "message":
                         continue
                     await self._deliver(message.get("data"))
             except asyncio.CancelledError:
@@ -112,12 +122,15 @@ class RedisSseService(SseService):
 
     async def _refresh_presence(self, connection_id: str, topic: str) -> None:
         while True:
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(timezone.utc)
             await set_json(
                 _presence_key(connection_id),
-                {"instance_id": self._instance_id, "connection_id": connection_id, "topic": topic, "last_seen_at": now},
+                {"instance_id": self._instance_id, "connection_id": connection_id, "topic": topic, "last_seen_at": now.isoformat()},
                 PRESENCE_TTL_SECONDS,
             )
+            client = get_redis()
+            if client is not None:
+                await client.zadd(f"{CHANNEL_PREFIX}topics:{topic}", {self._instance_id: int(now.timestamp())})
             await asyncio.sleep(PRESENCE_TTL_SECONDS / 3)
 
 

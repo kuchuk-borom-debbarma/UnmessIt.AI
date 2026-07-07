@@ -22,7 +22,7 @@ MAX_SNIPPET_CHARS = 420
 _CONTEXT_CHARS_PER_PASS = 6000
 _EVIDENCE_CACHE_VERSION = "evidence-search-v1"
 _SEMANTIC_EVIDENCE_CACHE_VERSION = "evidence-semantic-candidates-v2"
-_SEMANTIC_EVIDENCE_THRESHOLD = 0.95
+_SEMANTIC_EVIDENCE_THRESHOLD = 0.75
 _CONTEXT_COMPACTOR_CACHE_VERSION = "context-engineering-llm:v1"
 _LLM_CONTEXT_MIN_RAW_CHARS = 9000
 _LLM_CONTEXT_MAX_PACKED_CHARS = 4500
@@ -462,7 +462,7 @@ async def _semantic_evidence_candidates(
     parent_ref: str = "retrieval:search",
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
     namespace = _semantic_evidence_namespace(user_id, index_version, embedding_signature, filters_signature)
-    text = retrieval_cache.normalize_semantic_text(sub_query, extracted_subjects)
+    text = retrieval_cache.normalize_semantic_text(sub_query)
     if reporter:
         await reporter.report(
             "Checking similar previous evidence...",
@@ -537,7 +537,7 @@ async def _set_semantic_evidence_candidates(
     if had_hit or not packed_chunks:
         return []
     namespace = _semantic_evidence_namespace(user_id, index_version, embedding_signature, filters_signature)
-    text = retrieval_cache.normalize_semantic_text(sub_query, extracted_subjects)
+    text = retrieval_cache.normalize_semantic_text(sub_query)
     payload = {
         "cache_version": _SEMANTIC_EVIDENCE_CACHE_VERSION,
         "retrieval_index_version": index_version,
